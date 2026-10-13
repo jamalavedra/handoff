@@ -2,7 +2,7 @@ import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Zap } from "lucide-react";
+import { Activity, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
 import "./index.css";
@@ -10,6 +10,7 @@ import { api, cn, projectName, type Me, type Project } from "./lib";
 import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
 import { ActivityPage, MyTasksPage, ProjectPage, ProjectsPage, ReadyPage, TrashPage } from "./pages/tasks";
 import { TaskPage, TaskView } from "./pages/task";
+import { TeamPage } from "./pages/team";
 import { usePanelTask, useWide } from "./components/tasklink";
 import { AgentsPage } from "./pages/agents";
 import { AdminPage } from "./pages/admin";
@@ -79,6 +80,7 @@ function Layout({ me }: { me: Me }) {
           <nav className="flex flex-col gap-0.5">
             <NavLink to="/" icon={CheckSquare}>My tasks</NavLink>
             <NavLink to="/ready" icon={Zap}>Ready</NavLink>
+            <NavLink to="/team" icon={Users}>Team</NavLink>
             <NavLink to="/projects" icon={FolderKanban}>Projects</NavLink>
             <NavLink to="/activity" icon={Activity}>Activity</NavLink>
             <NavLink to="/agents" icon={Bot}>
@@ -167,7 +169,7 @@ function MobileTopBar({ me }: { me: Me }) {
   );
 }
 
-const moreRoutes = ["/more", "/projects", "/activity", "/trash", "/admin"];
+const moreRoutes = ["/more", "/team", "/projects", "/activity", "/trash", "/admin"];
 
 function Tab({ to, icon: Icon, label, active, badge }: { to: string; icon: typeof Inbox; label: string; active: boolean; badge?: number }) {
   return (
@@ -229,6 +231,7 @@ function MorePage() {
     <>
       <PageHeader title="More" />
       <div className="mb-6 overflow-hidden rounded-xl border border-zinc-200 bg-white">
+        <MoreRow to="/team" icon={Users}>Team</MoreRow>
         <MoreRow to="/projects" icon={FolderKanban}>Projects</MoreRow>
         <MoreRow to="/activity" icon={Activity}>Activity</MoreRow>
         <MoreRow to="/trash" icon={Trash2}>Trash</MoreRow>
@@ -271,6 +274,7 @@ const router = createRouter({
   routeTree: root.addChildren([
     r("/", MyTasksPage),
     r("/ready", ReadyPage),
+    r("/team", TeamPage),
     r("/projects", ProjectsPage),
     r("/projects/$id", ProjectPage),
     r("/tasks/$id", TaskPage),
