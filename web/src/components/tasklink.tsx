@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { Link, useSearch } from "@tanstack/react-router";
+import { Link, useRouterState, useSearch } from "@tanstack/react-router";
 
 const wide = window.matchMedia("(min-width: 1024px)");
 
@@ -20,6 +20,7 @@ export function usePanelTask() {
 
 export function TaskLink({ id, className, children }: { id: string; className?: string; children: React.ReactNode }) {
   const isWide = useWide();
-  if (!isWide) return <Link to="/tasks/$id" params={{ id }} className={className}>{children}</Link>;
+  const onTaskPage = useRouterState({ select: (s) => s.location.pathname.startsWith("/tasks/") });
+  if (!isWide || onTaskPage) return <Link to="/tasks/$id" params={{ id }} className={className}>{children}</Link>;
   return <Link to="." search={(p) => ({ ...p, task: id })} className={className}>{children}</Link>;
 }

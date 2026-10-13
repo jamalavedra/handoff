@@ -143,8 +143,8 @@ function TaskPanel() {
   }, [open, navigate]);
   if (!open || !wide) return null;
   return (
-    <aside aria-label="Task" className="sticky top-0 h-dvh w-[30rem] shrink-0 overflow-y-auto border-l border-zinc-200 bg-zinc-50 xl:w-[34rem]">
-      <TaskView key={task} id={task} panel />
+    <aside key={task} aria-label="Task" className="sticky top-0 h-dvh w-[30rem] shrink-0 overflow-y-auto border-l border-zinc-200 bg-zinc-50 xl:w-[34rem]">
+      <TaskView id={task} panel />
     </aside>
   );
 }

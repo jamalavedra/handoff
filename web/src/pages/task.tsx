@@ -131,7 +131,15 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); invalidate(); } });
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: () => { setBlocker(""); invalidate(); } });
 
-  if (q.error) return <ErrorText error={q.error} />;
+  if (q.error) {
+    if (!panel) return <ErrorText error={q.error} />;
+    return (
+      <div className="px-5 pt-4">
+        <button onClick={closePanel} className="-ml-2 mb-3 flex size-9 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100" aria-label="Close panel" title="Close (Esc)"><X className="size-5" /></button>
+        <ErrorText error={q.error} />
+      </div>
+    );
+  }
   if (!q.data) return null;
   const { task: t, comments, events } = q.data;
   const closed = t.status === "done" || t.status === "cancelled";
