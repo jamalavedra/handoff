@@ -54,8 +54,12 @@ const columns: { key: BoardColumn; title: string; empty: string }[] = [
 async function moveTask(t: Task, to: BoardColumn) {
   if (to === "done") return api.tool("close_task", { id: t.id, status: "done" });
   if (to === "working") return api.tool("update_task", { id: t.id, status: "in_progress" });
-  if (t.claimed_by) await api.tool("release_task", { id: t.id });
-  if (t.status !== "open" && t.status !== "blocked") await api.tool("update_task", { id: t.id, status: "open" });
+  let status = t.status;
+  if (t.claimed_by) {
+    await api.tool("release_task", { id: t.id });
+    if (status === "in_progress") status = "open"; // release reopens started tasks
+  }
+  if (status !== "open" && status !== "blocked") await api.tool("update_task", { id: t.id, status: "open" });
 }
 
 // Board shows open tasks plus recently done ones in To do / Working / Done; drag a card to move it.

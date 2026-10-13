@@ -71,7 +71,7 @@ export function NewTask({ project }: { project?: string }) {
 export function MyTasksPage() {
   const [view, setView] = useView();
   const q = useQuery({ queryKey: ["tasks", "mine"], queryFn: allMyOpenTasks });
-  const recent = useQuery({ queryKey: ["tasks", "recent-done"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", status: ["done"], limit: 20 }) });
+  const recent = useQuery({ queryKey: ["tasks", "recent-done"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", status: ["done", "cancelled"], sort: "recent", limit: 20 }) });
   const [project, setProject] = useState("");
   const tasks = q.data?.tasks;
   const chips = useMemo(() => {
@@ -192,7 +192,7 @@ export function ProjectPage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const [showDone, setShowDone] = useState(false);
   const [view, setView] = useView();
-  const done = useQuery({ queryKey: ["tasks", "project", id, "done"], enabled: view === "board", queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, status: ["done"], limit: 20 }) });
+  const done = useQuery({ queryKey: ["tasks", "project", id, "done"], enabled: view === "board", queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, status: ["done", "cancelled"], sort: "recent", limit: 20 }) });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const q = useQuery({ queryKey: ["tasks", "project", id, showDone], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, include_done: showDone, limit: 500 }) });
   const p = projects.data?.projects.find((x) => x.id === id);
