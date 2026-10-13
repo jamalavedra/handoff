@@ -1,0 +1,15 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+
+// In dev, open http://<workspace>.handoff.localhost:5173; API calls proxy to the Go server.
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  server: {
+    host: true,
+    allowedHosts: [".localhost"],
+    proxy: Object.fromEntries(
+      ["/api", "/auth", "/oauth", "/mcp", "/.well-known"].map((p) => [p, { target: "http://localhost:8080", changeOrigin: false }]),
+    ),
+  },
+});

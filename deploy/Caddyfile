@@ -1,0 +1,22 @@
+# Every workspace host (acme.example.com, tasks.acme.com, ...) gets a certificate
+# on first visit. Handoff's /internal/tls-ask only approves real workspaces, so
+# nobody can make Caddy issue certificates for arbitrary names.
+{
+	email {$HANDOFF_ACME_EMAIL}
+	on_demand_tls {
+		ask http://handoff:8080/internal/tls-ask
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	@internal path /internal/*
+	respond @internal 404
+	reverse_proxy handoff:8080
+}
+
+http:// {
+	redir https://{host}{uri} permanent
+}

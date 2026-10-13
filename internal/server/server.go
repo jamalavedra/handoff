@@ -56,7 +56,6 @@ func orgFrom(r *http.Request) *core.Org {
 func (s *Server) Handler() http.Handler {
 	apex := http.NewServeMux()
 	apex.HandleFunc("GET /healthz", s.health)
-	apex.HandleFunc("GET /internal/tls-ask", s.tlsAsk)
 	apex.HandleFunc("POST /api/signup", s.signup)
 	apex.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"apex": true, "base_host": s.Cfg.BaseHost(), "signup": s.Cfg.AllowSignup})
@@ -91,6 +90,10 @@ func (s *Server) Handler() http.Handler {
 
 	return s.recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
+		if r.URL.Path == "/internal/tls-ask" {
+			s.tlsAsk(w, r)
+			return
+		}
 		o, err := s.Svc.OrgForHost(r.Context(), r.Host)
 		switch {
 		case errors.Is(err, core.ErrNoOrg):
@@ -142,6 +145,10 @@ func (s *Server) tlsAsk(w http.ResponseWriter, r *http.Request) {
 	if d == s.Cfg.BaseHost() {
 		return
 	}
+	if s.Cfg.SingleOrg != "" {
+		http.Error(w, "unknown", 404)
+		return
+	}
 	if o, err := s.Svc.OrgForHost(r.Context(), d); err != nil || o == nil {
 		http.Error(w, "unknown", 404)
 	}
@@ -174,6 +181,10 @@ func (s *Server) spa() http.Handler {
 			}
 		}
 		w.Header().Set("Cache-Control", "no-cache")
+		if _, err := fs.Stat(s.Static, "index.html"); err != nil {
+			http.Error(w, "The web app isn't built. Run `make web` and rebuild the server.", http.StatusServiceUnavailable)
+			return
+		}
 		http.ServeFileFS(w, r, s.Static, "index.html")
 	})
 }

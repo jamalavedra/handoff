@@ -1,0 +1,32 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_PASSWORD: pg }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      HANDOFF_TEST_DATABASE_URL: postgres://postgres:pg@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: make web
+      - run: cd web && npm run typecheck
+      - run: make vet
+      - run: go test -race ./...
+      - run: go build ./cmd/handoff
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t handoff .
