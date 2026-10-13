@@ -7,6 +7,7 @@ import { Avatar, Button, Card, DuePill, Empty, ErrorText, Input, PageHeader, Sel
 import { useQuickAdd } from "../components/quickadd";
 import { groupByDue } from "../quickadd";
 import { useMe } from "../main";
+import { Board, useView, ViewToggle } from "./board";
 import { TaskLink, usePanelTask } from "../components/tasklink";
 
 export function useInvalidate() {
@@ -68,8 +69,9 @@ export function NewTask({ project }: { project?: string }) {
 }
 
 export function MyTasksPage() {
+  const [view, setView] = useView();
   const q = useQuery({ queryKey: ["tasks", "mine"], queryFn: allMyOpenTasks });
-  const recent = useQuery({ queryKey: ["tasks", "recent-done"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", status: ["done"], limit: 5 }) });
+  const recent = useQuery({ queryKey: ["tasks", "recent-done"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", status: ["done", "cancelled"], sort: "recent", limit: 20 }) });
   const [project, setProject] = useState("");
   const tasks = q.data?.tasks;
   const chips = useMemo(() => {
@@ -86,14 +88,16 @@ export function MyTasksPage() {
   const recentShown = recent.data?.tasks.filter((t) => !active || t.project_id === active);
   return (
     <>
-      <PageHeader title="My tasks"><NewTask project={active || undefined} /></PageHeader>
+      <PageHeader title="My tasks"><ViewToggle view={view} onChange={setView} /><NewTask project={active || undefined} /></PageHeader>
       {chips.length > 1 && (
         <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:px-0" role="tablist" aria-label="Filter by project">
           <ProjectChip active={!active} onClick={() => setProject("")} name="All" n={tasks?.length ?? 0} />
           {chips.map((c) => <ProjectChip key={c.id} active={active === c.id} onClick={() => setProject(c.id)} name={c.name} n={c.n} />)}
         </div>
       )}
-      {!shown || shown.length === 0 ? (
+      {view === "board" ? (
+        <Board tasks={shown} done={recentShown} />
+      ) : !shown || shown.length === 0 ? (
         <TaskList tasks={shown} empty="Nothing assigned to you. Agents can assign tasks to you too." />
       ) : (
         groupByDue(shown).map((s) => (
@@ -105,10 +109,10 @@ export function MyTasksPage() {
           </section>
         ))
       )}
-      {!!recentShown?.length && (
+      {view === "list" && !!recentShown?.length && (
         <section className="mt-8" aria-label="Recently done">
           <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Recently done</h2>
-          <TaskList tasks={recentShown} empty="" />
+          <TaskList tasks={recentShown.slice(0, 5)} empty="" />
         </section>
       )}
     </>
@@ -187,16 +191,19 @@ export function ProjectsPage() {
 export function ProjectPage() {
   const { id } = useParams({ strict: false }) as { id: string };
   const [showDone, setShowDone] = useState(false);
+  const [view, setView] = useView();
+  const done = useQuery({ queryKey: ["tasks", "project", id, "done"], enabled: view === "board", queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, status: ["done", "cancelled"], sort: "recent", limit: 20 }) });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const q = useQuery({ queryKey: ["tasks", "project", id, showDone], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, include_done: showDone, limit: 500 }) });
   const p = projects.data?.projects.find((x) => x.id === id);
   return (
     <>
       <PageHeader title={p?.name ?? "Project"}>
-        <label className="flex items-center gap-1.5 text-sm text-zinc-600"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>
+        {view === "list" && <label className="flex items-center gap-1.5 text-sm text-zinc-600"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
+        <ViewToggle view={view} onChange={setView} />
         <NewTask project={id} />
       </PageHeader>
-      <TaskList tasks={q.data?.tasks} empty="No tasks here yet." />
+      {view === "board" ? <Board tasks={q.data?.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled")} done={done.data?.tasks} /> : <TaskList tasks={q.data?.tasks} empty="No tasks here yet." />}
     </>
   );
 }
