@@ -18,6 +18,7 @@
     --color-surface: oklch(18.5% 0.006 286);
     --color-accent: oklch(67.3% 0.182 276.935);
     --color-accent-soft: oklch(28% 0.08 278);
+    --color-on-accent: oklch(18.5% 0.006 286);
     --color-zinc-50: oklch(14.1% 0.005 285.823);
     --color-zinc-100: oklch(23.5% 0.006 286);
     --color-zinc-200: oklch(29% 0.007 286);

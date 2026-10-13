@@ -24,6 +24,17 @@ function apply() {
 }
 
 media.addEventListener("change", apply);
+apply();
+
+const notify = () => listeners.forEach((l) => l());
+
+// Another tab changed the saved theme.
+window.addEventListener("storage", (e) => {
+  if (e.key !== key && e.key !== null) return;
+  current = read();
+  apply();
+  notify();
+});
 
 export function setTheme(t: Theme) {
   current = t;
@@ -34,7 +45,7 @@ export function setTheme(t: Theme) {
     // private mode: keep the choice for this tab only
   }
   apply();
-  listeners.forEach((l) => l());
+  notify();
 }
 
 export function useTheme() {
