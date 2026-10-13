@@ -65,6 +65,8 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, map[string]any{"apex": true, "base_host": s.Cfg.BaseHost(), "signup": s.Cfg.AllowSignup})
 	})
 	apex.HandleFunc("GET /auth/google/callback", s.googleCallback)
+	apex.HandleFunc("GET /llms.txt", s.llms)
+	apex.HandleFunc("GET /llms-full.txt", s.llmsFull)
 	apex.Handle("/", s.spa())
 
 	org := http.NewServeMux()
@@ -91,6 +93,8 @@ func (s *Server) Handler() http.Handler {
 	org.HandleFunc("DELETE /api/agents/{id}/keys/{key}", s.revokeKey)
 	org.HandleFunc("GET /api/beads/export", s.beadsExport)
 	org.HandleFunc("POST /api/beads/import", s.beadsImport)
+	org.HandleFunc("GET /llms.txt", s.llms)
+	org.HandleFunc("GET /llms-full.txt", s.llmsFull)
 	org.Handle("/", s.spa())
 
 	return s.recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

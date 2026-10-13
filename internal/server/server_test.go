@@ -252,3 +252,37 @@ func (a authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Set("Authorization", "Bearer "+a.tok)
 	return a.next.RoundTrip(r)
 }
+
+func TestLLMsDocs(t *testing.T) {
+	f := setup(t)
+	acme := f.signup("acme")
+	get := func(u string) string {
+		t.Helper()
+		resp, err := f.client.Get(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/markdown") {
+			t.Fatalf("%s: %d %s", u, resp.StatusCode, resp.Header.Get("Content-Type"))
+		}
+		return string(b)
+	}
+	idx := get(acme + "/llms.txt")
+	if !strings.Contains(idx, "http://acme.handoff.test/mcp") || !strings.Contains(idx, "/llms-full.txt") {
+		t.Fatalf("index: %s", idx)
+	}
+	full := get(acme + "/llms-full.txt")
+	for _, want := range []string{"### claim_task", "`lease_minutes`", "  - `title` (string, required)", "### inbox", "Call what_changed", "claude mcp add --transport http handoff http://acme.handoff.test/mcp"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("full docs missing %q", want)
+		}
+	}
+	if strings.Contains(full, "### invite") {
+		t.Fatal("web-only tool listed")
+	}
+	if apex := get("http://handoff.test/llms.txt"); !strings.Contains(apex, "http://<workspace>.handoff.test/mcp") {
+		t.Fatalf("apex: %s", apex)
+	}
+}
