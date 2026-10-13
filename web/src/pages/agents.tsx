@@ -48,9 +48,9 @@ export function AgentsPage() {
         <Card className="mb-6 border-amber-200">
           <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800">Waiting for your approval</div>
           {approvals.data.approvals.map((a) => (
-            <div key={a.id} className="flex items-center gap-3 border-b border-zinc-100 px-4 py-2.5 text-sm last:border-0">
+            <div key={a.id} className="flex flex-wrap items-center gap-3 border-b border-zinc-100 px-4 py-2.5 text-sm last:border-0">
               <Bot className="size-4 text-violet-600" />
-              <div className="flex-1">
+              <div className="min-w-48 flex-1">
                 <b>{a.agent.name}</b> wants to delete <b>{a.task?.title ?? "a task"}</b>{a.reason && <span className="text-zinc-500"> — {a.reason}</span>}
                 <div className="text-xs text-zinc-500">{ago(a.created_at)}</div>
               </div>
@@ -67,7 +67,7 @@ export function AgentsPage() {
         <p className="mb-2 mt-4 text-sm text-zinc-600">Or paste this into any agent and it will set itself up:</p>
         <CopyBox text={onboardingPrompt(me.data?.org?.name ?? "", mcp)} label="Copy onboarding prompt" />
         <p className="mb-2 mt-4 text-sm text-zinc-600">Headless agents (scripts, CI, internal bots): create one here and give it an API key.</p>
-        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
+        <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
           <Input required placeholder="Agent name, e.g. Support triage bot" value={name} onChange={(e) => setName(e.target.value)} />
           <Button type="submit">Add agent</Button>
         </form>
@@ -97,7 +97,7 @@ function AgentCard({ a, mine }: { a: Member; mine: boolean }) {
   const allProjects = perms.projects.includes("*");
   return (
     <Card className="p-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <Bot className="size-4 text-violet-600" />
         <span className="font-medium">{a.name}</span>
         <span className="text-sm text-zinc-500">owned by {a.owner?.name} · added {ago(a.created_at)}</span>
