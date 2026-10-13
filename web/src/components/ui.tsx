@@ -7,9 +7,9 @@ export function Button({ className, variant = "default", size = "md", ...props }
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900",
+        "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         size === "sm" ? "h-8 px-3 text-sm" : "h-9 px-4 text-sm",
-        variant === "default" && "bg-zinc-900 text-white hover:bg-zinc-700",
+        variant === "default" && "bg-accent text-on-accent hover:opacity-90",
         variant === "outline" && "border border-zinc-300 bg-white hover:bg-zinc-100",
         variant === "ghost" && "hover:bg-zinc-100",
         variant === "danger" && "bg-red-600 text-white hover:bg-red-500",
@@ -21,19 +21,19 @@ export function Button({ className, variant = "default", size = "md", ...props }
 }
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => (
-  <input ref={ref} className={cn("h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-base outline-none sm:h-9 sm:text-sm focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900", className)} {...props} />
+  <input ref={ref} className={cn("h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-base outline-none sm:h-9 sm:text-sm focus:border-accent focus:ring-1 focus:ring-accent", className)} {...props} />
 ));
 
 export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn("w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base outline-none sm:text-sm focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900", className)} {...props} />;
+  return <textarea className={cn("w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-base outline-none sm:text-sm focus:border-accent focus:ring-1 focus:ring-accent", className)} {...props} />;
 }
 
 export function Select({ className, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn("h-10 rounded-md border border-zinc-300 bg-white px-2 text-base outline-none sm:h-9 sm:text-sm focus:border-zinc-900", className)} {...props} />;
+  return <select className={cn("h-10 rounded-md border border-zinc-300 bg-white px-2 text-base outline-none sm:h-9 sm:text-sm focus:border-accent", className)} {...props} />;
 }
 
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-lg border border-zinc-200 bg-white", className)} {...props} />;
+  return <div className={cn("rounded-2xl border border-zinc-200/70 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)]", className)} {...props} />;
 }
 
 export function Badge({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
@@ -80,8 +80,8 @@ export function Empty({ children }: { children: React.ReactNode }) {
 
 export function PageHeader({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-      <h1 className="text-xl font-semibold">{title}</h1>
+    <div className="mb-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pt-1">
+      <h1 className="text-[28px] leading-none font-extrabold tracking-tight uppercase md:text-3xl">{title}</h1>
       <div className="flex flex-wrap items-center gap-2">{children}</div>
     </div>
   );
@@ -98,7 +98,7 @@ export function Avatar({ m, className }: { m: MemberRef; className?: string }) {
 
 const dueTone = {
   overdue: "bg-red-50 text-red-700",
-  today: "bg-blue-50 text-blue-700",
+  today: "bg-accent-soft text-accent",
   soon: "bg-zinc-100 text-zinc-700",
   later: "bg-zinc-100 text-zinc-500",
 };
