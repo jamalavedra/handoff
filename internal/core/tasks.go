@@ -42,6 +42,7 @@ type TaskOut struct {
 	BlockedBy      []string   `json:"blocked_by"`
 	Blocks         []string   `json:"blocks"`
 	Ready          bool       `json:"ready"`
+	Unseen         bool       `json:"unseen,omitempty" jsonschema:"someone else changed it since you last opened it"`
 	URL            string     `json:"url"`
 }
 
@@ -54,6 +55,7 @@ type taskRow struct {
 	Labels                                                     []string
 	BlockedBy, Blocks                                          []string
 	OpenBlockers                                               int
+	Unseen                                                     bool
 }
 
 // openBlockers counts unfinished blockers of t; the same expression drives "ready".
@@ -66,8 +68,14 @@ const taskSelect = `SELECT t.id, t.project_id::text, t.title, t.body, t.status, 
 	t.due_at, t.claim_expires_at, t.closed_at, t.deleted_at, t.created_at, t.updated_at, t.labels,
 	coalesce((SELECT array_agg(d.blocker_id ORDER BY d.blocker_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocked_id = t.id), '{}'),
 	coalesce((SELECT array_agg(d.blocked_id ORDER BY d.blocked_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocker_id = t.id), '{}'),
-	` + openBlockers + `
+	` + openBlockers + `, ` + unseen + `
 	FROM tasks t`
+
+// unseen: the latest change was by someone else, after the caller last opened the task.
+const unseen = `coalesce((SELECT e.actor_id::text <> current_setting('app.member_id', true) AND e.created_at > coalesce(
+		(SELECT s.seen_at FROM task_seen s WHERE s.org_id = t.org_id AND s.task_id = t.id AND s.member_id::text = current_setting('app.member_id', true)),
+		(SELECT m.seen_baseline FROM members m WHERE m.org_id = t.org_id AND m.id::text = current_setting('app.member_id', true)))
+	FROM events e WHERE e.org_id = t.org_id AND e.task_id = t.id ORDER BY e.id DESC LIMIT 1), false)`
 
 // readyCond matches tasks someone can start now.
 const readyCond = `t.deleted_at IS NULL
@@ -87,7 +95,7 @@ func (c *call) queryTasks(where string, args ...any) ([]*taskRow, error) {
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.Title, &r.Body, &r.Status, &r.Priority,
 			&r.AssigneeID, &r.Parent, &r.ExternalID, &r.ClaimedBy, &r.CreatedBy, &r.OnBehalfOf, &r.CloseReason,
 			&r.Due, &r.ClaimExpires, &r.ClosedAt, &r.DeletedAt, &r.CreatedAt, &r.Updated, &r.Labels,
-			&r.BlockedBy, &r.Blocks, &r.OpenBlockers); err != nil {
+			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -105,7 +113,7 @@ func (c *call) out(r *taskRow, withBody bool) TaskOut {
 		Assignee: c.ref(r.AssigneeID), Labels: nonNil(r.Labels), Parent: r.Parent, ExternalID: r.ExternalID,
 		CreatedBy: c.ref(r.CreatedBy), OnBehalfOf: c.ref(r.OnBehalfOf), CreatedAt: ts(r.CreatedAt), UpdatedAt: ts(r.Updated),
 		ClosedAt: ts(r.ClosedAt), CloseReason: r.CloseReason, DeletedAt: ts(r.DeletedAt),
-		BlockedBy: nonNil(r.BlockedBy), Blocks: nonNil(r.Blocks),
+		BlockedBy: nonNil(r.BlockedBy), Blocks: nonNil(r.Blocks), Unseen: r.Unseen,
 		URL: c.s.Cfg.OrgURL(c.p.Org.Slug) + "/tasks/" + r.ID,
 	}
 	if p := c.projects[r.ProjectID]; p != nil {
@@ -209,6 +217,7 @@ type ContextOut struct {
 const guidelines = `Handoff is the shared task list for this company's people and agents.
 - Start with list_ready, then claim_task before working so nobody else picks it up; close_task when finished.
 - Ask the user before creating more than a few tasks at once. Use external_id so a retried create_tasks never duplicates.
+- Call what_changed to catch up on what others changed since your last call. Tasks marked unseen changed since you last opened them.
 - update_task appends to the body by default. Replacing the whole body needs confirm=true; only do it when the user asked.
 - trash moves a task to a 30-day trash (restore brings it back). Some agents need a human to approve deletes.
 - Every change you make is recorded under your agent name, on behalf of the person you act for.`
@@ -411,6 +420,7 @@ type TaskDetailOut struct {
 	Task     TaskOut      `json:"task"`
 	Comments []CommentOut `json:"comments"`
 	Events   []EventOut   `json:"events"`
+	Here     []HereOut    `json:"here" jsonschema:"others who have this task open right now"`
 }
 
 func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskDetailOut, error) {
@@ -421,6 +431,18 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 			return err
 		}
 		out.Task = c.out(r, true)
+		out.Task.Unseen = false
+		if err := c.markSeen(r.ID); err != nil {
+			return err
+		}
+		if p.Member.IsAgent() {
+			if err := c.markHere(r.ID, agentHere, nil); err != nil {
+				return err
+			}
+		}
+		if out.Here, err = c.here(r.ID); err != nil {
+			return err
+		}
 		rows, err := c.tx.Query(c.ctx, `SELECT id, author_id::text, coalesce(on_behalf_of::text, ''), body, created_at
 			FROM comments WHERE task_id = $1 ORDER BY created_at`, r.ID)
 		if err != nil {
