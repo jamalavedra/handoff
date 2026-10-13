@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -196,19 +195,46 @@ func (s *Service) CreateProject(ctx context.Context, p *Principal, in CreateProj
 	return out, err
 }
 
-// cleanEmoji accepts "" or a single emoji (sequences like flags or skin tones included).
+// cleanEmoji accepts "" or exactly one emoji, including flags, keycaps, skin tones and ZWJ sequences.
 func cleanEmoji(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", nil
 	}
-	if utf8.RuneCountInString(s) > 8 || len(s) > 32 {
-		return "", errf(ErrInvalid, "emoji must be a single emoji")
+	bad := errf(ErrInvalid, "emoji must be a single emoji")
+	if len(s) > 32 {
+		return "", bad
 	}
+	keycap := strings.ContainsRune(s, 0x20E3)
+	clusters, flags, joined := 0, 0, false
 	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsSpace(r) {
-			return "", errf(ErrInvalid, "emoji must be a single emoji")
+		switch {
+		case r == 0x200D:
+			joined = true
+			continue
+		case r == 0xFE0E || r == 0xFE0F || r == 0x20E3 || (r >= 0x1F3FB && r <= 0x1F3FF) || (r >= 0xE0020 && r <= 0xE007F):
+			continue
+		case r >= 0x1F1E6 && r <= 0x1F1FF:
+			if flags%2 == 0 {
+				clusters++
+			}
+			flags++
+			joined = false
+			continue
+		case r < 0x80:
+			if !keycap || !(r == '#' || r == '*' || (r >= '0' && r <= '9')) {
+				return "", bad
+			}
+		case !unicode.Is(unicode.So, r):
+			return "", bad
 		}
+		if !joined {
+			clusters++
+		}
+		joined = false
+	}
+	if clusters != 1 || flags%2 != 0 {
+		return "", bad
 	}
 	return s, nil
 }
@@ -233,28 +259,35 @@ func (s *Service) UpdateProject(ctx context.Context, p *Principal, in UpdateProj
 		if err != nil {
 			return err
 		}
-		name, desc, emoji := pr.Name, pr.Description, pr.Emoji
+		var name, emoji *string
 		changed := map[string]any{"project_id": pr.ID}
 		if in.Name != nil {
-			name = strings.TrimSpace(*in.Name)
-			if name == "" || len(name) > 80 {
+			n := strings.TrimSpace(*in.Name)
+			if n == "" || len(n) > 80 {
 				return errf(ErrInvalid, "project name must be 1-80 characters")
 			}
-			changed["name"] = name
+			if n != pr.Name && strings.EqualFold(pr.Name, DefaultProject) {
+				return errf(ErrInvalid, "%s is the default project and can't be renamed", DefaultProject)
+			}
+			name = &n
+			changed["name"] = n
 		}
 		if in.Description != nil {
-			desc = *in.Description
 			changed["description"] = true
 		}
 		if in.Emoji != nil {
-			if emoji, err = cleanEmoji(*in.Emoji); err != nil {
+			e, err := cleanEmoji(*in.Emoji)
+			if err != nil {
 				return err
 			}
-			changed["emoji"] = emoji
+			emoji = &e
+			changed["emoji"] = e
 		}
-		_, err = c.tx.Exec(c.ctx, `UPDATE projects SET name = $2, description = $3, emoji = $4 WHERE id = $1`, pr.ID, name, desc, emoji)
+		// coalesce keeps fields this call didn't set, so concurrent edits of different fields both stick.
+		_, err = c.tx.Exec(c.ctx, `UPDATE projects SET name = coalesce($2, name), description = coalesce($3, description),
+			emoji = coalesce($4, emoji) WHERE id = $1`, pr.ID, name, in.Description, emoji)
 		if db.IsUniqueViolation(err) {
-			return errf(ErrConflict, "a project called %q already exists", name)
+			return errf(ErrConflict, "a project called %q already exists", *name)
 		}
 		if err != nil {
 			return err
