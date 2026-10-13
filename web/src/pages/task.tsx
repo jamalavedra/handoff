@@ -3,12 +3,15 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowUp, Bot, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
-import { ago, api, cn, type Comment, type Event, type Member, type Project, type Task, statusLabel } from "../lib";
+import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
 import { dueLabel } from "../quickadd";
 import { Avatar, Button, ErrorText, Input, TaskCheck, Textarea, Who } from "../components/ui";
 import { EventLine, useInvalidate } from "./tasks";
 
-type Detail = { task: Task; comments: Comment[]; events: Event[] };
+type Here = { member: MemberRef; typing?: boolean };
+type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] };
+
+const names = (h: Here[]) => (h.length <= 2 ? h.map((x) => x.member.name).join(" and ") : `${h[0].member.name} and ${h.length - 1} others`);
 
 const statusTone: Record<Task["status"], string> = {
   open: "bg-zinc-100 text-zinc-700",
@@ -115,7 +118,7 @@ export function TaskPage() {
 export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const navigate = useNavigate();
   const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
-  const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }) });
+  const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }), refetchInterval: 10000 });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const invalidate = useInvalidate();
@@ -128,7 +131,19 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const restore = useMutation({ mutationFn: () => api.tool("restore_task", { id }), onSuccess: invalidate });
   const claim = useMutation({ mutationFn: () => api.tool("claim_task", { id }), onSuccess: invalidate });
   const release = useMutation({ mutationFn: () => api.tool("release_task", { id }), onSuccess: invalidate });
-  const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); invalidate(); } });
+  const lastTyping = useRef(0);
+  const watch = (extra?: { typing?: boolean; leave?: boolean }) => api.tool("watch_task", { id, ...extra }).catch(() => {});
+  const typing = () => {
+    if (Date.now() - lastTyping.current < 3000) return;
+    lastTyping.current = Date.now();
+    watch({ typing: true });
+  };
+  useEffect(() => {
+    watch();
+    const beat = setInterval(watch, 15000);
+    return () => { clearInterval(beat); watch({ leave: true }); };
+  }, [id]);
+  const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); lastTyping.current = 0; watch(); invalidate(); } });
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: () => { setBlocker(""); invalidate(); } });
 
   if (q.error) {
@@ -149,6 +164,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const people = members.data?.members.filter((m) => m.status !== "removed") ?? [];
   const due = t.due ? dueLabel(t.due) : undefined;
   const activity = events.filter((e) => e.kind !== "commented");
+  const here = q.data.here ?? [];
+  const typers = here.filter((h) => h.typing);
 
   return (
     <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-13rem-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)]")}>
@@ -166,6 +183,12 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           <Link to="/projects/$id" params={{ id: t.project_id }} className="hover:text-zinc-700 hover:underline">{t.project}</Link>
           {t.deleted_at && <span className="ml-2 font-medium text-red-600">In trash</span>}
         </span>
+        {here.length > 0 && (
+          <div role="group" aria-label={`${names(here)} ${here.length === 1 ? "is" : "are"} here`} title={`${names(here)} ${here.length === 1 ? "is" : "are"} looking at this`} className="mr-1 flex items-center -space-x-1.5">
+            {here.slice(0, 3).map((h) => <Avatar key={h.member.id} m={h.member} className="ring-2 ring-zinc-50" />)}
+            {here.length > 3 && <span className="inline-flex size-6 items-center justify-center rounded-full bg-zinc-100 text-[10px] font-semibold text-zinc-600 ring-2 ring-zinc-50">+{here.length - 3}</span>}
+          </div>
+        )}
         {panel && (
           <Link to="/tasks/$id" params={{ id }} className="flex size-9 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100" aria-label="Open full page" title="Open full page">
             <Maximize2 className="size-4" />
@@ -285,11 +308,12 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-zinc-200 bg-white p-1.5 pl-3 shadow-lg md:bottom-4"
           onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(); }}
         >
+          {typers.length > 0 && <span aria-live="polite" className="absolute -top-6 left-3 animate-pulse text-xs text-zinc-500">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</span>}
           <textarea
             rows={1}
             placeholder="Add a comment…"
             value={comment}
-            onChange={(e) => setComment(e.target.value)}
+            onChange={(e) => { setComment(e.target.value); typing(); }}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
             aria-label="Comment"
             className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-zinc-400 sm:text-sm"

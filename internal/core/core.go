@@ -172,6 +172,9 @@ func (s *Service) run(ctx context.Context, p *Principal, fn func(c *call) error)
 	}
 	return s.DB.InOrg(ctx, p.Org.ID, func(tx pgx.Tx) error {
 		c := &call{ctx: ctx, tx: tx, p: p, s: s}
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.member_id', $1, true)`, p.Member.ID); err != nil {
+			return err
+		}
 		if err := c.load(); err != nil {
 			return err
 		}

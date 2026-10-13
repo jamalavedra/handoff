@@ -36,12 +36,16 @@ type Server struct {
 	tools   []*tools.Tool
 	byName  map[string]*tools.Tool
 	limiter *limiter
+
+	live     *hub
+	liveOnce sync.Once
 }
 
 func New(cfg *config.Config, svc *core.Service, m *mail.Mailer, static fs.FS, version string) *Server {
 	all := tools.All(svc)
 	return &Server{Cfg: cfg, Svc: svc, Auth: &auth.Store{DB: svc.DB}, Mail: m, Static: static, Version: version,
-		tools: all, byName: tools.ByName(all), limiter: newLimiter(10, time.Minute)}
+		tools: all, byName: tools.ByName(all), limiter: newLimiter(10, time.Minute),
+		live: &hub{subs: map[string]map[chan liveMsg]struct{}{}}}
 }
 
 type ctxKey int
@@ -79,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	org.HandleFunc("POST /api/logout", s.logout)
 	org.HandleFunc("GET /api/me", s.me)
 	org.HandleFunc("POST /api/tools/{name}", s.callTool)
+	org.HandleFunc("GET /api/live", s.liveStream)
 	org.HandleFunc("GET /api/oauth/request/{id}", s.oauthRequest)
 	org.HandleFunc("POST /api/oauth/consent", s.consent)
 	org.HandleFunc("GET /api/agents/{id}/keys", s.listKeys)

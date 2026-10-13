@@ -57,6 +57,7 @@ export type Task = {
   blocked_by: string[];
   blocks: string[];
   ready: boolean;
+  unseen?: boolean;
 };
 
 export type Project = { id: string; name: string; description?: string; emoji?: string; visibility: string; open_tasks: number; members?: string[] };

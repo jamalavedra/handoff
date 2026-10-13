@@ -32,6 +32,7 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
     <div className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-zinc-200/70 bg-white px-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:border-zinc-300 sm:min-h-12", selected && "border-accent ring-1 ring-accent hover:border-accent")}>
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate()} />
       <TaskLink id={t.id} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
+        {t.unseen && !closed && !selected && <span role="img" aria-label="Changed by someone else" title="Changed by someone else since you last opened it" className="size-2 shrink-0 rounded-full bg-accent" />}
         <span className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-zinc-400 line-through")}>{t.title}</span>
         {t.priority < 2 && !closed && <Flag aria-label={t.priority === 0 ? "Urgent" : "High priority"} className={cn("size-3.5 shrink-0", t.priority === 0 ? "fill-red-500 text-red-500" : "text-orange-500")} />}
       </TaskLink>
