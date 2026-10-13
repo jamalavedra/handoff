@@ -152,8 +152,12 @@ func (s *Server) liveStream(w http.ResponseWriter, r *http.Request) {
 			if m.Kind == "event" && m.Task == "" && !refresh() {
 				return
 			}
-			if m.Project != "" && !visible[m.Project] && !visible[m.FromProject] {
-				continue
+			if m.Project != "" && !visible[m.Project] {
+				if !visible[m.FromProject] {
+					continue
+				}
+				// Moved somewhere this viewer can't see: just tell them to refresh.
+				m.Task, m.Actor = "", ""
 			}
 			b, _ := json.Marshal(map[string]string{"kind": m.Kind, "task": m.Task, "actor": m.Actor})
 			fmt.Fprintf(w, "data: %s\n\n", b)

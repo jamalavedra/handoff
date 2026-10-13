@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -89,37 +90,62 @@ func (s *Service) WatchTask(ctx context.Context, p *Principal, in WatchTaskIn) (
 }
 
 type WhatChangedIn struct {
-	Since int64 `json:"since,omitempty" jsonschema:"cursor from a previous call; omit to continue from your last call"`
-	Limit int   `json:"limit,omitempty" jsonschema:"default 50, max 200"`
+	Since string `json:"since,omitempty" jsonschema:"cursor from a previous call; omit to continue from your last call"`
+	Limit int    `json:"limit,omitempty" jsonschema:"default 50, max 200"`
 }
 
 type WhatChangedOut struct {
 	Changes []EventOut `json:"changes" jsonschema:"what other people and agents did, oldest first"`
-	Cursor  int64      `json:"cursor" jsonschema:"pass as since to page on; the next call without since starts here"`
+	Cursor  string     `json:"cursor" jsonschema:"pass as since to page on; the next call without since starts here"`
 	More    bool       `json:"more,omitempty"`
 }
 
+// feedPos is a position in the change feed: events are ordered by (transaction id, event id).
+type feedPos struct{ xid, id int64 }
+
+func (f feedPos) String() string      { return fmt.Sprintf("%d:%d", f.xid, f.id) }
+func (f feedPos) after(g feedPos) bool { return f.xid > g.xid || (f.xid == g.xid && f.id > g.id) }
+
+func parseFeedPos(s string) (feedPos, error) {
+	a, b, ok := strings.Cut(s, ":")
+	x, err1 := strconv.ParseInt(a, 10, 64)
+	id, err2 := strconv.ParseInt(b, 10, 64)
+	if !ok || err1 != nil || err2 != nil || x < 0 || id < 0 {
+		return feedPos{}, errf(ErrInvalid, "since must be a cursor returned by what_changed")
+	}
+	return feedPos{x, id}, nil
+}
+
 // WhatChanged lists changes others made to visible tasks since the caller last asked.
-// The cursor is a transaction id: every transaction below the snapshot xmin has finished,
-// so [cursor, xmin) can't gain events later and nothing slips past the cursor.
+// Event ids are handed out before commit, so the feed is ordered by transaction instead:
+// every transaction below the snapshot xmin has finished, so nothing can appear behind the cursor later.
 func (s *Service) WhatChanged(ctx context.Context, p *Principal, in WhatChangedIn) (WhatChangedOut, error) {
 	out := WhatChangedOut{Changes: []EventOut{}}
 	err := s.run(ctx, p, func(c *call) error {
-		var stored, xmin int64
+		var stored string
 		var baseline time.Time
-		if err := c.tx.QueryRow(c.ctx, `SELECT feed_cursor, seen_baseline, pg_snapshot_xmin(pg_current_snapshot())::text::bigint
+		var xmin int64
+		if err := c.tx.QueryRow(c.ctx, `SELECT feed_after, seen_baseline, pg_snapshot_xmin(pg_current_snapshot())::text::bigint
 			FROM members WHERE id = $1`, p.Member.ID).Scan(&stored, &baseline, &xmin); err != nil {
 			return err
 		}
-		cursor := in.Since
-		if cursor <= 0 {
-			cursor = stored
+		since := in.Since
+		if since == "" {
+			since = stored
 		}
 		where := "e.xid < $2::text::xid8 AND e.actor_id <> $3 AND e.task_id IS NOT NULL AND t.project_id::text = ANY($1)"
 		args := []any{c.visible, strconv.FormatInt(xmin, 10), p.Member.ID}
-		if cursor > 0 {
-			where += " AND e.xid >= $4::text::xid8"
-			args = append(args, strconv.FormatInt(cursor, 10))
+		next := feedPos{xmin, 0}
+		if since != "" {
+			pos, err := parseFeedPos(since)
+			if err != nil {
+				return err
+			}
+			where += " AND (e.xid, e.id) > ($4::text::xid8, $5)"
+			args = append(args, strconv.FormatInt(pos.xid, 10), pos.id)
+			if pos.after(next) {
+				next = pos
+			}
 		} else {
 			where += " AND e.created_at > $4"
 			args = append(args, baseline)
@@ -129,24 +155,12 @@ func (s *Service) WhatChanged(ctx context.Context, p *Principal, in WhatChangedI
 		if err != nil {
 			return err
 		}
-		out.Cursor = xmin
 		if len(evs) > limit {
-			// Page on transaction boundaries so the next cursor never splits one.
-			next, page := evs[limit].xid, evs[:limit]
-			for len(page) > 0 && page[len(page)-1].xid == next {
-				page = page[:len(page)-1]
-			}
-			if len(page) == 0 {
-				one := where + fmt.Sprintf(" AND e.xid = $%d::text::xid8", len(args)+1)
-				if page, err = c.eventsBy(one, append(args, strconv.FormatInt(next, 10)), "e.id", 100000); err != nil {
-					return err
-				}
-				next++
-			}
-			evs, out.Cursor, out.More = page, next, true
+			evs, out.More = evs[:limit], true
+			next = feedPos{evs[limit-1].xid, evs[limit-1].ID}
 		}
-		out.Changes = evs
-		_, err = c.tx.Exec(c.ctx, `UPDATE members SET feed_cursor = greatest(feed_cursor, $2) WHERE id = $1`, p.Member.ID, out.Cursor)
+		out.Changes, out.Cursor = evs, next.String()
+		_, err = c.tx.Exec(c.ctx, `UPDATE members SET feed_after = $2 WHERE id = $1`, p.Member.ID, out.Cursor)
 		return err
 	})
 	return out, err

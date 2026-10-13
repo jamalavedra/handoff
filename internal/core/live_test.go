@@ -97,8 +97,16 @@ func TestMultiplayer(t *testing.T) {
 	if again := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor}); len(again.Changes) != 3 {
 		t.Fatalf("since: %+v", again)
 	}
-	if page := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor, Limit: 1}); len(page.Changes) != 1 || !page.More {
+	page := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor, Limit: 1})
+	if len(page.Changes) != 1 || !page.More {
 		t.Fatalf("page: %+v", page)
+	}
+	rest := changesFor(t, e, joan, core.WhatChangedIn{Since: page.Cursor, Limit: 10})
+	if len(rest.Changes) != 2 || rest.More || rest.Changes[0].ID == page.Changes[0].ID {
+		t.Fatalf("rest: %+v", rest)
+	}
+	if _, err := e.s.WhatChanged(e.ctx, joan, core.WhatChangedIn{Since: "bogus"}); err == nil {
+		t.Fatal("bad cursor accepted")
 	}
 
 	if _, err := e.s.WatchTask(e.ctx, joan, core.WatchTaskIn{ID: id, Typing: true}); err != nil {

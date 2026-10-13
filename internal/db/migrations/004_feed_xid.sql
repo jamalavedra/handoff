@@ -11,3 +11,7 @@ BEGIN
         'from_project', NEW.data->>'from_project_id')::text);
     RETURN NULL;
 END $$;
+
+-- what_changed cursors are now "xid:id"; the old event-id cursors can't be translated.
+ALTER TABLE members DROP COLUMN feed_cursor;
+ALTER TABLE members ADD COLUMN feed_after text NOT NULL DEFAULT '';
