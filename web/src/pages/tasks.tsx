@@ -66,7 +66,7 @@ export function NewTask({ project }: { project?: string }) {
 }
 
 export function MyTasksPage() {
-  const q = useQuery({ queryKey: ["tasks", "mine"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", limit: 200 }) });
+  const q = useQuery({ queryKey: ["tasks", "mine"], queryFn: allMyOpenTasks });
   const recent = useQuery({ queryKey: ["tasks", "recent-done"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", status: ["done"], limit: 5 }) });
   const [project, setProject] = useState("");
   const tasks = q.data?.tasks;
@@ -111,6 +111,17 @@ export function MyTasksPage() {
       )}
     </>
   );
+}
+
+// Chips and groups need the whole list, so page through search_tasks at its max page size.
+async function allMyOpenTasks() {
+  const page = 500;
+  const tasks: Task[] = [];
+  for (;;) {
+    const r = await api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", limit: page, offset: tasks.length });
+    tasks.push(...r.tasks);
+    if (r.tasks.length < page) return { tasks };
+  }
 }
 
 function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: () => void; name: string; n: number }) {

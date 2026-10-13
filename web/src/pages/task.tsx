@@ -59,8 +59,10 @@ function MenuItem({ icon: Icon, onClick, children, danger }: { icon: typeof Flag
 
 function TitleEditor({ t, onSave, disabled }: { t: Task; onSave: (title: string) => void; disabled: boolean }) {
   const [v, setV] = useState(t.title);
+  const discard = useRef(false);
   useEffect(() => setV(t.title), [t.title]);
   const commit = () => {
+    if (discard.current) { discard.current = false; return; }
     const next = v.replace(/\s+/g, " ").trim();
     if (!next) setV(t.title);
     else if (next !== t.title) onSave(next);
@@ -75,19 +77,19 @@ function TitleEditor({ t, onSave, disabled }: { t: Task; onSave: (title: string)
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
-        if (e.key === "Escape") { setV(t.title); e.currentTarget.blur(); }
+        if (e.key === "Escape") { discard.current = true; setV(t.title); e.currentTarget.blur(); }
       }}
       className={cn("-mx-1 min-w-0 flex-1 resize-none rounded-md bg-transparent px-1 text-2xl leading-tight font-semibold outline-none [field-sizing:content] focus:bg-white focus:ring-2 focus:ring-zinc-300", (t.status === "done" || t.status === "cancelled") && "text-zinc-400")}
     />
   );
 }
 
-function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) => void; disabled: boolean }) {
+function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) => Promise<unknown>; disabled: boolean }) {
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState(t.body ?? "");
   if (editing)
     return (
-      <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); onSave(v); setEditing(false); }}>
+      <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); onSave(v).then(() => setEditing(false), () => {}); }}>
         <Textarea autoFocus rows={5} value={v} onChange={(e) => setV(e.target.value)} aria-label="Details" />
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
@@ -202,7 +204,7 @@ export function TaskPage() {
 
       <ErrorText error={err} />
 
-      <div className="mb-6"><BodyEditor key={t.body ?? ""} t={t} disabled={locked} onSave={(body) => update.mutate({ body, body_mode: "replace", confirm: true })} /></div>
+      <div className="mb-6"><BodyEditor key={t.body ?? ""} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ body, body_mode: "replace", confirm: true })} /></div>
 
       <section className="mb-6" aria-label="Dependencies">
         {(t.blocked_by.length > 0 || t.blocks.length > 0) && (
