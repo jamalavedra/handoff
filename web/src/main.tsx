@@ -2,7 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useRouterState } from "@tanstack/react-router";
-import { Activity, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, MoreHorizontal, Plus, Settings, Trash2, Zap } from "lucide-react";
+import { Activity, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Zap } from "lucide-react";
+import { setTheme, useTheme, type Theme } from "./theme";
 import "./index.css";
 import { api, cn, type Me, type Project } from "./lib";
 import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
@@ -11,6 +12,7 @@ import { TaskPage } from "./pages/task";
 import { AgentsPage } from "./pages/agents";
 import { AdminPage } from "./pages/admin";
 import { QuickAddProvider, useQuickAdd } from "./components/quickadd";
+import { PageHeader } from "./components/ui";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 5000, retry: false, staleTime: 2000 } } });
 
@@ -34,7 +36,7 @@ function Shell() {
 
 function NavLink({ to, icon: Icon, children }: { to: string; icon: typeof Inbox; children: React.ReactNode }) {
   return (
-    <Link to={to} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100" activeProps={{ className: "bg-zinc-100 font-medium text-zinc-900" }} activeOptions={{ exact: to === "/" }}>
+    <Link to={to} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100" activeProps={{ className: "bg-accent-soft font-medium text-accent" }} activeOptions={{ exact: to === "/" }}>
       <Icon className="size-4" />
       {children}
     </Link>
@@ -92,7 +94,8 @@ function Layout({ me }: { me: Me }) {
               </Link>
             ))}
           </div>
-          <div className="mt-auto flex items-center justify-between border-t border-zinc-100 px-2 pt-3 text-sm">
+          <div className="mt-auto px-2 pb-3"><ThemeToggle /></div>
+          <div className="flex items-center justify-between border-t border-zinc-100 px-2 pt-3 text-sm">
             <div className="min-w-0">
               <div className="truncate font-medium">{me.member?.name}</div>
               <div className="truncate text-xs text-zinc-500">{me.member?.email}</div>
@@ -136,7 +139,7 @@ const moreRoutes = ["/more", "/projects", "/activity", "/trash", "/admin"];
 
 function Tab({ to, icon: Icon, label, active, badge }: { to: string; icon: typeof Inbox; label: string; active: boolean; badge?: number }) {
   return (
-    <Link to={to} className={cn("relative flex flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-medium text-zinc-500", active && "bg-zinc-100 text-zinc-900")}>
+    <Link to={to} className={cn("relative flex flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-medium text-zinc-500", active && "bg-accent-soft text-accent")}>
       <Icon className="size-5" />
       {label}
       {!!badge && <span className="absolute top-1 right-[calc(50%-1.25rem)] rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 text-white">{badge}</span>}
@@ -167,13 +170,32 @@ function MoreRow({ to, icon: Icon, children }: { to: string; icon: typeof Inbox;
   );
 }
 
+const themes: { t: Theme; icon: typeof Sun; label: string }[] = [
+  { t: "system", icon: Monitor, label: "Match device" },
+  { t: "light", icon: Sun, label: "Light" },
+  { t: "dark", icon: Moon, label: "Dark" },
+];
+
+function ThemeToggle() {
+  const theme = useTheme();
+  return (
+    <div role="radiogroup" aria-label="Theme" className="inline-flex rounded-full bg-zinc-100 p-0.5">
+      {themes.map(({ t, icon: Icon, label }) => (
+        <button key={t} role="radio" aria-checked={theme === t} aria-label={label} title={label} onClick={() => setTheme(t)} className={cn("flex size-8 items-center justify-center rounded-full text-zinc-500 transition-colors md:size-7", theme === t && "bg-white text-zinc-900 shadow-sm")}>
+          <Icon className="size-4" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function MorePage() {
   const me = useMe();
   const { projects } = useLayoutData();
   const logout = useLogout();
   return (
     <>
-      <h1 className="mb-4 text-xl font-semibold">More</h1>
+      <PageHeader title="More" />
       <div className="mb-6 overflow-hidden rounded-xl border border-zinc-200 bg-white">
         <MoreRow to="/projects" icon={FolderKanban}>Projects</MoreRow>
         <MoreRow to="/activity" icon={Activity}>Activity</MoreRow>
@@ -193,6 +215,10 @@ function MorePage() {
           </div>
         </>
       )}
+      <div className="mb-6 flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-3">
+        <span className="text-[15px]">Appearance</span>
+        <ThemeToggle />
+      </div>
       <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-3">
         <div className="min-w-0">
           <div className="truncate font-medium">{me.data?.member?.name}</div>

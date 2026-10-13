@@ -25,7 +25,7 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
   return (
     <div>
-    <div className="flex min-h-14 items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors hover:border-zinc-300 sm:min-h-12">
+    <div className="flex min-h-14 items-center gap-3 rounded-2xl border border-zinc-200/70 bg-white px-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:border-zinc-300 sm:min-h-12">
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate()} />
       <Link to="/tasks/$id" params={{ id: t.id }} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
         <span className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-zinc-400 line-through")}>{t.title}</span>
@@ -130,7 +130,7 @@ function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: (
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-colors md:h-8 md:px-3", active ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300")}
+      className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-colors md:h-8 md:px-3", active ? "border-accent bg-accent text-on-accent" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300")}
     >
       {name}<span className={cn("text-xs", active ? "text-white/70" : "text-zinc-400")}>{n}</span>
     </button>
