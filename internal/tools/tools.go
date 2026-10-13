@@ -21,6 +21,7 @@ type Tool struct {
 	Agent       bool
 	ReadOnly    bool
 	Destructive bool
+	InputSchema *jsonschema.Schema
 	call        func(ctx context.Context, p *core.Principal, raw json.RawMessage) (any, error)
 	add         func(s *mcp.Server, p *core.Principal)
 }
@@ -58,9 +59,10 @@ func def[In, Out any](t Tool, fn func(context.Context, *core.Principal, In) (Out
 	mt := &mcp.Tool{Name: t.Name, Description: t.Description,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: t.ReadOnly, DestructiveHint: &destr, OpenWorldHint: new(bool)}}
 	var err error
-	if mt.InputSchema, err = jsonschema.For[In](nil); err != nil {
+	if t.InputSchema, err = jsonschema.For[In](nil); err != nil {
 		panic(t.Name + ": " + err.Error())
 	}
+	mt.InputSchema = t.InputSchema
 	if mt.OutputSchema, err = jsonschema.For[Out](nil); err != nil {
 		panic(t.Name + ": " + err.Error())
 	}

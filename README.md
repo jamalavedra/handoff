@@ -20,6 +20,8 @@ Ideas borrowed from [beads](https://github.com/gastownhall/beads): a **ready** l
 
 MCP endpoint: `https://acme.<domain>/mcp` (streamable HTTP). Add it as a custom connector in Claude or ChatGPT and sign in. Headless agents send `Authorization: Bearer hnd_...`. The same tools are available as `POST /api/tools/<name>` with a JSON body.
 
+Docs written for AI agents are served at `/llms.txt` and `/llms-full.txt` on every workspace host (and the apex), with that workspace's real addresses and a tool reference generated from the live registry.
+
 The Agents page has a paste-into-any-agent onboarding prompt that connects the agent, calls `get_context`, offers to import open to-dos, and tells it to use Handoff from then on.
 
 ## Run it locally

@@ -215,7 +215,8 @@ type ContextOut struct {
 	Guidelines   string       `json:"guidelines"`
 }
 
-const guidelines = `Handoff is the shared task list for this company's people and agents.
+// Guidelines are returned by get_context and published in /llms-full.txt.
+const Guidelines = `Handoff is the shared task list for this company's people and agents.
 - Start with list_ready, then claim_task before working so nobody else picks it up; close_task when finished.
 - Ask the user before creating more than a few tasks at once. Use external_id so a retried create_tasks never duplicates.
 - Call what_changed to catch up on what others changed since your last call. Tasks marked unseen changed since you last opened them.
@@ -229,7 +230,7 @@ func (s *Service) GetContext(ctx context.Context, p *Principal, _ struct{}) (Con
 	err := s.run(ctx, p, func(c *call) error {
 		out.You = c.memberOut(p.Member)
 		out.Org = *p.Org
-		out.Guidelines = guidelines
+		out.Guidelines = Guidelines
 		var err error
 		if out.InboxUnread, err = c.unreadCount(); err != nil {
 			return err

@@ -26,7 +26,7 @@ function CopyBox({ text, label }: { text: string; label: string }) {
 export function onboardingPrompt(org: string, url: string) {
   return `Connect to ${org}'s Handoff task list, which our people and agents share.
 1. Add this remote MCP server: ${url} (sign in when asked; I'll approve the connection).
-2. Call get_context and follow its guidelines.
+2. Call get_context and follow its guidelines. Full docs for agents: ${url.replace(/\/mcp$/, "")}/llms-full.txt
 3. Look through our recent conversations for open to-dos and show me the list. After I confirm, add them with create_tasks (use external_id so nothing duplicates).
 4. Remember: use Handoff for my tasks from now on — check list_ready before starting work, claim_task what you pick up, and close_task when done.`;
 }
