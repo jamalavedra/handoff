@@ -7,6 +7,7 @@ import { Avatar, Button, Card, DuePill, Empty, ErrorText, Input, PageHeader, Sel
 import { useQuickAdd } from "../components/quickadd";
 import { groupByDue } from "../quickadd";
 import { useMe } from "../main";
+import { TaskLink, usePanelTask } from "../components/tasklink";
 
 export function useInvalidate() {
   const qc = useQueryClient();
@@ -23,14 +24,15 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   });
   const waiting = !closed && !t.ready && t.blocked_by.length > 0 && !t.claimed_by;
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
+  const selected = usePanelTask() === t.id;
   return (
     <div>
-    <div className="flex min-h-14 items-center gap-3 rounded-2xl border border-zinc-200/70 bg-white px-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:border-zinc-300 sm:min-h-12">
+    <div className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-zinc-200/70 bg-white px-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:border-zinc-300 sm:min-h-12", selected && "border-accent ring-1 ring-accent hover:border-accent")}>
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate()} />
-      <Link to="/tasks/$id" params={{ id: t.id }} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
+      <TaskLink id={t.id} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
         <span className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-zinc-400 line-through")}>{t.title}</span>
         {t.priority < 2 && !closed && <Flag aria-label={t.priority === 0 ? "Urgent" : "High priority"} className={cn("size-3.5 shrink-0", t.priority === 0 ? "fill-red-500 text-red-500" : "text-orange-500")} />}
-      </Link>
+      </TaskLink>
       <div className="flex shrink-0 items-center gap-1.5">
         {t.claimed_by && !closed && (
           <span title={`${t.claimed_by.name} is working on it`} className="flex items-center gap-1.5 rounded-full bg-zinc-100 py-0.5 pr-1 pl-2 text-xs font-medium text-zinc-700 sm:pr-2">
@@ -227,7 +229,7 @@ export function EventLine({ e, showTask = true }: { e: Event; showTask?: boolean
       <span className="w-14 shrink-0 text-xs leading-5 text-zinc-400 sm:w-20">{ago(e.at)}</span>
       <div className="min-w-0">
         <Who m={e.actor} by={e.on_behalf_of} /> <span className="text-zinc-500">{verbs[e.kind] ?? e.kind}</span>{" "}
-        {showTask && e.task_id && <Link to="/tasks/$id" params={{ id: e.task_id }} className="font-medium hover:underline">{e.task_title || e.task_id}</Link>}
+        {showTask && e.task_id && <TaskLink id={e.task_id} className="font-medium hover:underline">{e.task_title || e.task_id}</TaskLink>}
         {detail && <span className="text-zinc-500"> — {detail}</span>}
         <span className="ml-2 hidden text-xs text-zinc-400 sm:inline">via {e.via}</span>
       </div>

@@ -1,14 +1,15 @@
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useRouterState } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Activity, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import "./index.css";
 import { api, cn, type Me, type Project } from "./lib";
 import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
 import { ActivityPage, MyTasksPage, ProjectPage, ProjectsPage, ReadyPage, TrashPage } from "./pages/tasks";
-import { TaskPage } from "./pages/task";
+import { TaskPage, TaskView } from "./pages/task";
+import { usePanelTask, useWide } from "./components/tasklink";
 import { AgentsPage } from "./pages/agents";
 import { AdminPage } from "./pages/admin";
 import { QuickAddProvider, useQuickAdd } from "./components/quickadd";
@@ -113,9 +114,38 @@ function Layout({ me }: { me: Me }) {
             </div>
           </main>
         </div>
+        <TaskPanel />
         <MobileTabBar pending={pending} />
       </div>
     </QuickAddProvider>
+  );
+}
+
+// TaskPanel shows ?task=<id> beside the list on wide screens; narrow screens get the full task page.
+function TaskPanel() {
+  const task = usePanelTask();
+  const wide = useWide();
+  const navigate = useNavigate();
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const open = !!task && !path.startsWith("/tasks/");
+  useEffect(() => {
+    if (open && !wide) navigate({ to: "/tasks/$id", params: { id: task }, replace: true });
+  }, [open, wide, task, navigate]);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (e.key !== "Escape" || e.defaultPrevented || el.closest("input, textarea, select, [role=dialog], [role=menu]")) return;
+      navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, navigate]);
+  if (!open || !wide) return null;
+  return (
+    <aside key={task} aria-label="Task" className="sticky top-0 h-dvh w-[30rem] shrink-0 overflow-y-auto border-l border-zinc-200 bg-zinc-50 xl:w-[34rem]">
+      <TaskView id={task} panel />
+    </aside>
   );
 }
 
@@ -230,7 +260,10 @@ function MorePage() {
   );
 }
 
-const root = createRootRoute({ component: Shell });
+const root = createRootRoute({
+  component: Shell,
+  validateSearch: (s: Record<string, unknown>): { task?: string } => ({ ...s, task: typeof s.task === "string" && s.task ? s.task : undefined }),
+});
 const r = <P extends string>(path: P, component: () => React.ReactNode) => createRoute({ getParentRoute: () => root, path, component });
 const router = createRouter({
   routeTree: root.addChildren([
