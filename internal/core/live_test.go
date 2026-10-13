@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/joalavedra/handoff/internal/core"
 )
@@ -21,11 +22,31 @@ func unseenIn(t *testing.T, e *env, p *core.Principal, id string) bool {
 	return false
 }
 
+// changesFor retries briefly: another test's open transaction can hold the snapshot xmin back.
+func changesFor(t *testing.T, e *env, p *core.Principal, in core.WhatChangedIn) core.WhatChangedOut {
+	t.Helper()
+	for i := 0; ; i++ {
+		w, err := e.s.WhatChanged(e.ctx, p, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(w.Changes) > 0 || i == 40 {
+			return w
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func TestMultiplayer(t *testing.T) {
 	e := setup(t)
 	joan := e.org(t, "acme")
 	bot := e.agent(t, joan, "Legal bot", nil)
-	id := e.create(t, joan, core.NewTask{Title: "Review contract"})[0].ID
+	ts := e.create(t, joan, core.NewTask{Title: "Review contract"}, core.NewTask{Title: "Countersign"})
+	id, id2 := ts[0].ID, ts[1].ID
+	start, err := e.s.WhatChanged(e.ctx, joan, core.WhatChangedIn{})
+	if err != nil || len(start.Changes) != 0 {
+		t.Fatalf("own creates in feed: %+v %v", start, err)
+	}
 	if unseenIn(t, e, joan, id) {
 		t.Fatal("own change marked unseen")
 	}
@@ -43,20 +64,41 @@ func TestMultiplayer(t *testing.T) {
 		t.Fatal("still unseen after opening")
 	}
 
-	w, err := e.s.WhatChanged(e.ctx, joan, core.WhatChangedIn{})
-	if err != nil || len(w.Changes) == 0 {
-		t.Fatalf("what_changed: %+v %v", w, err)
+	if _, err := e.s.Comment(e.ctx, bot, core.CommentIn{ID: id, Body: "Clause 4 changed"}); err != nil {
+		t.Fatal(err)
+	}
+	high := 1
+	if _, err := e.s.UpdateTask(e.ctx, joan, core.UpdateTaskIn{ID: id, Priority: &high}); err != nil {
+		t.Fatal(err)
+	}
+	if !unseenIn(t, e, joan, id) {
+		t.Fatal("own edit hid someone else's unread comment")
+	}
+
+	if _, err := e.s.ClaimTask(e.ctx, bot, core.ClaimTaskIn{ID: id2}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ = e.s.GetTask(e.ctx, joan, core.TaskIDIn{ID: id2}); len(d.Here) != 1 {
+		t.Fatalf("claim presence: %+v", d.Here)
+	}
+
+	w := changesFor(t, e, joan, core.WhatChangedIn{})
+	if len(w.Changes) != 3 {
+		t.Fatalf("what_changed: %+v", w)
 	}
 	for _, c := range w.Changes {
 		if c.Actor.Name != "Legal bot" {
 			t.Fatalf("own change in feed: %+v", c)
 		}
 	}
-	if w2, _ := e.s.WhatChanged(e.ctx, joan, core.WhatChangedIn{}); len(w2.Changes) != 0 || w2.Cursor != w.Cursor {
+	if w2, _ := e.s.WhatChanged(e.ctx, joan, core.WhatChangedIn{}); len(w2.Changes) != 0 {
 		t.Fatalf("second call: %+v", w2)
 	}
-	if again, _ := e.s.WhatChanged(e.ctx, joan, core.WhatChangedIn{Since: w.Changes[0].ID - 1}); len(again.Changes) != len(w.Changes) {
+	if again := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor}); len(again.Changes) != 3 {
 		t.Fatalf("since: %+v", again)
+	}
+	if page := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor, Limit: 1}); len(page.Changes) != 1 || !page.More {
+		t.Fatalf("page: %+v", page)
 	}
 
 	if _, err := e.s.WatchTask(e.ctx, joan, core.WatchTaskIn{ID: id, Typing: true}); err != nil {

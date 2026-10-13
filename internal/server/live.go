@@ -17,6 +17,8 @@ type liveMsg struct {
 	Task    string `json:"task,omitempty"`
 	Actor   string `json:"actor,omitempty"`
 	Project string `json:"project,omitempty"`
+	// FromProject is set when the task moved; viewers of the old project need to hear it left.
+	FromProject string `json:"from_project,omitempty"`
 }
 
 type hub struct {
@@ -122,7 +124,7 @@ func (s *Server) liveStream(w http.ResponseWriter, r *http.Request) {
 
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()
-	recheck := time.NewTicker(time.Minute)
+	recheck := time.NewTicker(15 * time.Second)
 	defer recheck.Stop()
 	refresh := func() bool {
 		if p, err = s.sessionPrincipal(r); err != nil || p == nil {
@@ -150,7 +152,7 @@ func (s *Server) liveStream(w http.ResponseWriter, r *http.Request) {
 			if m.Kind == "event" && m.Task == "" && !refresh() {
 				return
 			}
-			if m.Project != "" && !visible[m.Project] {
+			if m.Project != "" && !visible[m.Project] && !visible[m.FromProject] {
 				continue
 			}
 			b, _ := json.Marshal(map[string]string{"kind": m.Kind, "task": m.Task, "actor": m.Actor})

@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -98,42 +100,52 @@ type WhatChangedOut struct {
 }
 
 // WhatChanged lists changes others made to visible tasks since the caller last asked.
+// The cursor is a transaction id: every transaction below the snapshot xmin has finished,
+// so [cursor, xmin) can't gain events later and nothing slips past the cursor.
 func (s *Service) WhatChanged(ctx context.Context, p *Principal, in WhatChangedIn) (WhatChangedOut, error) {
 	out := WhatChangedOut{Changes: []EventOut{}}
 	err := s.run(ctx, p, func(c *call) error {
-		cursor := in.Since
+		var stored, xmin int64
 		var baseline time.Time
-		if err := c.tx.QueryRow(c.ctx, `SELECT feed_cursor, seen_baseline FROM members WHERE id = $1`, p.Member.ID).Scan(&out.Cursor, &baseline); err != nil {
+		if err := c.tx.QueryRow(c.ctx, `SELECT feed_cursor, seen_baseline, pg_snapshot_xmin(pg_current_snapshot())::text::bigint
+			FROM members WHERE id = $1`, p.Member.ID).Scan(&stored, &baseline, &xmin); err != nil {
 			return err
 		}
+		cursor := in.Since
 		if cursor <= 0 {
-			cursor = out.Cursor
+			cursor = stored
 		}
-		where := "e.id > $2 AND e.actor_id <> $3 AND e.task_id IS NOT NULL AND t.project_id::text = ANY($1)"
-		args := []any{c.visible, cursor, p.Member.ID}
-		if cursor == 0 {
+		where := "e.xid < $2::text::xid8 AND e.actor_id <> $3 AND e.task_id IS NOT NULL AND t.project_id::text = ANY($1)"
+		args := []any{c.visible, strconv.FormatInt(xmin, 10), p.Member.ID}
+		if cursor > 0 {
+			where += " AND e.xid >= $4::text::xid8"
+			args = append(args, strconv.FormatInt(cursor, 10))
+		} else {
 			where += " AND e.created_at > $4"
 			args = append(args, baseline)
 		}
 		limit := clampLimit(in.Limit, 50, 200)
-		evs, err := c.events(where, args, limit+1, true)
+		evs, err := c.eventsBy(where, args, "e.xid, e.id", limit+1)
 		if err != nil {
 			return err
 		}
+		out.Cursor = xmin
 		if len(evs) > limit {
-			evs, out.More = evs[:limit], true
+			// Page on transaction boundaries so the next cursor never splits one.
+			next, page := evs[limit].xid, evs[:limit]
+			for len(page) > 0 && page[len(page)-1].xid == next {
+				page = page[:len(page)-1]
+			}
+			if len(page) == 0 {
+				one := where + fmt.Sprintf(" AND e.xid = $%d::text::xid8", len(args)+1)
+				if page, err = c.eventsBy(one, append(args, strconv.FormatInt(next, 10)), "e.id", 100000); err != nil {
+					return err
+				}
+				next++
+			}
+			evs, out.Cursor, out.More = page, next, true
 		}
 		out.Changes = evs
-		switch {
-		case len(evs) > 0:
-			out.Cursor = evs[len(evs)-1].ID
-		case cursor == 0:
-			if err := c.tx.QueryRow(c.ctx, `SELECT coalesce(max(id), 0) FROM events`).Scan(&out.Cursor); err != nil {
-				return err
-			}
-		default:
-			out.Cursor = cursor
-		}
 		_, err = c.tx.Exec(c.ctx, `UPDATE members SET feed_cursor = greatest(feed_cursor, $2) WHERE id = $1`, p.Member.ID, out.Cursor)
 		return err
 	})
