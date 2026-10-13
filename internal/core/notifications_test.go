@@ -116,4 +116,12 @@ func TestInboxNewestFirstKeepsUnread(t *testing.T) {
 	if len(in.Notifications) != 3 || in.Notifications[0].TaskTitle != "Three" || !in.Notifications[0].Read || in.Notifications[2].TaskTitle != "One" || in.Notifications[2].Read {
 		t.Fatalf("limit dropped unread or broke order: %+v", in.Notifications)
 	}
+	// Newer unread alerts don't use up the read-history limit.
+	e.create(t, joan, core.NewTask{Title: "Four", Assignee: "Legal bot"})
+	if in, err = e.s.Inbox(e.ctx, bot, core.InboxIn{Limit: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Notifications) != 4 || in.Notifications[0].TaskTitle != "Four" || !in.Notifications[1].Read {
+		t.Fatalf("unread crowded out read history: %+v", in.Notifications)
+	}
 }

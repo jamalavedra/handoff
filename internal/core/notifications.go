@@ -106,7 +106,7 @@ func (s *Service) Inbox(ctx context.Context, p *Principal, in InboxIn) (InboxOut
 		}
 		rows, err := c.tx.Query(c.ctx, `SELECT n.id, n.kind, n.task_id, t.title, n.actor_id::text, n.excerpt, n.read_at IS NOT NULL, n.created_at
 			`+visibleNotifications+cond+`
-			AND (n.read_at IS NULL OR n.id IN (SELECT n.id `+visibleNotifications+cond+` ORDER BY n.id DESC LIMIT $3))
+			AND (n.read_at IS NULL OR n.id IN (SELECT n.id `+visibleNotifications+cond+` AND n.read_at IS NOT NULL ORDER BY n.id DESC LIMIT $3))
 			ORDER BY n.id DESC LIMIT 200`, p.Member.ID, c.visible, clampLimit(in.Limit, 50, 200))
 		if err != nil {
 			return err
