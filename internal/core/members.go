@@ -71,18 +71,23 @@ type EventOut struct {
 	Kind       string         `json:"kind"`
 	Data       map[string]any `json:"data"`
 	At         string         `json:"at"`
+	xid        int64
 }
 
 func (c *call) events(where string, args []any, limit int, asc bool) ([]EventOut, error) {
-	order := "DESC"
+	order := "e.id DESC"
 	if asc {
-		order = "ASC"
+		order = "e.id"
 	}
+	return c.eventsBy(where, args, order, limit)
+}
+
+func (c *call) eventsBy(where string, args []any, order string, limit int) ([]EventOut, error) {
 	args = append(args, limit)
-	rows, err := c.tx.Query(c.ctx, fmt.Sprintf(`SELECT e.id, coalesce(e.task_id, ''), coalesce(t.title, ''), e.actor_id::text,
+	rows, err := c.tx.Query(c.ctx, fmt.Sprintf(`SELECT e.id, e.xid::text::bigint, coalesce(e.task_id, ''), coalesce(t.title, ''), e.actor_id::text,
 		coalesce(e.on_behalf_of::text, ''), e.via, e.kind, e.data, e.created_at
 		FROM events e LEFT JOIN tasks t ON t.org_id = e.org_id AND t.id = e.task_id
-		WHERE %s ORDER BY e.id %s LIMIT $%d`, where, order, len(args)), args...)
+		WHERE %s ORDER BY %s LIMIT $%d`, where, order, len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +98,7 @@ func (c *call) events(where string, args []any, limit int, asc bool) ([]EventOut
 		var actor, obo string
 		var data []byte
 		var at time.Time
-		if err := rows.Scan(&e.ID, &e.TaskID, &e.TaskTitle, &actor, &obo, &e.Via, &e.Kind, &data, &at); err != nil {
+		if err := rows.Scan(&e.ID, &e.xid, &e.TaskID, &e.TaskTitle, &actor, &obo, &e.Via, &e.Kind, &data, &at); err != nil {
 			return nil, err
 		}
 		e.Actor, e.OnBehalfOf, e.At = c.ref(actor), c.ref(obo), ts(&at)

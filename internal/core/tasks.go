@@ -71,11 +71,11 @@ const taskSelect = `SELECT t.id, t.project_id::text, t.title, t.body, t.status, 
 	` + openBlockers + `, ` + unseen + `
 	FROM tasks t`
 
-// unseen: the latest change was by someone else, after the caller last opened the task.
-const unseen = `coalesce((SELECT e.actor_id::text <> current_setting('app.member_id', true) AND e.created_at > coalesce(
+// unseen: someone else changed the task after the caller last opened it.
+const unseen = `EXISTS (SELECT 1 FROM events e WHERE e.org_id = t.org_id AND e.task_id = t.id
+	AND e.actor_id::text <> current_setting('app.member_id', true) AND e.created_at > coalesce(
 		(SELECT s.seen_at FROM task_seen s WHERE s.org_id = t.org_id AND s.task_id = t.id AND s.member_id::text = current_setting('app.member_id', true)),
-		(SELECT m.seen_baseline FROM members m WHERE m.org_id = t.org_id AND m.id::text = current_setting('app.member_id', true)))
-	FROM events e WHERE e.org_id = t.org_id AND e.task_id = t.id ORDER BY e.id DESC LIMIT 1), false)`
+		(SELECT m.seen_baseline FROM members m WHERE m.org_id = t.org_id AND m.id::text = current_setting('app.member_id', true))))`
 
 // readyCond matches tasks someone can start now.
 const readyCond = `t.deleted_at IS NULL
@@ -772,6 +772,9 @@ func (s *Service) UpdateTask(ctx context.Context, p *Principal, in UpdateTaskIn)
 			}
 			put("project_id", pr.ID)
 			changed["project"] = pr.Name
+			if pr.ID != r.ProjectID {
+				changed["from_project_id"] = r.ProjectID
+			}
 		}
 		if len(set) == 0 {
 			return errf(ErrInvalid, "nothing to update")
@@ -835,6 +838,11 @@ func (s *Service) ClaimTask(ctx context.Context, p *Principal, in ClaimTaskIn) (
 		}
 		if err := c.event(r.ID, "claimed", map[string]any{"lease_minutes": lease}); err != nil {
 			return err
+		}
+		if p.Member.IsAgent() {
+			if err := c.markHere(r.ID, agentHere, nil); err != nil {
+				return err
+			}
 		}
 		r, err = c.getTask(r.ID, false, false)
 		out.Task = c.out(r, true)
