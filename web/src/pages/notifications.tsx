@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { AtSign, CheckCheck, ShieldQuestion, UserPlus } from "lucide-react";
 import { ago, api, cn, type Notification } from "../lib";
 import { Avatar, Button, Card, Empty, ErrorText, PageHeader } from "../components/ui";
@@ -7,7 +8,9 @@ import { useInvalidate } from "./tasks";
 
 export type InboxData = { notifications: Notification[]; unread: number };
 
-export const useInbox = () => useQuery({ queryKey: ["inbox"], queryFn: () => api.tool<InboxData>("inbox", { limit: 100 }) });
+export const useInbox = () => useQuery({ queryKey: ["inbox"], queryFn: () => api.tool<InboxData>("inbox", { limit: 200 }) });
+
+const rowClass = "flex items-start gap-3 px-4 py-3 hover:bg-zinc-50";
 
 const verb = { mention: "mentioned you in", assigned: "assigned you", approval: "needs your approval on" } as const;
 const icon = { mention: AtSign, assigned: UserPlus, approval: ShieldQuestion } as const;
@@ -16,6 +19,7 @@ export function NotificationsPage() {
   const q = useInbox();
   const invalidate = useInvalidate();
   const readAll = useMutation({ mutationFn: () => api.tool("mark_read", { all: true }), onSuccess: invalidate });
+  const readOne = useMutation({ mutationFn: (id: number) => api.tool("mark_read", { ids: [id] }), onSuccess: invalidate });
   const items = q.data?.notifications;
   return (
     <>
@@ -36,9 +40,7 @@ export function NotificationsPage() {
           <ul aria-label="Notifications">
             {items.map((n) => {
               const Icon = icon[n.kind];
-              return (
-                <li key={n.id} className={cn("border-b border-zinc-100 last:border-0", !n.read && "bg-accent-soft/50")}>
-                  <TaskLink id={n.task_id} className="flex items-start gap-3 px-4 py-3 hover:bg-zinc-50">
+              const body = (<>
                     <span className="relative mt-0.5 shrink-0">
                       {n.actor && <Avatar m={n.actor} className="size-8" />}
                       <Icon className="absolute -right-1 -bottom-1 size-4 rounded-full bg-white p-0.5 text-zinc-500 shadow-sm" />
@@ -51,7 +53,14 @@ export function NotificationsPage() {
                       <span className="mt-0.5 block text-xs text-zinc-400">{ago(n.at)}</span>
                     </span>
                     {!n.read && <span role="img" aria-label="Unread" className="mt-2 size-2 shrink-0 rounded-full bg-accent" />}
-                  </TaskLink>
+                  </>);
+              return (
+                <li key={n.id} className={cn("border-b border-zinc-100 last:border-0", !n.read && "bg-accent-soft/50")}>
+                  {n.kind === "approval" ? (
+                    <Link to="/agents" onClick={() => readOne.mutate(n.id)} className={rowClass}>{body}</Link>
+                  ) : (
+                    <TaskLink id={n.task_id} className={rowClass}>{body}</TaskLink>
+                  )}
                 </li>
               );
             })}

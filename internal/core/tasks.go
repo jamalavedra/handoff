@@ -440,8 +440,11 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 		if err := c.markSeen(r.ID); err != nil {
 			return err
 		}
-		if _, err := c.tx.Exec(c.ctx, `UPDATE notifications SET read_at = now() WHERE member_id = $1 AND task_id = $2 AND read_at IS NULL`, p.Member.ID, r.ID); err != nil {
-			return err
+		// Agents read a task on purpose. The web app polls open tasks, so it calls mark_read when someone actually looks.
+		if p.Via != "web" {
+			if _, err := c.tx.Exec(c.ctx, `UPDATE notifications SET read_at = now() WHERE member_id = $1 AND task_id = $2 AND read_at IS NULL AND kind <> 'approval'`, p.Member.ID, r.ID); err != nil {
+				return err
+			}
 		}
 		if p.Member.IsAgent() {
 			if err := c.markHere(r.ID, agentHere, nil); err != nil {

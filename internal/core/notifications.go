@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -61,9 +62,12 @@ func (c *call) mentioned(body string) []*Member {
 			if r, _ := utf8.DecodeRuneInString(rest[len(n):]); unicode.IsLetter(r) || unicode.IsDigit(r) {
 				continue
 			}
-			if !seen[m.ID] {
-				seen[m.ID] = true
-				out = append(out, m)
+			// Two members can share a name; notify all of them rather than guess.
+			for _, same := range ms {
+				if strings.EqualFold(same.Name, m.Name) && !seen[same.ID] {
+					seen[same.ID] = true
+					out = append(out, same)
+				}
 			}
 			break
 		}
@@ -100,7 +104,7 @@ func (s *Service) Inbox(ctx context.Context, p *Principal, in InboxIn) (InboxOut
 			cond = " AND n.read_at IS NULL"
 		}
 		rows, err := c.tx.Query(c.ctx, `SELECT n.id, n.kind, n.task_id, t.title, n.actor_id::text, n.excerpt, n.read_at IS NOT NULL, n.created_at
-			`+visibleNotifications+cond+` ORDER BY n.id DESC LIMIT $3`, p.Member.ID, c.visible, clampLimit(in.Limit, 50, 200))
+			`+visibleNotifications+cond+` ORDER BY n.read_at IS NULL DESC, n.id DESC LIMIT $3`, p.Member.ID, c.visible, clampLimit(in.Limit, 50, 200))
 		if err != nil {
 			return err
 		}
@@ -125,8 +129,9 @@ func (s *Service) Inbox(ctx context.Context, p *Principal, in InboxIn) (InboxOut
 }
 
 type MarkReadIn struct {
-	IDs []int64 `json:"ids,omitempty" jsonschema:"notification ids from inbox"`
-	All bool    `json:"all,omitempty" jsonschema:"mark every notification read"`
+	IDs  []int64 `json:"ids,omitempty" jsonschema:"notification ids from inbox"`
+	Task string  `json:"task,omitempty" jsonschema:"mark this task's mentions and assignments read (approval requests stay until decided)"`
+	All  bool    `json:"all,omitempty" jsonschema:"mark every notification read"`
 }
 
 type MarkReadOut struct {
@@ -136,14 +141,18 @@ type MarkReadOut struct {
 func (s *Service) MarkRead(ctx context.Context, p *Principal, in MarkReadIn) (MarkReadOut, error) {
 	var out MarkReadOut
 	err := s.run(ctx, p, func(c *call) error {
-		if !in.All && len(in.IDs) == 0 {
-			return errf(ErrInvalid, "pass ids or all=true")
+		if !in.All && len(in.IDs) == 0 && in.Task == "" {
+			return errf(ErrInvalid, "pass ids, task or all=true")
 		}
 		q := `UPDATE notifications SET read_at = now() WHERE member_id = $1 AND read_at IS NULL`
 		args := []any{p.Member.ID}
-		if !in.All {
-			q += ` AND id = ANY($2)`
+		if !in.All && len(in.IDs) > 0 {
 			args = append(args, in.IDs)
+			q += fmt.Sprintf(` AND id = ANY($%d)`, len(args))
+		}
+		if !in.All && in.Task != "" {
+			args = append(args, in.Task)
+			q += fmt.Sprintf(` AND task_id = $%d AND kind <> 'approval'`, len(args))
 		}
 		if _, err := c.tx.Exec(c.ctx, q, args...); err != nil {
 			return err

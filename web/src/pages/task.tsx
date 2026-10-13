@@ -128,10 +128,17 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const qc = useQueryClient();
   const loaded = !!q.data;
-  // get_task marks this task's notifications read; refresh the badge.
+  const commentCount = q.data?.comments.length ?? 0;
+  // Opening a task reads its notifications; polling in a background tab doesn't.
   useEffect(() => {
-    if (loaded) qc.invalidateQueries({ queryKey: ["inbox"] });
-  }, [id, loaded, qc]);
+    const read = () => {
+      if (!loaded || document.hidden) return;
+      api.tool("mark_read", { task: id }).then(() => qc.invalidateQueries({ queryKey: ["inbox"] }), () => {});
+    };
+    read();
+    document.addEventListener("visibilitychange", read);
+    return () => document.removeEventListener("visibilitychange", read);
+  }, [id, loaded, commentCount, qc]);
   const [blocker, setBlocker] = useState("");
   const dueRef = useRef<HTMLInputElement>(null);
   const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => api.tool("update_task", { id, ...patch }), onSuccess: invalidate });

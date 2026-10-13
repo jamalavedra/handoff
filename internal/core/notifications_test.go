@@ -82,6 +82,9 @@ func TestNotifications(t *testing.T) {
 	if ctx, err := e.s.GetContext(e.ctx, joan, struct{}{}); err != nil || ctx.InboxUnread != 2 {
 		t.Fatalf("context: %+v %v", ctx.InboxUnread, err)
 	}
+	if out, err := e.s.MarkRead(e.ctx, joan, core.MarkReadIn{Task: id2}); err != nil || out.Unread != 2 {
+		t.Fatalf("task mark_read cleared an approval: %+v %v", out, err)
+	}
 	if out, err := e.s.MarkRead(e.ctx, joan, core.MarkReadIn{IDs: []int64{j.Notifications[0].ID}}); err != nil || out.Unread != 1 {
 		t.Fatalf("mark one: %+v %v", out, err)
 	}
