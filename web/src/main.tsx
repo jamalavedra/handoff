@@ -2,7 +2,7 @@ import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
+import { Activity, Bell, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
 import "./index.css";
@@ -11,6 +11,7 @@ import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
 import { ActivityPage, MyTasksPage, ProjectPage, ProjectsPage, ReadyPage, TrashPage } from "./pages/tasks";
 import { TaskPage, TaskView } from "./pages/task";
 import { TeamPage } from "./pages/team";
+import { NotificationsPage, useInbox } from "./pages/notifications";
 import { usePanelTask, useWide } from "./components/tasklink";
 import { AgentsPage } from "./pages/agents";
 import { AdminPage } from "./pages/admin";
@@ -49,7 +50,8 @@ function NavLink({ to, icon: Icon, children }: { to: string; icon: typeof Inbox;
 function useLayoutData() {
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const approvals = useQuery({ queryKey: ["approvals"], queryFn: () => api.tool<{ approvals: unknown[] }>("list_approvals") });
-  return { projects: projects.data?.projects ?? [], pending: approvals.data?.approvals.length ?? 0 };
+  const inbox = useInbox();
+  return { projects: projects.data?.projects ?? [], pending: approvals.data?.approvals.length ?? 0, unread: inbox.data?.unread ?? 0 };
 }
 
 function useLogout() {
@@ -67,7 +69,7 @@ function Badge({ n }: { n: number }) {
 
 function Layout({ me }: { me: Me }) {
   useLive(true);
-  const { projects, pending } = useLayoutData();
+  const { projects, pending, unread } = useLayoutData();
   const logout = useLogout();
   return (
     <QuickAddProvider>
@@ -79,6 +81,10 @@ function Layout({ me }: { me: Me }) {
           </div>
           <nav className="flex flex-col gap-0.5">
             <NavLink to="/" icon={CheckSquare}>My tasks</NavLink>
+            <NavLink to="/notifications" icon={Bell}>
+              <span className="flex-1">Notifications</span>
+              <Badge n={unread} />
+            </NavLink>
             <NavLink to="/ready" icon={Zap}>Ready</NavLink>
             <NavLink to="/team" icon={Users}>Team</NavLink>
             <NavLink to="/projects" icon={FolderKanban}>Projects</NavLink>
@@ -111,7 +117,7 @@ function Layout({ me }: { me: Me }) {
           </div>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
-          <MobileTopBar me={me} />
+          <MobileTopBar me={me} unread={unread} />
           <main className="min-w-0 flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-6 lg:px-10">
             <div className="mx-auto max-w-5xl">
               <Outlet />
@@ -153,7 +159,7 @@ function TaskPanel() {
   );
 }
 
-function MobileTopBar({ me }: { me: Me }) {
+function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
   const quick = useQuickAdd();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const project = path.match(/^\/projects\/([^/]+)/)?.[1];
@@ -161,9 +167,15 @@ function MobileTopBar({ me }: { me: Me }) {
     <header className="sticky top-0 z-20 border-b border-zinc-200/70 bg-zinc-50/90 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
       <div className="flex h-14 items-center justify-between px-4">
         <span className="truncate rounded-full border border-zinc-200 bg-white px-3 py-1 text-sm font-semibold">{me.org?.name}</span>
-        <button onClick={() => quick.open(project)} className="flex size-10 items-center justify-center rounded-full border border-zinc-200 bg-white" aria-label="New task">
-          <Plus className="size-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <Link to="/notifications" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"} className="relative flex size-10 items-center justify-center rounded-full border border-zinc-200 bg-white">
+            <Bell className="size-5" />
+            {unread > 0 && <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold text-white">{unread > 9 ? "9+" : unread}</span>}
+          </Link>
+          <button onClick={() => quick.open(project)} className="flex size-10 items-center justify-center rounded-full border border-zinc-200 bg-white" aria-label="New task">
+            <Plus className="size-5" />
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -275,6 +287,7 @@ const router = createRouter({
     r("/", MyTasksPage),
     r("/ready", ReadyPage),
     r("/team", TeamPage),
+    r("/notifications", NotificationsPage),
     r("/projects", ProjectsPage),
     r("/projects/$id", ProjectPage),
     r("/tasks/$id", TaskPage),
