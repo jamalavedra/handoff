@@ -327,6 +327,7 @@ type SearchTasksIn struct {
 	IncludeBody bool     `json:"include_body,omitempty" jsonschema:"return each task's full body"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"default 50, max 500"`
 	Offset      int      `json:"offset,omitempty"`
+	Sort        string   `json:"sort,omitempty" jsonschema:"empty sorts by priority then due date; recent puts the most recently closed or changed first"`
 }
 
 func (s *Service) SearchTasks(ctx context.Context, p *Principal, in SearchTasksIn) (TasksOut, error) {
@@ -372,7 +373,15 @@ func (s *Service) SearchTasks(ctx context.Context, p *Principal, in SearchTasksI
 		}
 		where += w
 		args = append(args, a...)
-		add(" ORDER BY t.status IN ('done', 'cancelled'), t.priority, t.due_at NULLS LAST, t.created_at LIMIT $%d", clampLimit(in.Limit, 50, 500))
+		order := "t.status IN ('done', 'cancelled'), t.priority, t.due_at NULLS LAST, t.created_at"
+		switch in.Sort {
+		case "":
+		case "recent":
+			order = "coalesce(t.closed_at, t.updated_at) DESC, t.created_at DESC"
+		default:
+			return errf(ErrInvalid, "sort must be empty or recent")
+		}
+		add(" ORDER BY "+order+" LIMIT $%d", clampLimit(in.Limit, 50, 500))
 		add(" OFFSET $%d", max(in.Offset, 0))
 		rs, err := c.queryTasks(where, args...)
 		if err != nil {

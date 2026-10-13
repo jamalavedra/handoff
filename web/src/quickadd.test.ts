@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dueLabel, groupByDue, parseQuickAdd } from "./quickadd.ts";
+import { boardColumn, dueLabel, groupByDue, parseQuickAdd } from "./quickadd.ts";
 
 // Tuesday 13 Oct 2026.
 const today = new Date(2026, 9, 13);
@@ -75,4 +75,13 @@ test("groups by due date", () => {
   ]);
   assert.deepEqual(groupByDue([{ id: "x" }], today).map((s) => s.key), ["none"]);
   assert.deepEqual(groupByDue([], today), []);
+});
+
+test("puts tasks in board columns", () => {
+  assert.equal(boardColumn({ status: "open" }), "todo");
+  assert.equal(boardColumn({ status: "blocked" }), "todo");
+  assert.equal(boardColumn({ status: "open", claimed_by: { id: "a1" } }), "working");
+  assert.equal(boardColumn({ status: "in_progress" }), "working");
+  assert.equal(boardColumn({ status: "done", claimed_by: { id: "a1" } }), "done");
+  assert.equal(boardColumn({ status: "cancelled" }), "done");
 });

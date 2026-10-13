@@ -156,3 +156,12 @@ export function groupByDue<T extends { due?: string }>(tasks: T[], now: Date = n
   for (const s of sections) if (s.key !== "none") s.tasks.sort((a, b) => a.due!.localeCompare(b.due!));
   return sections.filter((s) => s.tasks.length > 0);
 }
+
+export type BoardColumn = "todo" | "working" | "done";
+
+// boardColumn: closed tasks are Done; started or claimed ones are Working; the rest are To do.
+export function boardColumn(t: { status: string; claimed_by?: unknown }): BoardColumn {
+  if (t.status === "done" || t.status === "cancelled") return "done";
+  if (t.status === "in_progress" || t.claimed_by) return "working";
+  return "todo";
+}
