@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { Flag, Lock, Plus, RotateCcw } from "lucide-react";
 import { ago, api, cn, type Event, type Project, type Task } from "../lib";
 import { Avatar, Button, Card, DuePill, Empty, ErrorText, Input, PageHeader, Select, TaskCheck, Who } from "../components/ui";
 import { useQuickAdd } from "../components/quickadd";
+import { groupByDue } from "../quickadd";
 import { useMe } from "../main";
 
 export function useInvalidate() {
@@ -65,19 +66,63 @@ export function NewTask({ project }: { project?: string }) {
 }
 
 export function MyTasksPage() {
-  const q = useQuery({ queryKey: ["tasks", "mine"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me" }) });
+  const q = useQuery({ queryKey: ["tasks", "mine"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", limit: 200 }) });
   const recent = useQuery({ queryKey: ["tasks", "recent-done"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", status: ["done"], limit: 5 }) });
+  const [project, setProject] = useState("");
+  const tasks = q.data?.tasks;
+  const chips = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; n: number }>();
+    for (const t of tasks ?? []) {
+      const c = m.get(t.project_id) ?? { id: t.project_id, name: t.project, n: 0 };
+      c.n++;
+      m.set(t.project_id, c);
+    }
+    return [...m.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  }, [tasks]);
+  const active = chips.some((c) => c.id === project) ? project : "";
+  const shown = tasks?.filter((t) => !active || t.project_id === active);
+  const recentShown = recent.data?.tasks.filter((t) => !active || t.project_id === active);
   return (
     <>
-      <PageHeader title="My tasks"><NewTask /></PageHeader>
-      <TaskList tasks={q.data?.tasks} empty="Nothing assigned to you. Agents can assign tasks to you too." />
-      {!!recent.data?.tasks.length && (
-        <>
-          <h2 className="mt-8 mb-2 text-sm font-medium text-zinc-500">Recently done</h2>
-          <TaskList tasks={recent.data.tasks} empty="" />
-        </>
+      <PageHeader title="My tasks"><NewTask project={active || undefined} /></PageHeader>
+      {chips.length > 1 && (
+        <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:px-0" role="tablist" aria-label="Filter by project">
+          <ProjectChip active={!active} onClick={() => setProject("")} name="All" n={tasks?.length ?? 0} />
+          {chips.map((c) => <ProjectChip key={c.id} active={active === c.id} onClick={() => setProject(c.id)} name={c.name} n={c.n} />)}
+        </div>
+      )}
+      {!shown || shown.length === 0 ? (
+        <TaskList tasks={shown} empty="Nothing assigned to you. Agents can assign tasks to you too." />
+      ) : (
+        groupByDue(shown).map((s) => (
+          <section key={s.key} className="mb-6" aria-label={s.title}>
+            <h2 className={cn("mb-2 flex items-baseline gap-2 px-1 text-xs font-semibold uppercase tracking-wide", s.key === "overdue" ? "text-red-600" : "text-zinc-500")}>
+              {s.title}<span className="font-normal text-zinc-400">{s.tasks.length}</span>
+            </h2>
+            <TaskList tasks={s.tasks} empty="" />
+          </section>
+        ))
+      )}
+      {!!recentShown?.length && (
+        <section className="mt-8" aria-label="Recently done">
+          <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Recently done</h2>
+          <TaskList tasks={recentShown} empty="" />
+        </section>
       )}
     </>
+  );
+}
+
+function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: () => void; name: string; n: number }) {
+  return (
+    <button
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-colors md:h-8 md:px-3", active ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300")}
+    >
+      {name}<span className={cn("text-xs", active ? "text-white/70" : "text-zinc-400")}>{n}</span>
+    </button>
   );
 }
 
