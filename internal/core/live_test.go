@@ -22,17 +22,22 @@ func unseenIn(t *testing.T, e *env, p *core.Principal, id string) bool {
 	return false
 }
 
-// changesFor retries briefly: another test's open transaction can hold the snapshot xmin back.
-func changesFor(t *testing.T, e *env, p *core.Principal, in core.WhatChangedIn) core.WhatChangedOut {
+// changesFor collects at least want changes, following cursors: a transaction still open
+// elsewhere on the server (other test packages share it) holds the snapshot xmin back for a moment.
+func changesFor(t *testing.T, e *env, p *core.Principal, in core.WhatChangedIn, want int) core.WhatChangedOut {
 	t.Helper()
+	all := core.WhatChangedOut{Changes: []core.EventOut{}}
 	for i := 0; ; i++ {
 		w, err := e.s.WhatChanged(e.ctx, p, in)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(w.Changes) > 0 || i == 40 {
-			return w
+		all.Changes = append(all.Changes, w.Changes...)
+		all.Cursor, all.More = w.Cursor, w.More
+		if len(all.Changes) >= want || i == 60 {
+			return all
 		}
+		in.Since = w.Cursor
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -82,7 +87,7 @@ func TestMultiplayer(t *testing.T) {
 		t.Fatalf("claim presence: %+v", d.Here)
 	}
 
-	w := changesFor(t, e, joan, core.WhatChangedIn{})
+	w := changesFor(t, e, joan, core.WhatChangedIn{}, 3)
 	if len(w.Changes) != 3 {
 		t.Fatalf("what_changed: %+v", w)
 	}
@@ -94,14 +99,14 @@ func TestMultiplayer(t *testing.T) {
 	if w2, _ := e.s.WhatChanged(e.ctx, joan, core.WhatChangedIn{}); len(w2.Changes) != 0 {
 		t.Fatalf("second call: %+v", w2)
 	}
-	if again := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor}); len(again.Changes) != 3 {
+	if again := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor}, 3); len(again.Changes) != 3 {
 		t.Fatalf("since: %+v", again)
 	}
-	page := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor, Limit: 1})
+	page := changesFor(t, e, joan, core.WhatChangedIn{Since: start.Cursor, Limit: 1}, 1)
 	if len(page.Changes) != 1 || !page.More {
 		t.Fatalf("page: %+v", page)
 	}
-	rest := changesFor(t, e, joan, core.WhatChangedIn{Since: page.Cursor, Limit: 10})
+	rest := changesFor(t, e, joan, core.WhatChangedIn{Since: page.Cursor, Limit: 10}, 2)
 	if len(rest.Changes) != 2 || rest.More || rest.Changes[0].ID == page.Changes[0].ID {
 		t.Fatalf("rest: %+v", rest)
 	}
