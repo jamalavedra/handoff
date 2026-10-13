@@ -22,7 +22,11 @@ export function TeamPage() {
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const invalidate = useInvalidate();
   const [over, setOver] = useState<string | null>(null);
-  const move = useMutation({ mutationFn: (v: { t: Task; to: string }) => api.tool("update_task", { id: v.t.id, assignee: v.to }), onSettled: invalidate });
+  const move = useMutation({ mutationFn: async (v: { t: Task; to: string }) => {
+      // A handoff ends the previous worker's claim so the new assignee can start.
+      if (v.t.claimed_by && v.t.claimed_by.id !== v.to) await api.tool("release_task", { id: v.t.id });
+      return api.tool("update_task", { id: v.t.id, assignee: v.to });
+    }, onSettled: invalidate });
   const open = tasks.data?.filter((t) => t.status !== "done" && t.status !== "cancelled");
   if (!open || !members.data) {
     return (
@@ -33,12 +37,14 @@ export function TeamPage() {
       </>
     );
   }
+  const people = members.data.members.filter((m) => m.status !== "removed" && m.status !== "revoked");
+  const active = new Set(people.map((m) => m.id));
   const byMember = new Map<string, Task[]>();
   for (const t of open) {
-    const k = t.assignee?.id ?? unassigned;
+    // Work of removed members shows under Unassigned so it can be handed on.
+    const k = t.assignee && active.has(t.assignee.id) ? t.assignee.id : unassigned;
     byMember.set(k, [...(byMember.get(k) ?? []), t]);
   }
-  const people = members.data.members.filter((m) => m.status !== "removed" && m.status !== "revoked");
   const cols = [
     ...people
       .map((m) => ({ id: m.id, member: m as Member | undefined, tasks: byMember.get(m.id) ?? [] }))
