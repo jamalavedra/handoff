@@ -103,7 +103,7 @@ type WhatChangedOut struct {
 // feedPos is a position in the change feed: events are ordered by (transaction id, event id).
 type feedPos struct{ xid, id int64 }
 
-func (f feedPos) String() string      { return fmt.Sprintf("%d:%d", f.xid, f.id) }
+func (f feedPos) String() string       { return fmt.Sprintf("%d:%d", f.xid, f.id) }
 func (f feedPos) after(g feedPos) bool { return f.xid > g.xid || (f.xid == g.xid && f.id > g.id) }
 
 func parseFeedPos(s string) (feedPos, error) {
