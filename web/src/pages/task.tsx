@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowUp, Bot, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { ArrowUp, Bot, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { TaskLink } from "../components/tasklink";
 import { ago, api, cn, type Comment, type Event, type Member, type Project, type Task, statusLabel } from "../lib";
 import { dueLabel } from "../quickadd";
 import { Avatar, Button, ErrorText, Input, TaskCheck, Textarea, Who } from "../components/ui";
@@ -107,7 +108,13 @@ function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) =
 
 export function TaskPage() {
   const { id } = useParams({ strict: false }) as { id: string };
+  return <TaskView id={id} />;
+}
+
+// TaskView is the task page body; with `panel` it renders inside the desktop side panel.
+export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const navigate = useNavigate();
+  const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
   const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }) });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
@@ -136,15 +143,26 @@ export function TaskPage() {
   const activity = events.filter((e) => e.kind !== "commented");
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-13rem-env(safe-area-inset-bottom))] max-w-3xl flex-col md:min-h-[calc(100dvh-4rem)]">
+    <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-13rem-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)]")}>
       <div className="mb-3 flex items-center gap-1">
-        <button onClick={() => window.history.length > 1 ? window.history.back() : navigate({ to: "/" })} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-zinc-500 hover:bg-zinc-100" aria-label="Back">
-          <ChevronLeft className="size-5" /><span className="hidden sm:inline">Back</span>
-        </button>
+        {panel ? (
+          <button onClick={closePanel} className="-ml-2 flex size-9 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100" aria-label="Close panel" title="Close (Esc)">
+            <X className="size-5" />
+          </button>
+        ) : (
+          <button onClick={() => window.history.length > 1 ? window.history.back() : navigate({ to: "/" })} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-zinc-500 hover:bg-zinc-100" aria-label="Back">
+            <ChevronLeft className="size-5" /><span className="hidden sm:inline">Back</span>
+          </button>
+        )}
         <span className="min-w-0 flex-1 truncate text-sm text-zinc-400">
           <Link to="/projects/$id" params={{ id: t.project_id }} className="hover:text-zinc-700 hover:underline">{t.project}</Link>
           {t.deleted_at && <span className="ml-2 font-medium text-red-600">In trash</span>}
         </span>
+        {panel && (
+          <Link to="/tasks/$id" params={{ id }} className="flex size-9 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100" aria-label="Open full page" title="Open full page">
+            <Maximize2 className="size-4" />
+          </Link>
+        )}
         <Menu>
           {(done) => (
             <>
@@ -211,13 +229,13 @@ export function TaskPage() {
           <div className="mb-2 flex flex-col gap-1.5">
             {t.blocked_by.map((b) => (
               <div key={b} className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                <Lock className="size-3.5" />Waits on <Link to="/tasks/$id" params={{ id: b }} className="font-mono text-xs underline-offset-2 hover:underline">{b}</Link>
+                <Lock className="size-3.5" />Waits on <TaskLink id={b} className="font-mono text-xs underline-offset-2 hover:underline">{b}</TaskLink>
                 {!locked && <button className="ml-auto text-xs text-amber-700/70 hover:text-red-600" onClick={() => link.mutate({ blocker: b, remove: true })}>Remove</button>}
               </div>
             ))}
             {t.blocks.map((b) => (
               <div key={b} className="flex items-center gap-2 rounded-lg bg-zinc-100 px-3 py-2 text-sm text-zinc-600">
-                Blocks <Link to="/tasks/$id" params={{ id: b }} className="font-mono text-xs underline-offset-2 hover:underline">{b}</Link>
+                Blocks <TaskLink id={b} className="font-mono text-xs underline-offset-2 hover:underline">{b}</TaskLink>
               </div>
             ))}
           </div>
