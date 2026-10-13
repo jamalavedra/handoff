@@ -94,6 +94,8 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "link_tasks", Agent: true, Description: "Say that one task (blocked) can't start until another (blocker) is finished. Set remove=true to undo."}, s.Link),
 		def(Tool{Name: "trash_task", Agent: true, Destructive: true, Description: "Move a task to the trash (restorable for 30 days). Some agents need a person to approve; then this returns pending_approval and nothing is deleted yet."}, s.Trash),
 		def(Tool{Name: "restore_task", Agent: true, Description: "Bring a task back from the trash."}, s.Restore),
+		def(Tool{Name: "inbox", Agent: true, ReadOnly: true, Description: "Your notifications: @mentions in comments, tasks assigned to you, and approval requests from your agents. Newest first."}, s.Inbox),
+		def(Tool{Name: "mark_read", Agent: true, ReadOnly: true, Description: "Mark inbox notifications read, by id or all at once. Opening a task with get_task also marks its notifications read."}, s.MarkRead),
 		def(Tool{Name: "what_changed", Agent: true, ReadOnly: true, Description: "What other people and agents changed on tasks you can see since your last call (oldest first). Call it at the start of a session to catch up."}, s.WhatChanged),
 		def(Tool{Name: "watch_task", Agent: true, ReadOnly: true, Description: "Show others you have a task open for the next 30 seconds, optionally typing a comment. Returns who else is there."}, s.WatchTask),
 		def(Tool{Name: "activity", Agent: true, ReadOnly: true, Description: "Recent changes across the workspace, newest first, optionally only one member's."}, s.Activity),

@@ -211,6 +211,7 @@ type ContextOut struct {
 	OwnerTasks   []TaskOut    `json:"owner_tasks,omitempty" jsonschema:"for agents: open tasks assigned to the human you act for"`
 	ClaimedByMe  []TaskOut    `json:"claimed_by_me"`
 	Ready        []TaskOut    `json:"ready"`
+	InboxUnread  int          `json:"inbox_unread" jsonschema:"unread @mentions, assignments and approval requests; read them with inbox"`
 	Guidelines   string       `json:"guidelines"`
 }
 
@@ -218,6 +219,7 @@ const guidelines = `Handoff is the shared task list for this company's people an
 - Start with list_ready, then claim_task before working so nobody else picks it up; close_task when finished.
 - Ask the user before creating more than a few tasks at once. Use external_id so a retried create_tasks never duplicates.
 - Call what_changed to catch up on what others changed since your last call. Tasks marked unseen changed since you last opened them.
+- Mention someone with @Name in a comment. Check inbox for mentions, assignments and approval requests, and mark_read once handled.
 - update_task appends to the body by default. Replacing the whole body needs confirm=true; only do it when the user asked.
 - trash moves a task to a 30-day trash (restore brings it back). Some agents need a human to approve deletes.
 - Every change you make is recorded under your agent name, on behalf of the person you act for.`
@@ -229,6 +231,9 @@ func (s *Service) GetContext(ctx context.Context, p *Principal, _ struct{}) (Con
 		out.Org = *p.Org
 		out.Guidelines = guidelines
 		var err error
+		if out.InboxUnread, err = c.unreadCount(); err != nil {
+			return err
+		}
 		if out.Projects, err = c.projectOuts(); err != nil {
 			return err
 		}
@@ -435,6 +440,12 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 		if err := c.markSeen(r.ID); err != nil {
 			return err
 		}
+		// Agents read a task on purpose. The web app polls open tasks, so it calls mark_read when someone actually looks.
+		if p.Via != "web" {
+			if _, err := c.tx.Exec(c.ctx, `UPDATE notifications SET read_at = now() WHERE member_id = $1 AND task_id = $2 AND read_at IS NULL AND kind <> 'approval'`, p.Member.ID, r.ID); err != nil {
+				return err
+			}
+		}
 		if p.Member.IsAgent() {
 			if err := c.markHere(r.ID, agentHere, nil); err != nil {
 				return err
@@ -616,6 +627,11 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 		if _, err := c.tx.Exec(c.ctx, `RELEASE SAVEPOINT create_task`); err != nil {
 			return "", false, err
 		}
+		if assignee != nil {
+			if err := c.notify(c.members[*assignee], "assigned", id, title); err != nil {
+				return "", false, err
+			}
+		}
 		return id, true, c.event(id, "created", map[string]any{"title": title, "project": pr.Name})
 	}
 	return "", false, errors.New("could not allocate a task id")
@@ -663,6 +679,7 @@ func (s *Service) UpdateTask(ctx context.Context, p *Principal, in UpdateTaskIn)
 			return err
 		}
 		r, err := c.getTask(in.ID, false, true)
+		var newAssignee *Member
 		if err != nil {
 			return err
 		}
@@ -734,6 +751,9 @@ func (s *Service) UpdateTask(ctx context.Context, p *Principal, in UpdateTaskIn)
 				}
 				put("assignee_id", m.ID)
 				changed["assignee"] = m.Name
+				if m.ID != r.AssigneeID {
+					newAssignee = m
+				}
 			}
 		}
 		if in.Due != nil {
@@ -763,6 +783,9 @@ func (s *Service) UpdateTask(ctx context.Context, p *Principal, in UpdateTaskIn)
 			return errf(ErrInvalid, "nothing to update")
 		}
 		if _, err := c.tx.Exec(c.ctx, "UPDATE tasks SET "+strings.Join(set, ", ")+", updated_at = now() WHERE id = $1", args...); err != nil {
+			return err
+		}
+		if err := c.notify(newAssignee, "assigned", r.ID, r.Title); err != nil {
 			return err
 		}
 		if err := c.event(r.ID, "updated", changed); err != nil {
@@ -957,6 +980,11 @@ func (c *call) addComment(taskID, body string) error {
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, taskID); err != nil {
 		return err
 	}
+	for _, m := range c.mentioned(body) {
+		if err := c.notify(m, "mention", taskID, body); err != nil {
+			return err
+		}
+	}
 	return c.event(taskID, "commented", map[string]any{"excerpt": excerpt(body)})
 }
 
@@ -1080,6 +1108,13 @@ func (s *Service) Trash(ctx context.Context, p *Principal, in TrashIn) (TrashOut
 			b := fmt.Sprintf(`{"reason": %q}`, in.Reason)
 			if err := c.tx.QueryRow(c.ctx, `INSERT INTO approvals (org_id, agent_id, action, task_id, payload)
 				VALUES ($1, $2, 'trash', $3, $4) RETURNING id`, p.Org.ID, p.Member.ID, r.ID, b).Scan(&id); err != nil {
+				return err
+			}
+			why := "wants to move this task to the trash"
+			if in.Reason != "" {
+				why += ": " + in.Reason
+			}
+			if err := c.notify(p.Owner, "approval", r.ID, why); err != nil {
 				return err
 			}
 			out = TrashOut{Status: "pending_approval", ApprovalID: id,
