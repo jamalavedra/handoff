@@ -22,7 +22,7 @@ type Tool struct {
 	ReadOnly    bool
 	Destructive bool
 	call        func(ctx context.Context, p *core.Principal, raw json.RawMessage) (any, error)
-	add         func(s *mcp.Server, t *Tool, principal func(context.Context) *core.Principal)
+	add         func(s *mcp.Server, p *core.Principal)
 }
 
 // Call runs the tool for the web API.
@@ -54,21 +54,21 @@ func def[In, Out any](t Tool, fn func(context.Context, *core.Principal, In) (Out
 		}
 		return out, nil
 	}
-	t.add = func(s *mcp.Server, t *Tool, principal func(context.Context) *core.Principal) {
-		ro, destr := t.ReadOnly, t.Destructive
-		ann := &mcp.ToolAnnotations{ReadOnlyHint: ro, DestructiveHint: &destr, OpenWorldHint: new(bool)}
-		mt := &mcp.Tool{Name: t.Name, Description: t.Description, Annotations: ann}
-		if schema, err := jsonschema.For[In](nil); err == nil {
-			mt.InputSchema = schema
-		}
+	destr := t.Destructive
+	mt := &mcp.Tool{Name: t.Name, Description: t.Description,
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: t.ReadOnly, DestructiveHint: &destr, OpenWorldHint: new(bool)}}
+	var err error
+	if mt.InputSchema, err = jsonschema.For[In](nil); err != nil {
+		panic(t.Name + ": " + err.Error())
+	}
+	if mt.OutputSchema, err = jsonschema.For[Out](nil); err != nil {
+		panic(t.Name + ": " + err.Error())
+	}
+	t.add = func(s *mcp.Server, p *core.Principal) {
 		mcp.AddTool(s, mt, func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
-			var zero Out
-			p := principal(ctx)
-			if p == nil {
-				return nil, zero, errors.New("not authenticated")
-			}
 			out, err := fn(ctx, p, in)
 			if err != nil {
+				var zero Out
 				return nil, zero, Public(err)
 			}
 			return nil, out, nil
@@ -107,15 +107,24 @@ func All(s *core.Service) []*Tool {
 	}
 }
 
-// Server builds the MCP server with the agent tools.
-func Server(all []*Tool, version string, principal func(context.Context) *core.Principal) *mcp.Server {
+// Server builds an MCP server for one authenticated caller.
+func Server(all []*Tool, version string, p *core.Principal) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "handoff", Title: "Handoff", Version: version}, &mcp.ServerOptions{
-		Instructions: "Handoff is this company's shared task list for people and agents. Call get_context first and follow its guidelines.",
+		Instructions: "Handoff is " + p.Org.Name + "'s shared task list for people and agents. Call get_context first and follow its guidelines.",
 	})
 	for _, t := range all {
 		if t.Agent {
-			t.add(s, t, principal)
+			t.add(s, p)
 		}
 	}
 	return s
+}
+
+// ByName indexes tools for the web API.
+func ByName(all []*Tool) map[string]*Tool {
+	m := map[string]*Tool{}
+	for _, t := range all {
+		m[t.Name] = t
+	}
+	return m
 }

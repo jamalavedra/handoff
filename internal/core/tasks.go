@@ -324,6 +324,7 @@ type SearchTasksIn struct {
 	Label       string   `json:"label,omitempty"`
 	IncludeDone bool     `json:"include_done,omitempty"`
 	Trashed     bool     `json:"trashed,omitempty" jsonschema:"list trashed tasks instead"`
+	IncludeBody bool     `json:"include_body,omitempty" jsonschema:"return each task's full body"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"default 50, max 500"`
 	Offset      int      `json:"offset,omitempty"`
 }
@@ -377,7 +378,9 @@ func (s *Service) SearchTasks(ctx context.Context, p *Principal, in SearchTasksI
 		if err != nil {
 			return err
 		}
-		out.Tasks = c.outs(rs)
+		for _, r := range rs {
+			out.Tasks = append(out.Tasks, c.out(r, in.IncludeBody))
+		}
 		return nil
 	})
 	return out, err
@@ -453,6 +456,8 @@ type CreateTasksOut struct {
 	Tasks   []TaskOut `json:"tasks"`
 	Created int       `json:"created"`
 	Existed int       `json:"existed" jsonschema:"tasks returned because their external_id already existed"`
+	// Fresh[i] reports whether Tasks[i] was created by this call.
+	Fresh []bool `json:"-"`
 }
 
 func (s *Service) CreateTasks(ctx context.Context, p *Principal, in CreateTasksIn) (CreateTasksOut, error) {
@@ -496,6 +501,7 @@ func (s *Service) CreateTasks(ctx context.Context, p *Principal, in CreateTasksI
 				return err
 			}
 			out.Tasks = append(out.Tasks, c.out(r, true))
+			out.Fresh = append(out.Fresh, fresh[i])
 			if fresh[i] {
 				out.Created++
 			} else {
