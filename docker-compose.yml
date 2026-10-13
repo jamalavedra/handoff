@@ -1,0 +1,40 @@
+# Production-style deploy: Postgres + Handoff + Caddy (automatic HTTPS per workspace).
+# cp .env.example .env, edit it, then: docker compose up -d
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: handoff
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: handoff
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U handoff"]
+      interval: 5s
+      retries: 10
+
+  handoff:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://handoff:${POSTGRES_PASSWORD}@db:5432/handoff?sslmode=disable
+      HANDOFF_ADDR: ":8080"
+    depends_on:
+      db: { condition: service_healthy }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      HANDOFF_ACME_EMAIL: ${HANDOFF_ACME_EMAIL:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [handoff]
+
+volumes:
+  pgdata:
+  caddy_data:
