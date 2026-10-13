@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -47,6 +48,9 @@ type Issue struct {
 
 // ExtPrefix marks tasks that came from beads, so re-importing is idempotent.
 const ExtPrefix = "bd:"
+
+// CancelledLabel marks a closed bd issue as cancelled, since bd has no cancelled status.
+const CancelledLabel = "cancelled"
 
 type ImportResult struct {
 	Created int `json:"created"`
@@ -150,9 +154,12 @@ func Import(ctx context.Context, s *core.Service, p *core.Principal, project str
 	}
 	for _, is := range issues {
 		st := mapStatusIn(is.Status)
+		if st == "done" && slices.Contains(is.Labels, CancelledLabel) {
+			st = "cancelled"
+		}
 		if st != "done" && st != "cancelled" {
-			if st == "blocked" {
-				_, _ = s.UpdateTask(ctx, p, core.UpdateTaskIn{ID: ids[is.ID], Status: "blocked"})
+			if st == "blocked" || st == "in_progress" {
+				_, _ = s.UpdateTask(ctx, p, core.UpdateTaskIn{ID: ids[is.ID], Status: st})
 			}
 			continue
 		}
@@ -203,6 +210,20 @@ func Export(ctx context.Context, s *core.Service, p *core.Principal, project str
 	enc := json.NewEncoder(w)
 	for _, t := range all {
 		is := toIssue(t)
+		d, err := s.GetTask(ctx, p, core.TaskIDIn{ID: t.ID})
+		if err != nil {
+			return 0, err
+		}
+		for _, c := range d.Comments {
+			cm := Comment{Text: c.Body}
+			if c.Author != nil {
+				cm.Author = c.Author.Name
+			}
+			if at, err := time.Parse(time.RFC3339, c.CreatedAt); err == nil {
+				cm.CreatedAt = at
+			}
+			is.Comments = append(is.Comments, cm)
+		}
 		for _, b := range t.BlockedBy {
 			if id, ok := ids[b]; ok {
 				b = id
@@ -228,6 +249,9 @@ func toIssue(t core.TaskOut) Issue {
 		ExternalRef: t.URL, CloseReason: t.CloseReason}
 	if t.Status == "done" || t.Status == "cancelled" {
 		is.Status = "closed"
+	}
+	if t.Status == "cancelled" && !slices.Contains(is.Labels, CancelledLabel) {
+		is.Labels = append(slices.Clone(is.Labels), CancelledLabel)
 	}
 	if t.Assignee != nil {
 		is.Assignee = t.Assignee.Name

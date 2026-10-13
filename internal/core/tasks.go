@@ -122,7 +122,7 @@ func (c *call) out(r *taskRow, withBody bool) TaskOut {
 		o.Body = r.Body
 	}
 	o.Ready = r.DeletedAt == nil && r.OpenBlockers == 0 && !claimActive(r) &&
-		(r.Status == "open" || r.Status == "in_progress")
+		(r.Status == "open" || (r.Status == "in_progress" && r.ClaimExpires != nil))
 	return o
 }
 
@@ -429,7 +429,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 			out.Comments = append(out.Comments, co)
 		}
 		rows.Close()
-		out.Events, err = c.events("task_id = $1", []any{r.ID}, 200, true)
+		out.Events, err = c.events("e.task_id = $1", []any{r.ID}, 200, true)
 		return err
 	})
 	return out, err
@@ -519,13 +519,9 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 		return "", false, errf(ErrInvalid, "title must be 1-300 characters")
 	}
 	if nt.ExternalID != "" {
-		var id string
-		err := c.tx.QueryRow(c.ctx, `SELECT id FROM tasks WHERE external_id = $1`, nt.ExternalID).Scan(&id)
-		if err == nil {
-			return id, false, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return "", false, err
+		id, err := c.existingExternal(nt.ExternalID)
+		if err != nil || id != "" {
+			return id, false, err
 		}
 	}
 	pr, err := c.resolveProject(nt.Project)
@@ -575,6 +571,12 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 			if _, err := c.tx.Exec(c.ctx, `ROLLBACK TO SAVEPOINT create_task`); err != nil {
 				return "", false, err
 			}
+			if ext != nil {
+				// A concurrent call may have just created the same external_id.
+				if id, err := c.existingExternal(*ext); err != nil || id != "" {
+					return id, false, err
+				}
+			}
 			continue
 		}
 		if err != nil {
@@ -586,6 +588,23 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 		return id, true, c.event(id, "created", map[string]any{"title": title, "project": pr.Name})
 	}
 	return "", false, errors.New("could not allocate a task id")
+}
+
+// existingExternal returns the task already holding externalID, or "" if none.
+// A task outside the caller's projects is reported as a conflict, never returned.
+func (c *call) existingExternal(externalID string) (string, error) {
+	var id string
+	err := c.tx.QueryRow(c.ctx, `SELECT id FROM tasks WHERE external_id = $1`, externalID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := c.getTask(id, true, false); err != nil {
+		return "", errf(ErrConflict, "external_id %q is already used by a task you can't see", externalID)
+	}
+	return id, nil
 }
 
 type UpdateTaskIn struct {
@@ -969,6 +988,10 @@ func (c *call) link(blocker, blocked string) error {
 	}
 	if a.ID == b.ID {
 		return errf(ErrInvalid, "a task can't block itself")
+	}
+	// Serialize dependency changes per workspace so concurrent links can't form a cycle.
+	if _, err := c.tx.Exec(c.ctx, `SELECT pg_advisory_xact_lock(hashtext('task_deps:' || $1))`, c.p.Org.ID); err != nil {
+		return err
 	}
 	var cycle bool
 	if err := c.tx.QueryRow(c.ctx, `WITH RECURSIVE up(id) AS (

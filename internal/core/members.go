@@ -444,10 +444,30 @@ func (s *Service) UpdateMember(ctx context.Context, p *Principal, in UpdateMembe
 		if !ok || m.IsAgent() {
 			return errf(ErrNotFound, "no person %q", in.ID)
 		}
-		admins := 0
-		for _, x := range c.members {
-			if !x.IsAgent() && x.Role == "admin" && x.Status == "active" {
-				admins++
+		// Lock the active admins so concurrent demotions can't remove the last one.
+		var adminIDs []string
+		rows, qerr := c.tx.Query(c.ctx, `SELECT id::text FROM members
+			WHERE kind = 'human' AND role = 'admin' AND status = 'active' FOR UPDATE`)
+		if qerr != nil {
+			return qerr
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			adminIDs = append(adminIDs, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		admins := len(adminIDs)
+		m.Role = "member"
+		for _, id := range adminIDs {
+			if id == m.ID {
+				m.Role = "admin"
 			}
 		}
 		lastAdmin := m.Role == "admin" && admins <= 1
