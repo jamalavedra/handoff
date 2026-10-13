@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { Lock, Plus, RotateCcw } from "lucide-react";
-import { ago, api, type Event, type Member, type Project, type Task } from "../lib";
-import { Badge, Button, Card, Empty, ErrorText, Input, PageHeader, Priority, Select, StatusBadge, Textarea, Who } from "../components/ui";
+import { Flag, Lock, Plus, RotateCcw } from "lucide-react";
+import { ago, api, cn, type Event, type Project, type Task } from "../lib";
+import { Avatar, Button, Card, DuePill, Empty, ErrorText, Input, PageHeader, Select, TaskCheck, Who } from "../components/ui";
+import { useQuickAdd } from "../components/quickadd";
+import { useMe } from "../main";
 
 export function useInvalidate() {
   const qc = useQueryClient();
@@ -11,77 +13,51 @@ export function useInvalidate() {
 }
 
 export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
+  const me = useMe();
+  const invalidate = useInvalidate();
+  const closed = t.status === "done" || t.status === "cancelled";
+  const toggle = useMutation({
+    mutationFn: () => (closed ? api.tool("update_task", { id: t.id, status: "open" }) : api.tool("close_task", { id: t.id, status: "done" })),
+    onSuccess: invalidate,
+  });
+  const waiting = !closed && !t.ready && t.blocked_by.length > 0 && !t.claimed_by;
+  const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
   return (
-    <div className="flex items-center gap-3 border-b border-zinc-100 px-4 py-2.5 last:border-0 hover:bg-zinc-50">
-      <Priority p={t.priority} />
-      <Link to="/tasks/$id" params={{ id: t.id }} className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium">{t.title}</div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-zinc-500">
-          <span className="font-mono">{t.id}</span>
-          <span>{t.project}</span>
-          {t.assignee && <Who m={t.assignee} />}
-          {t.claimed_by && <span className="text-blue-700">working: {t.claimed_by.name}</span>}
-          {t.blocked_by.length > 0 && !t.ready && t.status !== "done" && <span className="text-amber-700">waits on {t.blocked_by.join(", ")}</span>}
-          {t.due && <span>due {t.due}</span>}
-          {t.labels.map((l) => <Badge key={l}>{l}</Badge>)}
-        </div>
+    <div className="flex min-h-14 items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors hover:border-zinc-300 sm:min-h-12">
+      <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate()} />
+      <Link to="/tasks/$id" params={{ id: t.id }} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
+        <span className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-zinc-400 line-through")}>{t.title}</span>
+        {t.priority < 2 && !closed && <Flag aria-label={t.priority === 0 ? "Urgent" : "High priority"} className={cn("size-3.5 shrink-0", t.priority === 0 ? "fill-red-500 text-red-500" : "text-orange-500")} />}
       </Link>
-      <StatusBadge status={t.status} />
-      <span className="hidden w-16 text-right text-xs text-zinc-400 sm:block">{ago(t.updated_at)}</span>
-      {action}
+      <div className="flex shrink-0 items-center gap-1.5">
+        {t.claimed_by && !closed && (
+          <span title={`${t.claimed_by.name} is working on it`} className="flex items-center gap-1.5 rounded-full bg-zinc-100 py-0.5 pr-1 pl-2 text-xs font-medium text-zinc-700 sm:pr-2">
+            <span className="relative flex size-2"><span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", t.claimed_by.kind === "agent" ? "bg-violet-400" : "bg-amber-400")} /><span className={cn("relative inline-flex size-2 rounded-full", t.claimed_by.kind === "agent" ? "bg-violet-500" : "bg-amber-500")} /></span>
+            <span className="hidden max-w-32 truncate sm:inline">{t.claimed_by.name}</span>
+            <Avatar m={t.claimed_by} className="size-5 sm:hidden" />
+          </span>
+        )}
+        {waiting && <span title={`Waits on ${t.blocked_by.join(", ")}`} className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"><Lock className="size-3" /><span className="hidden sm:inline">Waiting</span></span>}
+        {showAssignee && <Avatar m={t.assignee!} />}
+        {t.due && <DuePill due={t.due} done={closed} />}
+        {action}
+      </div>
     </div>
   );
 }
 
 export function TaskList({ tasks, empty, action }: { tasks?: Task[]; empty: string; action?: (t: Task) => React.ReactNode }) {
   if (!tasks) return <Card><Empty>Loading…</Empty></Card>;
-  return <Card>{tasks.length === 0 ? <Empty>{empty}</Empty> : tasks.map((t) => <TaskRow key={t.id} t={t} action={action?.(t)} />)}</Card>;
+  if (tasks.length === 0) return <Card><Empty>{empty}</Empty></Card>;
+  return <div className="flex flex-col gap-2">{tasks.map((t) => <TaskRow key={t.id} t={t} action={action?.(t)} />)}</div>;
 }
 
 export function NewTask({ project }: { project?: string }) {
-  const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ title: "", body: "", assignee: "", priority: "2", due: "", project: project ?? "" });
-  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
-  const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
-  const invalidate = useInvalidate();
-  const m = useMutation({
-    mutationFn: () =>
-      api.tool("create_tasks", { tasks: [{ title: f.title, body: f.body, assignee: f.assignee || undefined, priority: Number(f.priority), due: f.due || undefined, project: f.project || undefined }] }),
-    onSuccess: () => {
-      setF({ ...f, title: "", body: "" });
-      setOpen(false);
-      invalidate();
-    },
-  });
-  if (!open) return <Button onClick={() => setOpen(true)}><Plus className="size-4" />New task</Button>;
+  const quick = useQuickAdd();
   return (
-    <div className="fixed inset-0 z-10 flex items-start justify-center bg-black/20 p-4 pt-24" onClick={() => setOpen(false)}>
-      <Card className="w-full max-w-lg p-4" onClick={(e) => e.stopPropagation()}>
-        <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
-          <Input autoFocus required placeholder="What needs doing?" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} aria-label="Title" />
-          <Textarea rows={3} placeholder="Details (optional)" value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} />
-          <div className="flex flex-wrap gap-2">
-            <Select value={f.project} onChange={(e) => setF({ ...f, project: e.target.value })} aria-label="Project">
-              <option value="">Inbox</option>
-              {projects.data?.projects.filter((p) => p.name !== "Inbox").map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </Select>
-            <Select value={f.assignee} onChange={(e) => setF({ ...f, assignee: e.target.value })} aria-label="Assignee">
-              <option value="">Unassigned</option>
-              {members.data?.members.map((x) => <option key={x.id} value={x.id}>{x.name}{x.kind === "agent" ? " (agent)" : ""}</option>)}
-            </Select>
-            <Select value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })} aria-label="Priority">
-              {[0, 1, 2, 3, 4].map((p) => <option key={p} value={p}>P{p}</option>)}
-            </Select>
-            <Input type="date" className="w-auto" value={f.due} onChange={(e) => setF({ ...f, due: e.target.value })} aria-label="Due" />
-          </div>
-          <ErrorText error={m.error} />
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={m.isPending}>Create</Button>
-          </div>
-        </form>
-      </Card>
-    </div>
+    <Button className="hidden md:inline-flex" onClick={() => quick.open(project)}>
+      <Plus className="size-4" />New task<kbd className="ml-1 rounded border border-white/30 px-1 font-sans text-[10px] text-white/70">N</kbd>
+    </Button>
   );
 }
 
@@ -122,7 +98,7 @@ export function ProjectsPage() {
     <>
       <PageHeader title="Projects" />
       <Card className="mb-4 p-3">
-        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
+        <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
           <Input required placeholder="New project name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
           <Select value={f.visibility} onChange={(e) => setF({ ...f, visibility: e.target.value })} aria-label="Visibility">
             <option value="company">Whole company</option>
@@ -189,12 +165,12 @@ export function EventLine({ e, showTask = true }: { e: Event; showTask?: boolean
   const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : "";
   return (
     <div className="flex gap-3 py-1.5 text-sm">
-      <span className="w-20 shrink-0 text-xs leading-5 text-zinc-400">{ago(e.at)}</span>
+      <span className="w-14 shrink-0 text-xs leading-5 text-zinc-400 sm:w-20">{ago(e.at)}</span>
       <div className="min-w-0">
         <Who m={e.actor} by={e.on_behalf_of} /> <span className="text-zinc-500">{verbs[e.kind] ?? e.kind}</span>{" "}
         {showTask && e.task_id && <Link to="/tasks/$id" params={{ id: e.task_id }} className="font-medium hover:underline">{e.task_title || e.task_id}</Link>}
         {detail && <span className="text-zinc-500"> — {detail}</span>}
-        <span className="ml-2 text-xs text-zinc-400">via {e.via}</span>
+        <span className="ml-2 hidden text-xs text-zinc-400 sm:inline">via {e.via}</span>
       </div>
     </div>
   );

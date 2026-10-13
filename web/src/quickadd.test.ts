@@ -1,0 +1,61 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { dueLabel, parseQuickAdd } from "./quickadd.ts";
+
+// Tuesday 13 Oct 2026.
+const today = new Date(2026, 9, 13);
+const members = [{ id: "m1", name: "Marta" }, { id: "a1", name: "Legal bot" }, { id: "m2", name: "Mar" }];
+const projects = [{ id: "p1", name: "Sales" }, { id: "p2", name: "Q4 Launch" }];
+const parse = (s: string) => parseQuickAdd(s, { members, projects, today });
+
+test("reads the worked example", () => {
+  assert.deepEqual(parse("Send contract to legal tomorrow @marta #Sales !1"), {
+    title: "Send contract to legal", due: "2026-10-14", assignee: members[0], project: projects[0], priority: 1,
+  });
+});
+
+test("matches multi-word names and picks the longest", () => {
+  assert.equal(parse("Review NDA @legal-bot").assignee?.id, "a1");
+  assert.equal(parse("Review NDA @Legal bot today").assignee?.id, "a1");
+  assert.equal(parse("Call @mar").assignee?.id, "m2");
+  assert.equal(parse("Call @marta").assignee?.id, "m1");
+  assert.equal(parse("Plan #q4-launch").project?.id, "p2");
+});
+
+test("leaves unknown words and emails alone", () => {
+  const p = parse("Email joan@openfort.xyz about #hiring and @nobody");
+  assert.equal(p.title, "Email joan@openfort.xyz about #hiring and @nobody");
+  assert.equal(p.assignee, undefined);
+  assert.equal(p.project, undefined);
+});
+
+test("dates", () => {
+  assert.equal(parse("x today").due, "2026-10-13");
+  assert.equal(parse("x friday").due, "2026-10-16");
+  assert.equal(parse("x on tuesday").due, "2026-10-20");
+  assert.equal(parse("x next week").due, "2026-10-19");
+  assert.equal(parse("x in 3 days").due, "2026-10-16");
+  assert.equal(parse("x by Oct 20").due, "2026-10-20");
+  assert.equal(parse("x 2 jan").due, "2027-01-02");
+  assert.equal(parse("x 2026-11-30").due, "2026-11-30");
+  assert.equal(parse("x feb 30").due, undefined);
+  assert.equal(parse("Book the monday standup room").due, "2026-10-19");
+  assert.equal(parse("Fix todays bug").due, undefined);
+  assert.equal(parse("x by Oct 20").title, "x");
+});
+
+test("priority only as a standalone token", () => {
+  assert.equal(parse("Ship p0").priority, 0);
+  assert.equal(parse("Upgrade p10 cluster").priority, undefined);
+  assert.equal(parse("Wow!1").priority, undefined);
+});
+
+test("due labels", () => {
+  assert.deepEqual(dueLabel("2026-10-13", today), { text: "Today", tone: "today" });
+  assert.deepEqual(dueLabel("2026-10-14", today), { text: "Tomorrow", tone: "soon" });
+  assert.deepEqual(dueLabel("2026-10-12", today), { text: "Yesterday", tone: "overdue" });
+  assert.deepEqual(dueLabel("2026-10-16", today), { text: "Fri", tone: "soon" });
+  assert.deepEqual(dueLabel("2026-10-01", today), { text: "Oct 1", tone: "overdue" });
+  assert.deepEqual(dueLabel("2026-11-03", today), { text: "Nov 3", tone: "later" });
+  assert.deepEqual(dueLabel("2027-01-02", today), { text: "Jan 2, 2027", tone: "later" });
+});

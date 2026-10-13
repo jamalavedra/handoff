@@ -25,7 +25,7 @@ export function AdminPage() {
       <PageHeader title="Admin" />
       <h2 className="mb-2 text-sm font-medium text-zinc-500">People</h2>
       <Card className="mb-3 p-3">
-        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); invite.mutate(); }}>
+        <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); invite.mutate(); }}>
           <Input required type="email" placeholder="colleague@company.com" value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} />
           <Select value={inv.role} onChange={(e) => setInv({ ...inv, role: e.target.value })} aria-label="Role"><option value="member">Member</option><option value="admin">Admin</option></Select>
           <Button type="submit">Invite</Button>
@@ -35,8 +35,8 @@ export function AdminPage() {
       </Card>
       <Card className="mb-8">
         {people.map((m) => (
-          <div key={m.id} className="flex items-center gap-3 border-b border-zinc-100 px-4 py-2.5 text-sm last:border-0">
-            <div className="flex-1"><div className="font-medium">{m.name}</div><div className="text-xs text-zinc-500">{m.email}</div></div>
+          <div key={m.id} className="flex flex-wrap items-center gap-3 border-b border-zinc-100 px-4 py-2.5 text-sm last:border-0">
+            <div className="min-w-40 flex-1"><div className="font-medium">{m.name}</div><div className="text-xs text-zinc-500">{m.email}</div></div>
             {m.status === "invited" && <Badge>invited</Badge>}
             <Select value={m.role} onChange={(e) => change.mutate({ id: m.id, role: e.target.value })} aria-label={`Role for ${m.name}`}><option value="member">Member</option><option value="admin">Admin</option></Select>
             {m.id !== me.data?.member?.id && <Button size="sm" variant="ghost" className="text-red-600" onClick={() => confirm(`Remove ${m.name}? Their agents are disconnected too.`) && change.mutate({ id: m.id, remove: true })}>Remove</Button>}
