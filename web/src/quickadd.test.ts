@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dueLabel, parseQuickAdd } from "./quickadd.ts";
+import { dueLabel, groupByDue, parseQuickAdd } from "./quickadd.ts";
 
 // Tuesday 13 Oct 2026.
 const today = new Date(2026, 9, 13);
@@ -63,4 +63,16 @@ test("due labels", () => {
   assert.deepEqual(dueLabel("2026-10-01", today), { text: "Oct 1", tone: "overdue" });
   assert.deepEqual(dueLabel("2026-11-03", today), { text: "Nov 3", tone: "later" });
   assert.deepEqual(dueLabel("2027-01-02", today), { text: "Jan 2, 2027", tone: "later" });
+});
+
+test("groups by due date", () => {
+  const tasks = [
+    { id: "a", due: "2026-10-20" }, { id: "b" }, { id: "c", due: "2026-10-13" }, { id: "d", due: "2026-10-01" },
+    { id: "e", due: "2026-10-14" }, { id: "f", due: "2026-10-12" }, { id: "g" }, { id: "h", due: "2026-10-13" },
+  ];
+  assert.deepEqual(groupByDue(tasks, today).map((s) => [s.key, s.tasks.map((t) => t.id).join("")]), [
+    ["overdue", "df"], ["today", "ch"], ["upcoming", "ea"], ["none", "bg"],
+  ]);
+  assert.deepEqual(groupByDue([{ id: "x" }], today).map((s) => s.key), ["none"]);
+  assert.deepEqual(groupByDue([], today), []);
 });

@@ -136,3 +136,23 @@ export function dueLabel(due: string, now: Date = new Date()): DueLabel {
   if (days < 7) return { text: at.toLocaleDateString("en-US", { weekday: "short" }), tone: "soon" };
   return { text: month, tone: "later" };
 }
+
+export type DueSection<T> = { key: "overdue" | "today" | "upcoming" | "none"; title: string; tasks: T[] };
+
+// groupByDue splits tasks into Overdue / Today / Upcoming / No date, dropping empty
+// sections. Dated sections are ordered by due date; ties keep the input order.
+export function groupByDue<T extends { due?: string }>(tasks: T[], now: Date = new Date()): DueSection<T>[] {
+  const today = isoDate(now);
+  const sections: DueSection<T>[] = [
+    { key: "overdue", title: "Overdue", tasks: [] },
+    { key: "today", title: "Today", tasks: [] },
+    { key: "upcoming", title: "Upcoming", tasks: [] },
+    { key: "none", title: "No date", tasks: [] },
+  ];
+  for (const t of tasks) {
+    const i = !t.due ? 3 : t.due < today ? 0 : t.due === today ? 1 : 2;
+    sections[i].tasks.push(t);
+  }
+  for (const s of sections) if (s.key !== "none") s.tasks.sort((a, b) => a.due!.localeCompare(b.due!));
+  return sections.filter((s) => s.tasks.length > 0);
+}
