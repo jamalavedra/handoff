@@ -94,3 +94,26 @@ func TestNotifications(t *testing.T) {
 		t.Fatalf("other company: %+v", n)
 	}
 }
+
+func TestInboxNewestFirstKeepsUnread(t *testing.T) {
+	e := setup(t)
+	joan := e.org(t, "acme")
+	bot := e.agent(t, joan, "Legal bot", nil)
+	for _, title := range []string{"One", "Two", "Three"} {
+		e.create(t, joan, core.NewTask{Title: title, Assignee: "Legal bot"})
+	}
+	all := unread(t, e, bot).Notifications
+	if len(all) != 3 || all[0].TaskTitle != "Three" {
+		t.Fatalf("not newest first: %+v", all)
+	}
+	if _, err := e.s.MarkRead(e.ctx, bot, core.MarkReadIn{IDs: []int64{all[0].ID}}); err != nil {
+		t.Fatal(err)
+	}
+	in, err := e.s.Inbox(e.ctx, bot, core.InboxIn{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Notifications) != 3 || in.Notifications[0].TaskTitle != "Three" || !in.Notifications[0].Read || in.Notifications[2].TaskTitle != "One" || in.Notifications[2].Read {
+		t.Fatalf("limit dropped unread or broke order: %+v", in.Notifications)
+	}
+}

@@ -98,13 +98,16 @@ type InboxOut struct {
 // Inbox lists @mentions, tasks assigned to the caller and approval requests from the caller's agents.
 func (s *Service) Inbox(ctx context.Context, p *Principal, in InboxIn) (InboxOut, error) {
 	out := InboxOut{Notifications: []NotificationOut{}}
+	// Newest first. The limit trims read history only, so an old unread alert is never cut off.
 	err := s.run(ctx, p, func(c *call) error {
 		cond := ""
 		if in.Unread {
 			cond = " AND n.read_at IS NULL"
 		}
 		rows, err := c.tx.Query(c.ctx, `SELECT n.id, n.kind, n.task_id, t.title, n.actor_id::text, n.excerpt, n.read_at IS NOT NULL, n.created_at
-			`+visibleNotifications+cond+` ORDER BY n.read_at IS NULL DESC, n.id DESC LIMIT $3`, p.Member.ID, c.visible, clampLimit(in.Limit, 50, 200))
+			`+visibleNotifications+cond+`
+			AND (n.read_at IS NULL OR n.id IN (SELECT n.id `+visibleNotifications+cond+` ORDER BY n.id DESC LIMIT $3))
+			ORDER BY n.id DESC LIMIT 200`, p.Member.ID, c.visible, clampLimit(in.Limit, 50, 200))
 		if err != nil {
 			return err
 		}
