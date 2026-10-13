@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowUp, Bot, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
-import { dueLabel } from "../quickadd";
+import { dueLabel, mentionQuery, splitMentions } from "../quickadd";
 import { Avatar, Button, ErrorText, Input, TaskCheck, Textarea, Who } from "../components/ui";
 import { EventLine, useInvalidate } from "./tasks";
 
@@ -123,6 +123,15 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const invalidate = useInvalidate();
   const [comment, setComment] = useState("");
+  const [caret, setCaret] = useState(0);
+  const [pick, setPick] = useState(0);
+  const commentRef = useRef<HTMLTextAreaElement>(null);
+  const qc = useQueryClient();
+  const loaded = !!q.data;
+  // get_task marks this task's notifications read; refresh the badge.
+  useEffect(() => {
+    if (loaded) qc.invalidateQueries({ queryKey: ["inbox"] });
+  }, [id, loaded, qc]);
   const [blocker, setBlocker] = useState("");
   const dueRef = useRef<HTMLInputElement>(null);
   const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => api.tool("update_task", { id, ...patch }), onSuccess: invalidate });
@@ -164,6 +173,20 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const people = members.data?.members.filter((m) => m.status !== "removed") ?? [];
   const due = t.due ? dueLabel(t.due) : undefined;
   const activity = events.filter((e) => e.kind !== "commented");
+  const memberNames = people.map((m) => m.name);
+  const mq = mentionQuery(comment, caret);
+  const suggestions = mq ? people.filter((m) => m.name.toLowerCase().includes(mq.query.toLowerCase())).slice(0, 5) : [];
+  const picked = suggestions.length ? pick % suggestions.length : 0;
+  const insertMention = (name: string) => {
+    if (!mq) return;
+    const pos = mq.start + name.length + 2;
+    setComment(comment.slice(0, mq.start) + "@" + name + " " + comment.slice(caret));
+    setCaret(pos);
+    requestAnimationFrame(() => {
+      commentRef.current?.focus();
+      commentRef.current?.setSelectionRange(pos, pos);
+    });
+  };
   const here = q.data.here ?? [];
   const typers = here.filter((h) => h.typing);
 
@@ -286,7 +309,9 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
               <Avatar m={c.author} className="mt-0.5" />
               <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md bg-white px-3 py-2 text-[15px] shadow-[0_0_0_1px_rgba(0,0,0,0.06)] sm:text-sm">
                 <div className="mb-0.5 text-xs text-zinc-500"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>
-                <div className="whitespace-pre-wrap">{c.body}</div>
+                <div className="whitespace-pre-wrap">
+                  {splitMentions(c.body, memberNames).map((part, i) => (part.mention ? <span key={i} className="rounded bg-accent-soft px-0.5 font-medium text-accent">{part.text}</span> : part.text))}
+                </div>
               </div>
             </div>
           ))}
@@ -308,13 +333,33 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-zinc-200 bg-white p-1.5 pl-3 shadow-lg md:bottom-4"
           onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(); }}
         >
+          {suggestions.length > 0 && (
+            <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg">
+              {suggestions.map((m, i) => (
+                <li key={m.id} role="option" aria-selected={i === picked}>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); insertMention(m.name); }} className={cn("flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-zinc-50", i === picked && "bg-zinc-100")}>
+                    <Avatar m={{ id: m.id, name: m.name, kind: m.kind }} />
+                    <span className="truncate">{m.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           {typers.length > 0 && <span aria-live="polite" className="absolute -top-6 left-3 animate-pulse text-xs text-zinc-500">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</span>}
           <textarea
             rows={1}
-            placeholder="Add a comment…"
+            ref={commentRef}
+            placeholder="Add a comment… type @ to mention"
             value={comment}
-            onChange={(e) => { setComment(e.target.value); typing(); }}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
+            onChange={(e) => { setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+            onKeyDown={(e) => {
+              if (suggestions.length) {
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); setPick(picked + (e.key === "ArrowDown" ? 1 : suggestions.length - 1)); return; }
+                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insertMention(suggestions[picked].name); return; }
+                if (e.key === "Escape") { e.preventDefault(); setCaret(0); return; }
+              }
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
             aria-label="Comment"
             className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-zinc-400 sm:text-sm"
           />

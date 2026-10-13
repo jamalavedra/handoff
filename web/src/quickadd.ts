@@ -165,3 +165,39 @@ export function boardColumn(t: { status: string; claimed_by?: unknown }): BoardC
   if (t.status === "in_progress" || t.claimed_by) return "working";
   return "todo";
 }
+
+const wordChar = /[\p{L}\p{N}._]/u;
+
+// mentionQuery returns the "@partial" being typed just before the caret, if any.
+export function mentionQuery(text: string, caret: number): { start: number; query: string } | null {
+  const before = text.slice(0, Math.max(caret, 0));
+  const at = before.lastIndexOf("@");
+  if (at < 0 || (at > 0 && wordChar.test(before[at - 1]))) return null;
+  const query = before.slice(at + 1);
+  if (query.length > 30 || /\n|\s\s/.test(query)) return null;
+  return { start: at, query };
+}
+
+// splitMentions marks "@Name" for known names, longest first, so comments can highlight them.
+export function splitMentions(body: string, names: string[]): { text: string; mention: boolean }[] {
+  const sorted = names.filter(Boolean).sort((a, b) => b.length - a.length);
+  const out: { text: string; mention: boolean }[] = [];
+  let buf = "";
+  for (let i = 0; i < body.length; ) {
+    if (body[i] === "@" && (i === 0 || !wordChar.test(body[i - 1]))) {
+      const rest = body.slice(i + 1).toLowerCase();
+      const n = sorted.find((n) => rest.startsWith(n.toLowerCase()) && !/[\p{L}\p{N}]/u.test(rest.charAt(n.length)));
+      if (n) {
+        if (buf) out.push({ text: buf, mention: false });
+        out.push({ text: body.slice(i, i + 1 + n.length), mention: true });
+        buf = "";
+        i += 1 + n.length;
+        continue;
+      }
+    }
+    buf += body[i];
+    i++;
+  }
+  if (buf) out.push({ text: buf, mention: false });
+  return out;
+}

@@ -120,3 +120,14 @@ export const statusLabel: Record<Task["status"], string> = {
 };
 
 export const projectName = (p: { name: string; emoji?: string }) => (p.emoji ? `${p.emoji} ${p.name}` : p.name);
+
+export type Notification = {
+  id: number;
+  kind: "mention" | "assigned" | "approval";
+  task_id: string;
+  task_title: string;
+  actor?: MemberRef;
+  excerpt?: string;
+  read: boolean;
+  at: string;
+};

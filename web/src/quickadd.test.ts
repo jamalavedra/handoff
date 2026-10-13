@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { boardColumn, dueLabel, groupByDue, parseQuickAdd } from "./quickadd.ts";
+import { boardColumn, dueLabel, groupByDue, mentionQuery, parseQuickAdd, splitMentions } from "./quickadd.ts";
 
 // Tuesday 13 Oct 2026.
 const today = new Date(2026, 9, 13);
@@ -84,4 +84,26 @@ test("puts tasks in board columns", () => {
   assert.equal(boardColumn({ status: "in_progress" }), "working");
   assert.equal(boardColumn({ status: "done", claimed_by: { id: "a1" } }), "done");
   assert.equal(boardColumn({ status: "cancelled" }), "done");
+});
+
+test("finds the mention being typed", () => {
+  assert.deepEqual(mentionQuery("hi @leg", 7), { start: 3, query: "leg" });
+  assert.deepEqual(mentionQuery("@", 1), { start: 0, query: "" });
+  assert.deepEqual(mentionQuery("@legal bot", 10), { start: 0, query: "legal bot" });
+  assert.equal(mentionQuery("ops@example", 11), null);
+  assert.equal(mentionQuery("hi there", 8), null);
+  assert.equal(mentionQuery("@a\nb", 4), null);
+});
+
+test("splits mentions, longest name first", () => {
+  assert.deepEqual(splitMentions("@legal bot check, cc ops@x.com", ["Legal", "Legal bot"]), [
+    { text: "@legal bot", mention: true },
+    { text: " check, cc ops@x.com", mention: false },
+  ]);
+  assert.deepEqual(splitMentions("@nobody", ["Marta"]), [{ text: "@nobody", mention: false }]);
+  assert.deepEqual(splitMentions("hi @Marta.", ["Marta"]), [
+    { text: "hi ", mention: false },
+    { text: "@Marta", mention: true },
+    { text: ".", mention: false },
+  ]);
 });
