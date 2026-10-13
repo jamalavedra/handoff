@@ -97,6 +97,7 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "activity", Agent: true, ReadOnly: true, Description: "Recent changes across the workspace, newest first, optionally only one member's."}, s.Activity),
 
 		def(Tool{Name: "create_project", Description: "Create a project."}, s.CreateProject),
+		def(Tool{Name: "update_project", Description: "Rename a project or change its description or emoji."}, s.UpdateProject),
 		def(Tool{Name: "create_agent", Description: "Add an agent you own."}, s.CreateAgent),
 		def(Tool{Name: "update_agent", Description: "Rename, change permissions of, or revoke an agent."}, s.UpdateAgent),
 		def(Tool{Name: "list_approvals", ReadOnly: true, Description: "Pending agent requests you can decide."}, s.ListApprovals),

@@ -59,7 +59,7 @@ export type Task = {
   ready: boolean;
 };
 
-export type Project = { id: string; name: string; description?: string; visibility: string; open_tasks: number; members?: string[] };
+export type Project = { id: string; name: string; description?: string; emoji?: string; visibility: string; open_tasks: number; members?: string[] };
 
 export type Permissions = { projects: string[]; actions: string[]; approval: string[] };
 
@@ -117,3 +117,5 @@ export const statusLabel: Record<Task["status"], string> = {
   done: "Done",
   cancelled: "Cancelled",
 };
+
+export const projectName = (p: { name: string; emoji?: string }) => (p.emoji ? `${p.emoji} ${p.name}` : p.name);
