@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouterState } from "@tanstack/react-router";
 import { Bot, CalendarDays, Flag, Folder, User } from "lucide-react";
 import { api, cn, type Member, type Project } from "../lib";
 import { dueLabel, parseQuickAdd } from "../quickadd";
@@ -17,18 +18,20 @@ function typing(t: EventTarget | null) {
 
 export function QuickAddProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<{ project?: string } | null>(null);
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const currentProject = path.match(/^\/projects\/([^/]+)/)?.[1];
   const ctx = useMemo<Ctx>(() => ({ open: (project) => setState({ project }) }), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setState(null);
       if ((e.key === "n" || e.key === "c") && !e.metaKey && !e.ctrlKey && !e.altKey && !typing(e.target)) {
         e.preventDefault();
-        setState((s) => s ?? {});
+        setState((s) => s ?? { project: currentProject });
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [currentProject]);
   return (
     <QuickAddContext.Provider value={ctx}>
       {children}

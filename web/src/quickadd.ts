@@ -26,10 +26,11 @@ function monthDay(month: string, day: string, today: Date) {
   const m = MONTHS.indexOf(month.slice(0, 3).toLowerCase());
   const d = Number(day);
   if (m < 0 || d < 1 || d > 31) return undefined;
-  let at = new Date(today.getFullYear(), m, d);
-  if (at.getMonth() !== m) return undefined;
-  if (at < addDays(today, 0)) at = new Date(today.getFullYear() + 1, m, d);
-  return at;
+  for (let y = today.getFullYear(); y <= today.getFullYear() + 8; y++) {
+    const at = new Date(y, m, d);
+    if (at.getMonth() === m && at >= today) return at;
+  }
+  return undefined;
 }
 
 type DateRule = { re: RegExp; at: (m: RegExpMatchArray, today: Date) => Date | undefined };
@@ -52,6 +53,7 @@ const dateRules: DateRule[] = [
 ];
 
 const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
+const continuesWord = (s: string) => /^[_-]*[\p{L}\p{N}]/u.test(s);
 
 // matchRef finds the longest name in refs that the text right after a sigil starts with.
 // "Legal bot" matches "@legal bot", "@legal-bot" and "@legalbot".
@@ -65,7 +67,7 @@ function matchRef(rest: string, refs: Ref[]): { ref: Ref; len: number } | undefi
       const ch = rest[i];
       if (!/[\s_-]/.test(ch)) seen += ch.toLowerCase();
       if (!target.startsWith(seen)) break;
-      if (seen === target && !/[\p{L}\p{N}]/u.test(rest[i + 1] ?? "")) {
+      if (seen === target && !continuesWord(rest.slice(i + 1))) {
         if (!best || i + 1 > best.len) best = { ref, len: i + 1 };
         break;
       }

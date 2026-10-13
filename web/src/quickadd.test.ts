@@ -20,6 +20,10 @@ test("matches multi-word names and picks the longest", () => {
   assert.equal(parse("Call @mar").assignee?.id, "m2");
   assert.equal(parse("Call @marta").assignee?.id, "m1");
   assert.equal(parse("Plan #q4-launch").project?.id, "p2");
+  assert.equal(parse("Plan @marta-ish party").assignee, undefined);
+  assert.equal(parse("Plan @marta-ish party").title, "Plan @marta-ish party");
+  assert.equal(parse("Plan #Sales-ops review").project, undefined);
+  assert.equal(parse("Plan #Sales, then ship").project?.id, "p1");
 });
 
 test("leaves unknown words and emails alone", () => {
@@ -39,6 +43,7 @@ test("dates", () => {
   assert.equal(parse("x 2 jan").due, "2027-01-02");
   assert.equal(parse("x 2026-11-30").due, "2026-11-30");
   assert.equal(parse("x feb 30").due, undefined);
+  assert.equal(parse("x feb 29").due, "2028-02-29");
   assert.equal(parse("Book the monday standup room").due, "2026-10-19");
   assert.equal(parse("Fix todays bug").due, undefined);
   assert.equal(parse("x by Oct 20").title, "x");

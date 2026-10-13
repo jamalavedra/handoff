@@ -23,6 +23,7 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   const waiting = !closed && !t.ready && t.blocked_by.length > 0 && !t.claimed_by;
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
   return (
+    <div>
     <div className="flex min-h-14 items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-colors hover:border-zinc-300 sm:min-h-12">
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate()} />
       <Link to="/tasks/$id" params={{ id: t.id }} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
@@ -42,6 +43,8 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
         {t.due && <DuePill due={t.due} done={closed} />}
         {action}
       </div>
+    </div>
+    {toggle.error && <div className="px-3"><ErrorText error={toggle.error} /></div>}
     </div>
   );
 }
