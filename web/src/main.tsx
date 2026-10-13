@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tan
 import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Activity, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
+import { useLive } from "./live";
 import "./index.css";
 import { api, cn, projectName, type Me, type Project } from "./lib";
 import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
@@ -15,7 +16,7 @@ import { AdminPage } from "./pages/admin";
 import { QuickAddProvider, useQuickAdd } from "./components/quickadd";
 import { PageHeader } from "./components/ui";
 
-const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 5000, retry: false, staleTime: 2000 } } });
+const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
 
 export function useMe() {
   return useQuery({ queryKey: ["me"], queryFn: () => api.get<Me>("/api/me"), refetchInterval: false });
@@ -64,6 +65,7 @@ function Badge({ n }: { n: number }) {
 }
 
 function Layout({ me }: { me: Me }) {
+  useLive(true);
   const { projects, pending } = useLayoutData();
   const logout = useLogout();
   return (
