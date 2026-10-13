@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { Flag, Lock, Plus, RotateCcw } from "lucide-react";
-import { ago, api, cn, type Event, type Project, type Task } from "../lib";
+import { ago, api, cn, projectName, type Event, type Project, type Task } from "../lib";
+import { EmojiPicker } from "../components/emoji";
 import { Avatar, Button, Card, DuePill, Empty, ErrorText, Input, PageHeader, Select, TaskCheck, Who } from "../components/ui";
 import { useQuickAdd } from "../components/quickadd";
 import { groupByDue } from "../quickadd";
@@ -72,6 +73,8 @@ export function MyTasksPage() {
   const [view, setView] = useView();
   const q = useQuery({ queryKey: ["tasks", "mine"], queryFn: allMyOpenTasks });
   const recent = useQuery({ queryKey: ["tasks", "recent-done"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", status: ["done", "cancelled"], sort: "recent", limit: 20 }) });
+  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
+  const emojiOf = (id: string) => projects.data?.projects.find((p) => p.id === id)?.emoji;
   const [project, setProject] = useState("");
   const tasks = q.data?.tasks;
   const chips = useMemo(() => {
@@ -92,7 +95,7 @@ export function MyTasksPage() {
       {chips.length > 1 && (
         <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:px-0" role="tablist" aria-label="Filter by project">
           <ProjectChip active={!active} onClick={() => setProject("")} name="All" n={tasks?.length ?? 0} />
-          {chips.map((c) => <ProjectChip key={c.id} active={active === c.id} onClick={() => setProject(c.id)} name={c.name} n={c.n} />)}
+          {chips.map((c) => <ProjectChip key={c.id} active={active === c.id} onClick={() => setProject(c.id)} name={projectName({ name: c.name, emoji: emojiOf(c.id) })} n={c.n} />)}
         </div>
       )}
       {view === "board" ? (
@@ -156,14 +159,15 @@ export function ReadyPage() {
 
 export function ProjectsPage() {
   const q = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
-  const [f, setF] = useState({ name: "", visibility: "company" });
+  const [f, setF] = useState({ name: "", emoji: "", visibility: "company" });
   const invalidate = useInvalidate();
-  const m = useMutation({ mutationFn: () => api.tool("create_project", f), onSuccess: () => { setF({ name: "", visibility: "company" }); invalidate(); } });
+  const m = useMutation({ mutationFn: () => api.tool("create_project", f), onSuccess: () => { setF({ name: "", emoji: "", visibility: "company" }); invalidate(); } });
   return (
     <>
       <PageHeader title="Projects" />
       <Card className="mb-4 p-3">
         <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
+          <EmojiPicker value={f.emoji} onChange={(emoji) => setF({ ...f, emoji })} label="New project emoji" />
           <Input required placeholder="New project name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
           <Select value={f.visibility} onChange={(e) => setF({ ...f, visibility: e.target.value })} aria-label="Visibility">
             <option value="company">Whole company</option>
@@ -177,7 +181,7 @@ export function ProjectsPage() {
         {q.data?.projects.map((p) => (
           <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 last:border-0 hover:bg-zinc-50">
             <div>
-              <div className="flex items-center gap-1.5 text-sm font-medium">{p.visibility === "private" && <Lock className="size-3.5 text-zinc-400" />}{p.name}</div>
+              <div className="flex items-center gap-1.5 text-sm font-medium">{p.visibility === "private" && <Lock className="size-3.5 text-zinc-400" />}{projectName(p)}</div>
               {p.members && <div className="text-xs text-zinc-500">{p.members.join(", ")}</div>}
             </div>
             <span className="text-sm text-zinc-500">{p.open_tasks} open</span>
@@ -196,13 +200,17 @@ export function ProjectPage() {
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const q = useQuery({ queryKey: ["tasks", "project", id, showDone], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, include_done: showDone, limit: 500 }) });
   const p = projects.data?.projects.find((x) => x.id === id);
+  const invalidate = useInvalidate();
+  const setEmoji = useMutation({ mutationFn: (emoji: string) => api.tool("update_project", { project: id, emoji }), onSuccess: invalidate });
   return (
     <>
-      <PageHeader title={p?.name ?? "Project"}>
+      <PageHeader title={p ? projectName(p) : "Project"}>
+        {p && <EmojiPicker value={p.emoji ?? ""} onChange={(emoji) => setEmoji.mutate(emoji)} label="Project emoji" />}
         {view === "list" && <label className="flex items-center gap-1.5 text-sm text-zinc-600"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
         <ViewToggle view={view} onChange={setView} />
         <NewTask project={id} />
       </PageHeader>
+      <ErrorText error={setEmoji.error} />
       {view === "board" ? <Board tasks={q.data?.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled")} done={done.data?.tasks} /> : <TaskList tasks={q.data?.tasks} empty="No tasks here yet." />}
     </>
   );
@@ -226,7 +234,7 @@ const verbs: Record<string, string> = {
   approval_requested: "asked to delete", approval_approved: "approved deleting", approval_rejected: "rejected deleting",
   agent_added: "added an agent", agent_revoked: "revoked an agent", agent_permissions_changed: "changed an agent's permissions",
   api_key_created: "created an API key", api_key_revoked: "revoked an API key", project_created: "created a project",
-  member_invited: "invited someone", member_changed: "changed a member", org_changed: "changed workspace settings",
+  member_invited: "invited someone", member_changed: "changed a member", org_changed: "changed workspace settings", project_changed: "changed a project",
 };
 
 export function EventLine({ e, showTask = true }: { e: Event; showTask?: boolean }) {

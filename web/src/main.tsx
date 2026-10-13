@@ -5,7 +5,7 @@ import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvide
 import { Activity, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import "./index.css";
-import { api, cn, type Me, type Project } from "./lib";
+import { api, cn, projectName, type Me, type Project } from "./lib";
 import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
 import { ActivityPage, MyTasksPage, ProjectPage, ProjectsPage, ReadyPage, TrashPage } from "./pages/tasks";
 import { TaskPage, TaskView } from "./pages/task";
@@ -90,7 +90,7 @@ function Layout({ me }: { me: Me }) {
           <div className="mt-1 flex flex-col gap-0.5 overflow-y-auto">
             {projects.map((p) => (
               <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex items-center justify-between rounded-md px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-100" activeProps={{ className: "bg-zinc-100 text-zinc-900" }}>
-                <span className="truncate">{p.name}</span>
+                <span className="truncate">{projectName(p)}</span>
                 <span className="text-xs text-zinc-400">{p.open_tasks}</span>
               </Link>
             ))}
@@ -238,7 +238,7 @@ function MorePage() {
           <div className="mb-6 overflow-hidden rounded-xl border border-zinc-200 bg-white">
             {projects.map((p) => (
               <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex min-h-12 items-center justify-between border-b border-zinc-100 px-4 text-[15px] last:border-0 active:bg-zinc-50">
-                <span className="truncate">{p.name}</span>
+                <span className="truncate">{projectName(p)}</span>
                 <span className="text-sm text-zinc-400">{p.open_tasks}</span>
               </Link>
             ))}
