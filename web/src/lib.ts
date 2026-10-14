@@ -94,7 +94,9 @@ export type Event = {
   at: string;
 };
 
-export type Comment = { id: string; author: MemberRef; on_behalf_of?: MemberRef; body: string; created_at: string };
+export type Reaction = { emoji: string; count: number; mine?: boolean; by: string[] };
+
+export type Comment = { id: string; author: MemberRef; on_behalf_of?: MemberRef; body: string; created_at: string; reactions?: Reaction[] };
 
 export type Me = {
   apex?: boolean;

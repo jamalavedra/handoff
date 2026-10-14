@@ -426,11 +426,20 @@ type TaskIDIn struct {
 }
 
 type CommentOut struct {
-	ID         string     `json:"id"`
-	Author     *MemberRef `json:"author"`
-	OnBehalfOf *MemberRef `json:"on_behalf_of,omitempty"`
-	Body       string     `json:"body"`
-	CreatedAt  string     `json:"created_at"`
+	ID         string        `json:"id"`
+	Author     *MemberRef    `json:"author"`
+	OnBehalfOf *MemberRef    `json:"on_behalf_of,omitempty"`
+	Body       string        `json:"body"`
+	CreatedAt  string        `json:"created_at"`
+	Reactions  []ReactionOut `json:"reactions"`
+}
+
+// ReactionOut is one emoji on a comment: how many reacted, whether the caller did, and who.
+type ReactionOut struct {
+	Emoji string   `json:"emoji"`
+	Count int      `json:"count"`
+	Mine  bool     `json:"mine,omitempty"`
+	By    []string `json:"by"`
 }
 
 type TaskDetailOut struct {
@@ -479,10 +488,13 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 				rows.Close()
 				return err
 			}
-			co.Author, co.OnBehalfOf, co.CreatedAt = c.ref(author), c.ref(obo), ts(&at)
+			co.Author, co.OnBehalfOf, co.CreatedAt, co.Reactions = c.ref(author), c.ref(obo), ts(&at), []ReactionOut{}
 			out.Comments = append(out.Comments, co)
 		}
 		rows.Close()
+		if err := c.loadReactions(out.Comments); err != nil {
+			return err
+		}
 		out.Events, err = c.events("e.task_id = $1", []any{r.ID}, 200, true)
 		return err
 	})
@@ -1346,6 +1358,94 @@ func (s *Service) Restore(ctx context.Context, p *Principal, in TaskIDIn) (TaskR
 		r, err = c.getTask(r.ID, false, false)
 		out.Task = c.out(r, true)
 		return err
+	})
+	return out, err
+}
+
+// loadReactions fills in each comment's reactions, grouped by emoji in the order first used.
+func (c *call) loadReactions(comments []CommentOut) error {
+	if len(comments) == 0 {
+		return nil
+	}
+	idx := map[string]int{}
+	ids := make([]string, len(comments))
+	for i, co := range comments {
+		idx[co.ID], ids[i] = i, co.ID
+	}
+	rows, err := c.tx.Query(c.ctx, `SELECT comment_id::text, emoji, member_id::text FROM comment_reactions
+		WHERE comment_id::text = ANY($1) ORDER BY created_at`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, emoji, who string
+		if err := rows.Scan(&cid, &emoji, &who); err != nil {
+			return err
+		}
+		co := &comments[idx[cid]]
+		k := slices.IndexFunc(co.Reactions, func(r ReactionOut) bool { return r.Emoji == emoji })
+		if k < 0 {
+			co.Reactions = append(co.Reactions, ReactionOut{Emoji: emoji, By: []string{}})
+			k = len(co.Reactions) - 1
+		}
+		r := &co.Reactions[k]
+		r.Count++
+		if who == c.p.Member.ID {
+			r.Mine = true
+		}
+		if m := c.ref(who); m != nil {
+			r.By = append(r.By, m.Name)
+		}
+	}
+	return rows.Err()
+}
+
+type ReactIn struct {
+	Comment string `json:"comment" jsonschema:"comment id"`
+	Emoji   string `json:"emoji" jsonschema:"a single emoji, e.g. ✅ to acknowledge or 👀 for looking into it"`
+}
+
+type ReactOut struct {
+	Added bool `json:"added" jsonschema:"true if the reaction was added, false if it was taken back"`
+}
+
+// React toggles the caller's emoji on a comment.
+func (s *Service) React(ctx context.Context, p *Principal, in ReactIn) (ReactOut, error) {
+	var out ReactOut
+	err := s.run(ctx, p, func(c *call) error {
+		if err := p.require(ActUpdate); err != nil {
+			return err
+		}
+		emoji := strings.TrimSpace(in.Emoji)
+		if emoji == "" || len(emoji) > 32 || strings.ContainsAny(emoji, " \t\n") {
+			return errf(ErrInvalid, "emoji must be a single emoji")
+		}
+		var taskID string
+		err := c.tx.QueryRow(c.ctx, `SELECT task_id FROM comments WHERE id::text = $1`, strings.TrimSpace(in.Comment)).Scan(&taskID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errf(ErrNotFound, "no comment %q", in.Comment)
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := c.getTask(taskID, false, false); err != nil {
+			return err
+		}
+		tag, err := c.tx.Exec(c.ctx, `DELETE FROM comment_reactions WHERE comment_id::text = $1 AND member_id = $2 AND emoji = $3`,
+			in.Comment, p.Member.ID, emoji)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			if _, err := c.tx.Exec(c.ctx, `INSERT INTO comment_reactions (org_id, comment_id, member_id, emoji) VALUES ($1, $2::uuid, $3, $4)`,
+				p.Org.ID, in.Comment, p.Member.ID, emoji); err != nil {
+				return err
+			}
+			out.Added = true
+		}
+		// Recorded like any change, which also refreshes open screens.
+		return c.event(taskID, "reacted", map[string]any{"emoji": emoji, "added": out.Added})
 	})
 	return out, err
 }

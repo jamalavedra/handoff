@@ -92,6 +92,7 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "claim_task", Agent: true, Description: "Take a ready task so nobody else works on it, for lease_minutes (default 60). Fails if someone else holds it or a blocker is unfinished. Claim again to extend."}, s.ClaimTask),
 		def(Tool{Name: "release_task", Agent: true, Description: "Give a claimed task back without finishing it, optionally with a note on where you left off."}, s.ReleaseTask),
 		def(Tool{Name: "close_task", Agent: true, Description: "Mark a task done (or cancelled) with a short reason. Returns tasks that became ready because of it."}, s.CloseTask),
+		def(Tool{Name: "react", Agent: true, Description: "Toggle an emoji reaction on a comment, e.g. ✅ to acknowledge a request or 👀 to show you're looking into it. Comment ids come from get_task."}, s.React),
 		def(Tool{Name: "comment", Agent: true, Description: "Add a comment to a task, e.g. progress, a question for the assignee, or a link to the result."}, s.Comment),
 		def(Tool{Name: "link_tasks", Agent: true, Description: "Say that one task (blocked) can't start until another (blocker) is finished. Set remove=true to undo."}, s.Link),
 		def(Tool{Name: "trash_task", Agent: true, Destructive: true, Description: "Move a task to the trash (restorable for 30 days). Some agents need a person to approve; then this returns pending_approval and nothing is deleted yet."}, s.Trash),
