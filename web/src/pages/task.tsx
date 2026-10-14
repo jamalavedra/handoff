@@ -458,7 +458,7 @@ function Reactions({ c, disabled }: { c: Comment; disabled: boolean }) {
           </PopoverTrigger>
           <PopoverContent align="start" className="flex w-auto gap-0.5 rounded-full p-1">
             {quickReactions.map((e) => (
-              <button key={e} type="button" aria-label={`React ${e}`} onClick={() => { setOpen(false); react.mutate(e); }} className="flex size-8 items-center justify-center rounded-full text-lg transition-transform hover:scale-110 hover:bg-muted">
+              <button key={e} type="button" disabled={react.isPending} aria-label={`React ${e}`} onClick={() => { setOpen(false); react.mutate(e); }} className="flex size-8 items-center justify-center rounded-full text-lg transition-transform hover:scale-110 hover:bg-muted">
                 {e}
               </button>
             ))}

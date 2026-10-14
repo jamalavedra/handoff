@@ -1418,8 +1418,8 @@ func (s *Service) React(ctx context.Context, p *Principal, in ReactIn) (ReactOut
 			return err
 		}
 		emoji := strings.TrimSpace(in.Emoji)
-		if emoji == "" || len(emoji) > 32 || strings.ContainsAny(emoji, " \t\n") {
-			return errf(ErrInvalid, "emoji must be a single emoji")
+		if !singleEmoji(emoji) {
+			return errf(ErrInvalid, "emoji must be a single emoji, like ✅ or 👀")
 		}
 		var taskID string
 		err := c.tx.QueryRow(c.ctx, `SELECT task_id FROM comments WHERE id::text = $1`, strings.TrimSpace(in.Comment)).Scan(&taskID)
@@ -1432,20 +1432,66 @@ func (s *Service) React(ctx context.Context, p *Principal, in ReactIn) (ReactOut
 		if _, err := c.getTask(taskID, false, false); err != nil {
 			return err
 		}
-		tag, err := c.tx.Exec(c.ctx, `DELETE FROM comment_reactions WHERE comment_id::text = $1 AND member_id = $2 AND emoji = $3`,
-			in.Comment, p.Member.ID, emoji)
+		// Insert-or-skip, then delete: two toggles at once act like two toggles instead of colliding.
+		tag, err := c.tx.Exec(c.ctx, `INSERT INTO comment_reactions (org_id, comment_id, member_id, emoji) VALUES ($1, $2::uuid, $3, $4)
+			ON CONFLICT DO NOTHING`, p.Org.ID, in.Comment, p.Member.ID, emoji)
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
-			if _, err := c.tx.Exec(c.ctx, `INSERT INTO comment_reactions (org_id, comment_id, member_id, emoji) VALUES ($1, $2::uuid, $3, $4)`,
-				p.Org.ID, in.Comment, p.Member.ID, emoji); err != nil {
+		out.Added = tag.RowsAffected() == 1
+		if !out.Added {
+			if _, err := c.tx.Exec(c.ctx, `DELETE FROM comment_reactions WHERE comment_id::text = $1 AND member_id = $2 AND emoji = $3`,
+				in.Comment, p.Member.ID, emoji); err != nil {
 				return err
 			}
-			out.Added = true
 		}
 		// Recorded like any change, which also refreshes open screens.
 		return c.event(taskID, "reacted", map[string]any{"emoji": emoji, "added": out.Added})
 	})
 	return out, err
+}
+
+// singleEmoji reports whether s is exactly one emoji: a pictograph with optional skin tone, variation
+// selector or tags, several joined by zero-width joiners (👩‍💻), a flag pair, or a keycap (1️⃣).
+func singleEmoji(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	rs := []rune(s)
+	bases := 0
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		switch {
+		case r == 0x200D, r == 0xFE0F, r == 0x20E3, r >= 0x1F3FB && r <= 0x1F3FF, r >= 0xE0020 && r <= 0xE007F:
+			// joiner, variation selector, keycap, skin tone, tag: modify what came before
+			if i == 0 {
+				return false
+			}
+		case r >= 0x1F1E6 && r <= 0x1F1FF: // regional indicators come in pairs
+			if i+1 >= len(rs) || rs[i+1] < 0x1F1E6 || rs[i+1] > 0x1F1FF {
+				return false
+			}
+			i++
+			bases++
+		case (r >= '0' && r <= '9') || r == '#' || r == '*': // only as a keycap
+			if !strings.ContainsRune(string(rs[i+1:]), 0x20E3) {
+				return false
+			}
+			bases++
+		case isPictograph(r):
+			if i == 0 || rs[i-1] != 0x200D {
+				bases++
+			}
+		default:
+			return false
+		}
+	}
+	return bases == 1
+}
+
+func isPictograph(r rune) bool {
+	return (r >= 0x1F000 && r <= 0x1FAFF) || (r >= 0x2600 && r <= 0x27BF) || (r >= 0x2300 && r <= 0x23FF) ||
+		(r >= 0x2B00 && r <= 0x2BFF) || (r >= 0x2190 && r <= 0x21FF) || (r >= 0x25A0 && r <= 0x25FF) ||
+		r == 0x00A9 || r == 0x00AE || r == 0x203C || r == 0x2049 || r == 0x2122 || r == 0x2139 ||
+		r == 0x3030 || r == 0x303D || r == 0x3297 || r == 0x3299
 }

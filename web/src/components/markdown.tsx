@@ -3,10 +3,26 @@ import remarkGfm from "remark-gfm";
 import { cn } from "../lib";
 import { splitMentions } from "../quickadd";
 
-// Mentions travel through the markdown as links to "mention:" so they can be drawn as chips.
-function withMentions(text: string, names: string[]) {
-  if (!names.length) return text;
-  return splitMentions(text, names).map((p) => (p.mention ? `[${p.text}](mention:)` : p.text)).join("");
+type MdNode = { type: string; value?: string; url?: string; children?: MdNode[] };
+
+// remarkMentions turns @Name in plain text into mention links once the markdown is parsed, so code,
+// links and URLs (which aren't plain text nodes) are never touched.
+function remarkMentions(names: string[]) {
+  return () => (tree: MdNode) => {
+    const walk = (node: MdNode) => {
+      if (!node.children || node.type === "link" || node.type === "linkReference") return;
+      node.children = node.children.flatMap((child): MdNode[] => {
+        if (child.type !== "text" || !child.value) {
+          walk(child);
+          return [child];
+        }
+        const parts = splitMentions(child.value, names);
+        if (!parts.some((p) => p.mention)) return [child];
+        return parts.map((p) => (p.mention ? { type: "link", url: "mention:", children: [{ type: "text", value: p.text }] } : { type: "text", value: p.text }));
+      });
+    };
+    walk(tree);
+  };
 }
 
 // Markdown renders task bodies and comments: GitHub-flavoured (lists, tables, task lists, links),
@@ -15,7 +31,7 @@ export function Markdown({ text, mentions = [], className }: { text: string; men
   return (
     <div className={cn("md", className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={mentions.length ? [remarkGfm, remarkMentions(mentions)] : [remarkGfm]}
         urlTransform={(url) => (url === "mention:" ? url : defaultUrlTransform(url))}
         components={{
           a: ({ href, children }) =>
@@ -26,7 +42,7 @@ export function Markdown({ text, mentions = [], className }: { text: string; men
             ),
         }}
       >
-        {withMentions(text, mentions)}
+        {text}
       </ReactMarkdown>
     </div>
   );

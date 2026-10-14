@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/joalavedra/handoff/internal/core"
@@ -50,5 +51,36 @@ func TestReactions(t *testing.T) {
 	reader := e.agent(t, admin, "Reader", &core.Permissions{Projects: []string{"*"}, Actions: []string{core.ActRead}})
 	if _, err := e.s.React(e.ctx, reader, core.ReactIn{Comment: cid, Emoji: "👍"}); !core.IsCode(err, core.ErrForbidden) {
 		t.Fatalf("read-only agent reacted: %v", err)
+	}
+}
+
+func TestReactionTogglesAtOnce(t *testing.T) {
+	e := setup(t)
+	admin := e.org(t, "reactrace")
+	task := e.create(t, admin, core.NewTask{Title: "x"})[0]
+	d, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := e.s.React(e.ctx, admin, core.ReactIn{Comment: d.Comments[0].ID, Emoji: "👍"}); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent toggle failed: %v", err)
+	}
+	// Eight toggles cancel out.
+	d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+	if len(d.Comments[0].Reactions) != 0 {
+		t.Fatalf("after 8 toggles: %+v", d.Comments[0].Reactions)
 	}
 }
