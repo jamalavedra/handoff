@@ -321,3 +321,28 @@ func TestChatReplyLooksUpAndReacts(t *testing.T) {
 		t.Fatalf("agent reactions on the question: %+v", asked.Reactions)
 	}
 }
+
+func TestChatReplyFailureClearsLooking(t *testing.T) {
+	model, _ := scriptedModel(t, map[string]any{"_status": 500})
+	e, admin, bot := assistantEnv(t, model, "lookfail")
+	task := e.create(t, admin, core.NewTask{Title: "anything"})[0]
+	waitTriage(t, e, admin, task.ID)
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot help?"}); err != nil {
+		t.Fatal(err)
+	}
+	var d core.TaskDetailOut
+	for range 300 {
+		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if n := len(d.Comments); n > 0 && d.Comments[n-1].Author.ID == bot.Member.ID {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+	for _, c := range d.Comments {
+		if strings.HasPrefix(c.Body, "@Acme Bot") && len(c.Reactions) > 0 {
+			t.Fatalf("a failed answer left reactions: %+v", c.Reactions)
+		}
+	}
+}

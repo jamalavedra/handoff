@@ -105,6 +105,12 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 	finish := func() {
 		_ = s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `UPDATE chat_replies SET state = 'done', claim_until = NULL WHERE id::text = $1`, j.id)
+			if err != nil || comment == "" {
+				return err
+			}
+			// However it ended, the agent isn't looking at the message any more.
+			_, err = tx.Exec(ctx, `DELETE FROM comment_reactions WHERE comment_id::text = $1 AND emoji = '👀'
+				AND member_id = (SELECT agent_id FROM triage_settings)`, comment)
 			return err
 		})
 	}
