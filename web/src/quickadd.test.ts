@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { boardColumn, dueLabel, groupByDue, mentionQuery, parseQuickAdd, splitMentions } from "./quickadd.ts";
+import { boardColumn, dueLabel, groupByDue, mentionQuery, parseQuickAdd, scheduleLabel, splitMentions } from "./quickadd.ts";
 
 // Tuesday 13 Oct 2026.
 const today = new Date(2026, 9, 13);
@@ -121,4 +121,16 @@ test("repeats", () => {
   assert.deepEqual([parse("Invoice monthly from Oct 20").repeat, parse("Invoice monthly from Oct 20").due], ["monthly", "2026-10-20"]);
   // Plain weekday words still mean a one-off date.
   assert.equal(parse("Plan monday meeting").repeat, undefined);
+});
+
+test("schedules in words", () => {
+  assert.equal(scheduleLabel("weekly", "2026-10-16"), "Every Friday");
+  assert.equal(scheduleLabel("biweekly", "2026-10-13"), "Every other Tuesday");
+  assert.equal(scheduleLabel("daily", "2026-10-16"), "Every day");
+  assert.equal(scheduleLabel("weekdays"), "Every weekday");
+  assert.equal(scheduleLabel("weekly"), "Every week");
+  assert.equal(scheduleLabel("monthly", "2026-10-01"), "Every month on the 1st");
+  assert.equal(scheduleLabel("monthly", "2026-10-12"), "Every month on the 12th");
+  assert.equal(scheduleLabel("monthly", "2026-10-23"), "Every month on the 23rd");
+  assert.equal(scheduleLabel("yearly", "2026-10-14"), "Every year on Oct 14");
 });

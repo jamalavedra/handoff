@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Navigate, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Bell, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun, Trash2, Users } from "lucide-react";
+import { Bell, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
 import "./index.css";
@@ -14,6 +14,7 @@ import { TeamPage } from "./pages/team";
 import { NotificationsPage, useInbox } from "./pages/notifications";
 import { usePanelTask, useWide } from "./components/tasklink";
 import { AgentsPage } from "./pages/agents";
+import { AutomationsPage } from "./pages/automations";
 import { AdminPage } from "./pages/admin";
 import { QuickAddProvider, useQuickAdd } from "./components/quickadd";
 import { PageHeader } from "./components/app";
@@ -23,7 +24,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useNotificationToasts } from "./components/feedback";
 import { CommandPaletteProvider, useCommandPalette } from "./components/command-palette";
 import { ShortcutsDialog, useShortcuts } from "./components/shortcuts";
-import { AssistantButton, AssistantPanel, AssistantProvider, clearAssistant, useAssistant, useAssistantInset } from "./components/assistant";
+import { AssistantFab, AssistantPanel, AssistantProvider, clearAssistant, useAssistant, useAssistantInset, useFab } from "./components/assistant";
 import { TabsProvider, TabStrip, useOpenInTab } from "./components/tabs";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
@@ -161,13 +162,9 @@ function Layout({ me }: { me: Me }) {
           </div>
           <SearchButton />
           <nav className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto px-1 pb-2">
-            <AssistantButton />
             <NavLink to="/" icon={CheckSquare}>My tasks</NavLink>
-            <NavLink to="/notifications" icon={Bell}>
-              <span className="flex-1">Notifications</span>
-              <Badge n={unread} />
-            </NavLink>
             <NavLink to="/team" icon={Users}>Team</NavLink>
+            <NavLink to="/automations" icon={Zap}>Automations</NavLink>
             <ProjectsNav projects={projects} />
             <NavLink to="/trash" icon={Trash2}>Trash</NavLink>
             <NavLink to="/settings" icon={Settings}>
@@ -175,7 +172,10 @@ function Layout({ me }: { me: Me }) {
               <Badge n={pending} />
             </NavLink>
           </nav>
-          <div className="mt-auto px-2 pb-3"><ThemeToggle /></div>
+          <div className="mt-auto flex items-center justify-between px-2 pb-3">
+            <ThemeToggle />
+            <SidebarBell unread={unread} />
+          </div>
           <div className="flex items-center justify-between border-t border-border px-2 pt-3 text-sm">
             <div className="min-w-0">
               <div className="truncate font-medium">{me.member?.name}</div>
@@ -191,7 +191,7 @@ function Layout({ me }: { me: Me }) {
           <div className="flex min-w-0 flex-1">
             <div className="flex min-w-0 flex-1 flex-col">
               {!onTask && <MobileTopBar me={me} unread={unread} />}
-              <main className={cn("min-w-0 flex-1 px-4 md:px-8 md:pt-8 md:pb-6 lg:px-16", onTask ? "pt-[calc(0.5rem+env(safe-area-inset-top))] pb-[env(safe-area-inset-bottom)]" : "pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))]")}>
+              <main className={cn("min-w-0 flex-1 px-4 md:px-8 md:pt-8 md:pb-6 lg:px-16", onTask ? "pt-[calc(0.5rem+env(safe-area-inset-top))] pb-[env(safe-area-inset-bottom)]" : "pt-4 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24")}>
                 <div className="mx-auto max-w-[800px]">
                   <Outlet />
                 </div>
@@ -201,6 +201,7 @@ function Layout({ me }: { me: Me }) {
           </div>
         </div>
         <AssistantPanel me={me} />
+        <AssistantFab />
         {!onTask && <MobileTabBar pending={pending} unread={unread} />}
         <AppToaster />
       </div>
@@ -211,10 +212,34 @@ function Layout({ me }: { me: Me }) {
   );
 }
 
-// Toasts keep clear of the assistant panel.
+// Toasts keep clear of the assistant panel, and stack above the floating assistant button.
 function AppToaster() {
   const inset = useAssistantInset();
-  return <Toaster offset={inset ? { right: inset } : undefined} />;
+  const fab = useFab();
+  const bottom = !fab.shown ? undefined : fab.lifted ? "8.5rem" : "5rem";
+  return (
+    <Toaster
+      offset={inset || bottom ? { right: inset, bottom } : undefined}
+      mobileOffset={{ bottom: fab.shown ? "calc(9.5rem + env(safe-area-inset-bottom))" : "calc(5.5rem + env(safe-area-inset-bottom))" }}
+    />
+  );
+}
+
+// SidebarBell opens Notifications from the sidebar's footer, with the unread count.
+function SidebarBell({ unread }: { unread: number }) {
+  const tab = useOpenInTab("/notifications");
+  return (
+    <Link
+      to="/notifications"
+      {...tab}
+      title="Notifications (G N)"
+      aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
+      className="relative flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground"
+    >
+      <Bell className="size-4" />
+      {unread > 0 && <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white tabular-nums">{unread > 9 ? "9+" : unread}</span>}
+    </Link>
+  );
 }
 
 // TaskPanel shows ?task=<id> beside the list on wide screens; narrow screens get the full task page.
@@ -249,7 +274,6 @@ function TaskPanel() {
 
 function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
   const quick = useQuickAdd();
-  const assistant = useAssistant();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const project = path.match(/^\/projects\/([^/]+)/)?.[1];
   return (
@@ -257,9 +281,6 @@ function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
       <div className="flex h-14 items-center justify-between px-4">
         <span className="truncate rounded-full border border-border bg-card px-3 py-1 text-sm font-semibold">{me.org?.name}</span>
         <div className="flex items-center gap-2">
-          <button onClick={() => assistant.setOpen(true)} className="flex size-10 items-center justify-center rounded-full border border-border bg-card" aria-label="Assistant">
-            <Sparkles className="size-5" />
-          </button>
           <Link to="/notifications" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"} className="relative flex size-10 items-center justify-center rounded-full border border-border bg-card">
             <Bell className="size-5" />
             {unread > 0 && <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold text-white">{unread > 9 ? "9+" : unread}</span>}
@@ -273,7 +294,7 @@ function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
   );
 }
 
-const moreRoutes = ["/more", "/team", "/trash", "/settings"];
+const moreRoutes = ["/more", "/team", "/automations", "/trash", "/settings"];
 
 const tabClass = (active: boolean) => cn("relative flex flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-medium text-foreground/50", active && "bg-accent text-foreground");
 
@@ -360,6 +381,7 @@ function MoreContent({ onNavigate }: { onNavigate?: () => void }) {
     <>
       <div className="mb-6 overflow-hidden rounded-xl border border-border bg-card">
         <MoreRow to="/team" icon={Users} onNavigate={onNavigate}>Team</MoreRow>
+        <MoreRow to="/automations" icon={Zap} onNavigate={onNavigate}>Automations</MoreRow>
         <MoreRow to="/trash" icon={Trash2} onNavigate={onNavigate}>Trash</MoreRow>
         <MoreRow to="/settings" icon={Settings} onNavigate={onNavigate}>Settings</MoreRow>
       </div>
@@ -406,6 +428,7 @@ const router = createRouter({
     r("/projects", ProjectsPage),
     r("/projects/$id", ProjectPage),
     r("/tasks/$id", TaskPage),
+    r("/automations", AutomationsPage),
     r("/trash", TrashPage),
     r("/settings", AdminPage),
     r("/settings/agents", AgentsPage),
