@@ -250,7 +250,8 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 	defer s.progressDone(ctx, &progress{org: j.org, task: task, project: project, turn: "agent-" + j.id})
 	close(done)
 	reply := strings.TrimSpace(out.Reply)
-	if err != nil || out.Error != "" {
+	finished := err == nil && out.Error == ""
+	if !finished {
 		msg := out.Error
 		if err != nil {
 			msg = err.Error()
@@ -266,8 +267,13 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		}
 		agent.Owner = person.Member
 		agent.within = visible
-		// The reply keeps the trail of what the agent did, and tells the person who asked that it's done.
-		if _, err := s.Comment(ctx, agent, CommentIn{ID: task, Body: reply, extra: commentExtra{lookups: lookups(out.Steps), activity: activity(out.Steps), done: person.Member}}); err != nil {
+		// The reply keeps the trail of what the agent did and, when it got there, tells the person who
+		// asked that it's done. A reply saying it couldn't finish is only that.
+		extra := commentExtra{lookups: lookups(out.Steps), activity: activity(out.Steps)}
+		if finished {
+			extra.done = person.Member
+		}
+		if _, err := s.Comment(ctx, agent, CommentIn{ID: task, Body: reply, extra: extra}); err != nil {
 			slog.Error("chat reply: post", "request", j.id, "err", err)
 			return // the lease runs out and the sweep tries again; the turn resumes
 		}
@@ -275,7 +281,7 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 	// ✅ once it's answered (the reply says when it couldn't finish).
 	if comment != "" {
 		s.agentReact(ctx, typer, comment, "👀", false)
-		if err == nil && out.Error == "" {
+		if finished {
 			s.agentReact(ctx, typer, comment, "✅", true)
 		}
 	}

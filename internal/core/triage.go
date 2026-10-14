@@ -470,6 +470,8 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 		s.failTriage(ctx, cl, st.AgentID, err.Error())
 		return
 	}
+	// The note keeps the trail its viewers watched live.
+	sugg.activity = pr.trail
 	err = s.applyTriage(ctx, agent, cl, t, sugg, members.Members)
 	if errors.Is(err, errTriageStale) {
 		return
@@ -876,12 +878,7 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 	sessions := extSessions{}
 	defer sessions.close()
 	var looked []Lookup
-	var trail []ActivityStep
-	step := func(a ActivityStep) {
-		a = a.clipped()
-		trail = append(trail, a)
-		s.progressStep(ctx, pr, a)
-	}
+	step := func(a ActivityStep) { s.progressStep(ctx, pr, a) }
 	msgs := []map[string]any{
 		{"role": "system", "content": triagePrompt + "\n\n" + triageResearchNote},
 		{"role": "user", "content": triageUserMessage(org, t, projects, members)},
@@ -904,7 +901,7 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 			msgs = append(msgs, map[string]any{"role": "user", "content": "Now reply with the JSON object only, using what you found."})
 			s.progressStep(ctx, pr, ActivityStep{Type: "write", Text: "Writing it up"})
 			sugg, err := s.completeJSON(ctx, st, cred, msgs)
-			sugg.lookups, sugg.activity = looked, trail
+			sugg.lookups = looked
 			return sugg, err
 		}
 		for _, th := range thoughts(msg) {

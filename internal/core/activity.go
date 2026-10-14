@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"time"
 )
 
 // Progress: while the workspace's agent works (an assistant turn, a reply in a task's chat, a task
@@ -32,6 +33,7 @@ const (
 	thoughtChars     = 280 // a thought is a line or two, not the model's whole reasoning
 	stepTextChars    = 200
 	progressMaxBytes = 7000 // pg_notify's payload limit is 8000
+	progressTimeout  = 2 * time.Second
 )
 
 // progress is who hears one turn's steps.
@@ -39,6 +41,7 @@ type progress struct {
 	org, task, project, member, turn string
 	sent                             int
 	last                             string
+	trail                            []ActivityStep // the steps sent, for the message that ends the turn
 }
 
 type progressMsg struct {
@@ -64,17 +67,21 @@ func (s *Service) progressStep(ctx context.Context, pr *progress, st ActivitySte
 	}
 	pr.sent++
 	pr.last = key
+	pr.trail = append(pr.trail, st)
 	s.publishProgress(ctx, pr, &st, false)
 }
 
 // progressDone tells screens the turn is over, so they stop showing it as live.
 func (s *Service) progressDone(ctx context.Context, pr *progress) {
 	if pr != nil {
-		s.publishProgress(context.WithoutCancel(ctx), pr, nil, true)
+		s.publishProgress(ctx, pr, nil, true)
 	}
 }
 
+// publishProgress never holds up the work: a stalled database costs a step at most progressTimeout.
 func (s *Service) publishProgress(ctx context.Context, pr *progress, st *ActivityStep, done bool) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), progressTimeout)
+	defer cancel()
 	m := progressMsg{Org: pr.org, Kind: "progress", Task: pr.task, Project: pr.project, Member: pr.member, Turn: pr.turn, Step: st, Done: done}
 	b, _ := json.Marshal(m)
 	if len(b) > progressMaxBytes && st != nil {

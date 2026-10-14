@@ -11,7 +11,7 @@ import { MicButton } from "./dictation";
 import { useDictation } from "@/hooks/use-dictation";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ActivityTrail, LiveTrail } from "./activity-trail";
-import { useAgentLine } from "../agent-activity";
+import { useAgentLine, useChatInView } from "../agent-activity";
 
 // A task's chat is its conversation with the team and its agents. It lives in the assistant panel
 // ("This task"), beside the task it's about; the task itself shows a preview that opens it.
@@ -45,6 +45,8 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   const { cancel: cancelDictation } = dictation;
   useEffect(() => () => { cancelDictation(); setComment(""); setCaret(0); }, [id, cancelDictation]);
   useEffect(() => { if (active && (focus || !drawer)) ref.current?.focus(); }, [focus, id, drawer, active]);
+  // Mounted only while the panel is open; active while it shows this chat.
+  useChatInView(id, active);
   const count = q.data?.comments.length ?? 0;
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
   const send = useMutation({

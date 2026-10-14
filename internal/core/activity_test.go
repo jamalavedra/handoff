@@ -193,6 +193,33 @@ func TestChatReplyKeepsTrailAndTellsThePerson(t *testing.T) {
 	}
 }
 
+func TestFailedReplyIsNotDone(t *testing.T) {
+	srv, _ := scriptedModel(t, map[string]any{"_status": http.StatusServiceUnavailable})
+	e, admin, bot := assistantEnv(t, srv, "replyfail")
+	task := e.create(t, admin, core.NewTask{Title: "Ship it"})[0]
+	waitTriage(t, e, admin, task.ID)
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot go"}); err != nil {
+		t.Fatal(err)
+	}
+	var reply *core.CommentOut
+	for i := 0; i < 200 && reply == nil; i++ {
+		d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		for _, c := range d.Comments {
+			if c.Author.ID == bot.Member.ID {
+				reply = &c
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if reply == nil || !strings.HasPrefix(reply.Body, "I couldn't finish that") {
+		t.Fatalf("reply: %+v", reply)
+	}
+	in, err := e.s.Inbox(e.ctx, admin, core.InboxIn{})
+	if err != nil || slices.ContainsFunc(in.Notifications, func(n core.NotificationOut) bool { return n.Kind == "agent_done" }) {
+		t.Fatalf("a failed reply said it was done: %+v %v", in.Notifications, err)
+	}
+}
+
 func TestTriageWorkTellsTheCreator(t *testing.T) {
 	srv := fakeModel(t, http.StatusOK, map[string]any{"title": "Compare Pixel 8 and 9", "work": "| | 8 | 9 |"}, new(atomic.Value))
 	e := triageEnv(t, srv)
@@ -211,6 +238,14 @@ func TestTriageWorkTellsTheCreator(t *testing.T) {
 	if len(in.Notifications) != 1 || in.Notifications[0].Kind != "agent_done" || in.Notifications[0].Actor.ID != bot.Member.ID ||
 		!strings.HasPrefix(in.Notifications[0].Excerpt, "I tidied the title") {
 		t.Fatalf("inbox: %+v", in.Notifications)
+	}
+	// Its note keeps the trail that was shown live.
+	d, err := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Comments) != 1 || len(d.Comments[0].Activity) != 2 || d.Comments[0].Activity[0].Tool != "get_task" || d.Comments[0].Activity[1].Text != "Writing it up" {
+		t.Fatalf("triage note trail: %+v", d.Comments)
 	}
 	// Triage showed it at work on the task.
 	for i := 0; i < 100; i++ {

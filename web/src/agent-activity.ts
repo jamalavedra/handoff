@@ -27,6 +27,24 @@ export function useAgentActivity({ task, turn }: { task?: string; turn?: string 
   return { steps: trail.steps, working: trail.working };
 }
 
+// Task chats on screen right now, so a reply that lands in one needs no toast.
+const chatsInView = new Map<string, number>();
+
+export const chatInView = (task: string) => (chatsInView.get(task) ?? 0) > 0;
+
+// useChatInView marks a task's chat as showing while visible is true.
+export function useChatInView(task: string, visible: boolean) {
+  useEffect(() => {
+    if (!visible) return;
+    chatsInView.set(task, (chatsInView.get(task) ?? 0) + 1);
+    return () => {
+      const n = (chatsInView.get(task) ?? 1) - 1;
+      if (n > 0) chatsInView.set(task, n);
+      else chatsInView.delete(task);
+    };
+  }, [task, visible]);
+}
+
 // useAgentLine is one line for a task while the agent works on it, e.g. "Acme Bot · Web · “venues”".
 export function useAgentLine(task?: string) {
   const live = useAgentActivity({ task });
