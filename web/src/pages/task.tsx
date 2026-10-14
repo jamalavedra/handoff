@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { ArrowUp, Bot, History, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { AppWindow, ArrowUp, Bot, History, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
+import { useTabs } from "../components/tabs";
+import { taskHref } from "../tabs";
 import { Markdown } from "../components/markdown";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useMe } from "../main";
@@ -15,6 +17,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
 import { completedText, markLocal, undoable, undoClose } from "../components/feedback";
 import { toast } from "sonner";
+import { useDictation } from "@/hooks/use-dictation";
+import { MicButton } from "../components/dictation";
 
 type Here = { member: MemberRef; typing?: boolean };
 type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] };
@@ -139,6 +143,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const navigate = useNavigate();
   const router = useRouter();
   const canGoBack = useCanGoBack();
+  const tabs = useTabs();
   const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
   const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }), refetchInterval: 10000 });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
@@ -187,6 +192,10 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     const beat = setInterval(watch, 15000);
     return () => { clearInterval(beat); watch({ leave: true }); };
   }, [id]);
+  const dictation = useDictation((text) => { setComment(text); setCaret(text.length); typing(); });
+  // The view is reused when the panel or route switches tasks: drop the dictation and draft with the old one.
+  const { cancel: cancelDictation } = dictation;
+  useEffect(() => () => { cancelDictation(); setComment(""); setCaret(0); }, [id, cancelDictation]);
   const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); lastTyping.current = 0; watch(); invalidate(); } });
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: invalidate });
 
@@ -263,6 +272,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <Menu>
           {(done) => (
             <>
+              {panel && tabs && <MenuItem icon={AppWindow} onClick={() => { tabs.openInTab(taskHref(t.id)); done(); }}>Open in new tab</MenuItem>}
               <MenuItem icon={History} onClick={() => { setActivityOpen(true); done(); }}>Activity <span className="ml-auto text-xs text-muted-foreground/70 tabular-nums">{activity.length}</span></MenuItem>
               <MenuItem icon={Copy} onClick={() => { navigator.clipboard?.writeText(t.id); done(); }}>Copy ID <span className="ml-auto font-mono text-xs text-muted-foreground/70">{t.id}</span></MenuItem>
               {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
@@ -376,7 +386,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       {!locked && (
         <form
           className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-lg md:bottom-4"
-          onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(); }}
+          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim()) addComment.mutate(); }}
         >
           {suggestions.length > 0 && (
             <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg">
@@ -396,7 +406,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             ref={commentRef}
             placeholder={t.assignee?.kind === "agent" ? `Message ${t.assignee.name}…` : "Message… type @ to mention"}
             value={comment}
-            onChange={(e) => { setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
+            onChange={(e) => { dictation.cancel(); setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={(e) => {
               if (suggestions.length) {
@@ -408,6 +418,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             aria-label="Comment"
             className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-muted-foreground/70 sm:text-sm"
           />
+          {dictation.supported && <MicButton listening={dictation.listening} onToggle={() => dictation.toggle(comment)} wave={dictation} />}
           <button disabled={!comment.trim() || addComment.isPending} aria-label="Send comment" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:bg-foreground/10 disabled:text-muted-foreground/70">
             <ArrowUp className="size-4" />
           </button>
