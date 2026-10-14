@@ -131,7 +131,8 @@ export function useFab() {
   const a = useAssistant();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const panelTask = useSearch({ strict: false }).task;
-  return { shown: !a.open && !path.startsWith("/tasks/") && !panelTask };
+  const onTask = path.startsWith("/tasks/") || !!panelTask;
+  return { shown: !a.open && !onTask, onTask };
 }
 
 // AssistantFab is the round button that opens the assistant from any page.

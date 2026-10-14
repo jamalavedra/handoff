@@ -213,11 +213,12 @@ function Layout({ me }: { me: Me }) {
   );
 }
 
-// Toasts keep clear of the assistant panel, and stack above the floating assistant button.
+// Toasts keep clear of the assistant panel, and stack above the floating assistant button or a
+// task's chat bar.
 function AppToaster() {
   const inset = useAssistantInset();
   const fab = useFab();
-  const bottom = fab.shown ? "5rem" : undefined;
+  const bottom = fab.shown ? "5rem" : fab.onTask ? "5.5rem" : undefined;
   return (
     <Toaster
       offset={inset || bottom ? { right: inset, bottom } : undefined}
