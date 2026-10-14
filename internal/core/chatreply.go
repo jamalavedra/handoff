@@ -241,11 +241,13 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 			}
 		}
 	}()
-	// One turn per request: a retry after a failure carries on instead of repeating changes.
+	// One turn per request: a retry after a failure carries on instead of repeating changes. Its steps
+	// show live to everyone on the task, and the turn ends for them once the reply is posted.
 	out, err := s.AssistantChat(ctx, person, AssistantChatIn{
 		Messages: msgs, Task: task, Turn: "agent-" + j.id,
-		note: fmt.Sprintf(chatReplyNote, task),
+		note: fmt.Sprintf(chatReplyNote, task), shared: true, project: project,
 	})
+	defer s.progressDone(ctx, &progress{org: j.org, task: task, project: project, turn: "agent-" + j.id})
 	close(done)
 	reply := strings.TrimSpace(out.Reply)
 	if err != nil || out.Error != "" {
@@ -264,7 +266,8 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		}
 		agent.Owner = person.Member
 		agent.within = visible
-		if _, err := s.Comment(ctx, agent, CommentIn{ID: task, Body: reply, lookups: lookups(out.Steps)}); err != nil {
+		// The reply keeps the trail of what the agent did, and tells the person who asked that it's done.
+		if _, err := s.Comment(ctx, agent, CommentIn{ID: task, Body: reply, extra: commentExtra{lookups: lookups(out.Steps), activity: activity(out.Steps), done: person.Member}}); err != nil {
 			slog.Error("chat reply: post", "request", j.id, "err", err)
 			return // the lease runs out and the sweep tries again; the turn resumes
 		}
