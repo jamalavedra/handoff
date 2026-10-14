@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { useMe } from "../main";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
-import { dueLabel, mentionQuery, repeatLabel } from "../quickadd";
+import { agentOnIt, dueLabel, mentionQuery, repeatLabel } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck, Who } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { EventLine, useInvalidate } from "./tasks";
@@ -304,7 +304,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 
-      <div className="mb-6"><BodyEditor key={t.id} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
+      {/* -mx-2/px-2 cancel out: the frame lines up with the details' own hover area. */}
+      <div className={cn("-mx-2 mb-6 rounded-lg px-2", agentOnIt(t, here) && "agent-border")}><BodyEditor key={t.id} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
 
       {/* Dependencies are usually set by agents over the API; people see them and can drop them. */}
       {(t.blocked_by.length > 0 || t.blocks.length > 0) && (

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import { useCanGoBack, useRouter, useRouterState } from "@tanstack/react-router";
 import { Activity, ArrowLeft, ArrowRight, Bell, Bot, CheckSquare, FolderKanban, LayoutGrid, Plus, Settings, Trash2, Users, X, Zap, Plug } from "lucide-react";
 import { api, cn, type Project, type Task } from "../lib";
+import { agentOnIt } from "../quickadd";
 import * as tabs from "../tabs";
 import { StatusCircle } from "./app";
 import { typing } from "./shortcuts";
@@ -300,11 +301,15 @@ function TabLabel({ href, onMissing }: { href: string; onMissing?: () => void })
 
 // Shares the task page's cache entry; a tab only reads it, it doesn't poll or mark anything read.
 // cachedTask finds a task in whatever the app already loaded: its detail, or any task list
-// (cached as { tasks } or, on the Team board, a bare array).
+// (cached as { tasks } or, on the Team board, a bare array). Invalidated entries are skipped: a
+// closed tab's detail isn't refetched, and would keep showing, say, a claim that's been released.
 function cachedTask(qc: QueryClient, id: string) {
-  const detail = qc.getQueryData<{ task: Task }>(["task", id])?.task;
-  if (detail) return detail;
-  for (const [, data] of qc.getQueriesData<{ tasks: Task[] } | Task[]>({ queryKey: ["tasks"] })) {
+  const cache = qc.getQueryCache();
+  const detail = cache.find<{ task: Task }>({ queryKey: ["task", id], exact: true });
+  if (detail?.state.data && !detail.state.isInvalidated) return detail.state.data.task;
+  for (const q of cache.findAll({ queryKey: ["tasks"] })) {
+    if (q.state.isInvalidated) continue;
+    const data = q.state.data as { tasks: Task[] } | Task[] | undefined;
     const t = (Array.isArray(data) ? data : data?.tasks)?.find((x) => x.id === id);
     if (t) return t;
   }
@@ -338,6 +343,7 @@ function TaskLabel({ id, onMissing }: { id: string; onMissing?: () => void }) {
     <>
       <span className={iconBox}>{t ? <StatusCircle t={t} small /> : <CheckSquare className="size-3.5 text-foreground/40" />}</span>
       {t ? <Title>{t.title}</Title> : <Title muted>{failed ? "Task not found" : "Loading…"}</Title>}
+      {t && agentOnIt(t) && <span aria-hidden className="agent-border pointer-events-none absolute inset-0 rounded-[8px]" />}
     </>
   );
 }
