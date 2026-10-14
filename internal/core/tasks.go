@@ -913,6 +913,10 @@ func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
 			}
 			put("body", *in.Body)
 			changed["body"] = "replaced"
+			// The version it replaces stays in the task's history.
+			if strings.TrimSpace(r.Body) != "" {
+				changed["previous_body"] = clipBytes(r.Body, 20000)
+			}
 		default:
 			return nil, errf(ErrInvalid, "body_mode must be append or replace")
 		}
@@ -995,6 +999,18 @@ func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
 	}
 	if err := c.notify(newAssignee, "assigned", r.ID, r.Title); err != nil {
 		return nil, err
+	}
+	if newAssignee != nil && newAssignee.IsAgent() && !c.p.Member.IsAgent() {
+		var agentID string
+		err := c.tx.QueryRow(c.ctx, `SELECT agent_id::text FROM triage_settings`).Scan(&agentID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if agentID == newAssignee.ID {
+			if err := c.requestAgent("take_on", r.ID, nil); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := c.event(r.ID, "updated", changed); err != nil {
 		return nil, err
@@ -1223,12 +1239,9 @@ func (c *call) addComment(taskID, body string) error {
 		}
 		if a := c.members[agentID]; a != nil && (slices.Contains(mentioned, a) || assignee == agentID) {
 			// Stored with the comment, so the request outlives a full queue or a restart.
-			if _, err := c.tx.Exec(c.ctx, `INSERT INTO chat_replies (org_id, comment_id, task_id, author_id) VALUES ($1, $2, $3, $4)`,
-				c.p.Org.ID, commentID, taskID, c.p.Member.ID); err != nil {
+			if err := c.requestAgent("reply", taskID, &commentID); err != nil {
 				return err
 			}
-			job := replyJob{org: c.p.Org.ID, comment: commentID}
-			c.after = append(c.after, func() { c.s.enqueueReply(job) })
 		}
 	}
 	return c.event(taskID, "commented", map[string]any{"excerpt": excerpt(body)})

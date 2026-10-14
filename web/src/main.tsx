@@ -242,12 +242,72 @@ function SidebarBell({ unread }: { unread: number }) {
   );
 }
 
+const panelWidthKey = "handoff-panel-width";
+const panelDefault = 480;
+
+function savedPanelWidth() {
+  try {
+    const v = Number(localStorage.getItem(panelWidthKey));
+    return v >= 360 ? v : panelDefault;
+  } catch {
+    return panelDefault;
+  }
+}
+
+// PanelResizer is the task panel's left edge: drag to resize (kept per browser), double-click to reset.
+function PanelResizer({ width, onResize }: { width: number; onResize: (w: number) => void }) {
+  const clamp = (w: number) => Math.round(Math.min(Math.max(w, 360), window.innerWidth * 0.7));
+  const save = (w: number) => {
+    try {
+      localStorage.setItem(panelWidthKey, String(w));
+    } catch {
+      // private mode: keep it for this tab
+    }
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize task panel"
+      tabIndex={0}
+      title="Drag to resize · double-click to reset"
+      onDoubleClick={() => { onResize(panelDefault); save(panelDefault); }}
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        const w = clamp(width + (e.key === "ArrowLeft" ? 32 : -32));
+        onResize(w);
+        save(w);
+      }}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        const startX = e.clientX, startW = width;
+        let last = startW;
+        const move = (ev: PointerEvent) => { last = clamp(startW + startX - ev.clientX); onResize(last); };
+        const up = () => {
+          save(last);
+          document.body.style.cursor = "";
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+        };
+        document.body.style.cursor = "col-resize";
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      }}
+      className="group absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize justify-center outline-none"
+    >
+      <span className="h-full w-px bg-transparent transition-colors group-hover:bg-ring group-focus-visible:bg-ring group-active:bg-foreground/40" />
+    </div>
+  );
+}
+
 // TaskPanel shows ?task=<id> beside the list on wide screens; narrow screens get the full task page.
 function TaskPanel() {
   const task = usePanelTask();
   const assistant = useAssistant();
   const wide = useWide();
   const navigate = useNavigate();
+  const [width, setWidth] = useState(savedPanelWidth);
   const path = useRouterState({ select: (s) => s.location.pathname });
   const open = !!task && !path.startsWith("/tasks/");
   useEffect(() => {
@@ -266,9 +326,12 @@ function TaskPanel() {
   if (!open || !wide) return null;
   // Wide screens always have the tab strip (h-11) above the panel.
   return (
-    <aside key={task} aria-label="Task" className={cn("sticky top-11 h-[calc(100dvh-2.75rem)] shrink-0 overflow-y-auto border-l border-border bg-background", assistant.open ? "w-[26rem] 2xl:w-[34rem]" : "w-[30rem] xl:w-[34rem]")}>
+    <div className="sticky top-11 h-[calc(100dvh-2.75rem)] shrink-0" style={{ width: assistant.open ? Math.min(width, 0.4 * window.innerWidth) : width }}>
+      <PanelResizer width={width} onResize={setWidth} />
+      <aside key={task} aria-label="Task" className="h-full overflow-y-auto border-l border-border bg-background">
       <TaskView id={task} panel />
-    </aside>
+      </aside>
+    </div>
   );
 }
 

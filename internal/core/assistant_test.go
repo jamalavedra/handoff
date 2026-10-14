@@ -253,13 +253,14 @@ func TestAssistantOnlyAllowlistedTools(t *testing.T) {
 }
 
 func TestAssistantWritesWorkIntoTheTask(t *testing.T) {
+	// The details are the task's current result: each update rewrites them, and the version it
+	// replaces is kept in the task's history.
 	var people, own string
 	srv, reqs := scriptedModel(t,
 		calls(
-			toolCall("c1", "update_task", map[string]any{"id": "PEOPLE", "body": "## Venues\n- Hall A: 120 seats"}),
-			toolCall("c2", "update_task", map[string]any{"id": "PEOPLE", "body": "gone", "body_mode": "replace", "confirm": true}),
-			toolCall("c3", "update_task", map[string]any{"id": "OWN", "body": "v1"}),
-			toolCall("c4", "update_task", map[string]any{"id": "OWN", "body": "v2", "body_mode": "replace", "confirm": true}),
+			toolCall("c1", "update_task", map[string]any{"id": "PEOPLE", "body": "Budget 5k\n\n## Venues\n- Hall A: 120 seats"}),
+			toolCall("c2", "update_task", map[string]any{"id": "OWN", "body": "v1"}),
+			toolCall("c3", "update_task", map[string]any{"id": "OWN", "body": "v2"}),
 		),
 		say("Added the venue comparison to the task."),
 	)
@@ -276,33 +277,27 @@ func TestAssistantWritesWorkIntoTheTask(t *testing.T) {
 	if !strings.Contains(reqs()[0].Messages[0]["content"].(string), "The task is the artifact") {
 		t.Fatal("system prompt doesn't steer work into the task")
 	}
-	if len(out.Steps) != 4 || out.Steps[0].Summary != "Updated “Pick a venue” details" || out.Steps[1].Error == "" ||
-		out.Steps[2].Error != "" || out.Steps[3].Error != "" {
+	if len(out.Steps) != 3 || out.Steps[0].Summary != "Updated “Pick a venue” details" || out.Steps[1].Error != "" || out.Steps[2].Error != "" {
 		t.Fatalf("steps: %+v", out.Steps)
 	}
+	previous := func(id string) []any {
+		t.Helper()
+		d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: id})
+		var out []any
+		for _, ev := range d.Events {
+			if ev.Kind == "updated" && ev.Data["previous_body"] != nil {
+				out = append(out, ev.Data["previous_body"])
+			}
+		}
+		return out
+	}
 	d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: people})
-	if d.Task.Body != "Budget 5k\n\n## Venues\n- Hall A: 120 seats" {
-		t.Fatalf("a person's details were not kept: %q", d.Task.Body)
+	if d.Task.Body != "Budget 5k\n\n## Venues\n- Hall A: 120 seats" || !slices.Equal(previous(people), []any{"Budget 5k"}) {
+		t.Fatalf("people's task: %q, history %v", d.Task.Body, previous(people))
 	}
 	d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: own})
-	if d.Task.Body != "v2" {
-		t.Fatalf("the assistant couldn't rewrite its own details: %q", d.Task.Body)
-	}
-
-	// Once a person adds to them, they're no longer the assistant's to replace.
-	if _, err := e.s.UpdateTask(e.ctx, admin, core.UpdateTaskIn{ID: own, Body: ptr("Joan's note")}); err != nil {
-		t.Fatal(err)
-	}
-	srv2, _ := scriptedModel(t, calls(toolCall("c1", "update_task", map[string]any{"id": "OWN", "body": "v3", "body_mode": "replace", "confirm": true})), say("ok"))
-	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"OWN": own}, srv2.Client().Transport}}
-	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m", Credential: "sk-test"}); err != nil {
-		t.Fatal(err)
-	}
-	if out, err = e.s.AssistantChat(e.ctx, admin, ask("rewrite it")); err != nil || len(out.Steps) != 1 || out.Steps[0].Error == "" {
-		t.Fatalf("replaced details a person added to: %+v %v", out.Steps, err)
-	}
-	if d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: own}); d.Task.Body != "v2\n\nJoan's note" {
-		t.Fatalf("details: %q", d.Task.Body)
+	if d.Task.Body != "v2" || !slices.Equal(previous(own), []any{"v1"}) {
+		t.Fatalf("own task: %q, history %v", d.Task.Body, previous(own))
 	}
 }
 
