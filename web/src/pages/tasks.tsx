@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { useQuickAdd } from "../components/quickadd";
-import { groupByDue } from "../quickadd";
+import { agentOnIt, groupByDue } from "../quickadd";
 import { useMe } from "../main";
 import { SettingsHeader } from "./settings";
 import { Board, useView, ViewToggle } from "./board";
@@ -42,13 +42,13 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   });
   const flash = useChangeFlash(t.id, t.updated_at);
   const reveal = useTriageReveal(t.triage);
-  const agentWorking = !closed && t.claimed_by?.kind === "agent";
+  const agentWorking = agentOnIt(t);
   const waiting = !closed && !t.ready && t.blocked_by.length > 0 && !t.claimed_by;
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
   const selected = usePanelTask() === t.id;
   return (
     <div>
-    <div data-task-row className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:min-h-11 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted data-[kbd-focus]:bg-muted data-[kbd-focus]:ring-1 data-[kbd-focus]:ring-ring", flash && "change-flash", agentWorking && "agent-working", selected && "border-ring ring-1 ring-ring md:bg-accent md:ring-0 md:hover:bg-accent")}>
+    <div data-task-row className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:min-h-11 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted data-[kbd-focus]:bg-muted data-[kbd-focus]:ring-1 data-[kbd-focus]:ring-ring", flash && "change-flash", agentWorking && "agent-border [--agent-border-offset:1px]", selected && "border-ring ring-1 ring-ring md:bg-accent md:ring-0 md:hover:bg-accent")}>
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate(closed)} />
       <TaskLink id={t.id} className="flex min-w-0 flex-1 flex-col justify-center self-stretch py-2">
         <span className="flex min-w-0 items-center gap-1.5">

@@ -99,7 +99,9 @@ export type Event = {
 
 export type Reaction = { emoji: string; count: number; mine?: boolean; by: string[] };
 
-export type Comment = { id: string; author: MemberRef; on_behalf_of?: MemberRef; body: string; created_at: string; reactions?: Reaction[] };
+// Lookup is one call the agent made to a connected service (web search, an internal tool…) for a message.
+export type Lookup = { source: string; tool: string; query?: string; failed?: boolean };
+export type Comment = { id: string; author: MemberRef; on_behalf_of?: MemberRef; body: string; created_at: string; reactions?: Reaction[]; lookups?: Lookup[] };
 
 export type Me = {
   apex?: boolean;

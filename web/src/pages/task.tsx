@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { AppWindow, ArrowUp, Bot, History, Link2, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { AppWindow, ArrowUp, Bot, History, Link2, Repeat as RepeatIcon, Search, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { useTabs } from "../components/tabs";
 import { taskHref } from "../tabs";
@@ -10,8 +10,8 @@ import { BodyEditor } from "../components/editor";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useMe } from "../main";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
-import { dueLabel, mentionQuery, repeatLabel } from "../quickadd";
+import { ago, api, cn, type Comment, type Event, type Lookup, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
+import { agentOnIt, dueLabel, mentionQuery, repeatLabel } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck, Who } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { EventLine, useInvalidate } from "./tasks";
@@ -304,7 +304,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 
-      <div className="mb-6"><BodyEditor key={t.id} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
+      {/* -mx-2/px-2 cancel out: the frame lines up with the details' own hover area. */}
+      <div className={cn("-mx-2 mb-6 rounded-lg px-2", agentOnIt(t, here) && "agent-border")}><BodyEditor key={t.id} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
 
       {/* Dependencies are usually set by agents over the API; people see them and can drop them. */}
       {(t.blocked_by.length > 0 || t.blocks.length > 0) && (
@@ -336,6 +337,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
               {!mine && <Avatar m={c.author} className="mt-0.5" />}
               <div className={cn("min-w-0 max-w-[88%] rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
                 {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
+                {c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
                 <Markdown text={c.body} mentions={memberNames} />
                 <Reactions c={c} disabled={locked} />
                 {mine && <div className="mt-0.5 text-right text-[11px] text-muted-foreground/70">{ago(c.created_at)}</div>}
@@ -427,6 +429,27 @@ function PendingApprovals({ id }: { id: string }) {
 }
 
 const quickReactions = ["👍", "✅", "👀", "🎉", "❤️", "🙏", "😄", "🚀"];
+
+// LookedUp shows what the agent checked in connected services before answering: the services at a
+// glance, each call when opened.
+function LookedUp({ lookups }: { lookups: Lookup[] }) {
+  const sources = [...new Set(lookups.map((l) => l.source))];
+  return (
+    <details className="group mb-1 text-xs text-muted-foreground">
+      <summary className="flex cursor-pointer list-none items-center gap-1 hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <Search className="size-3" />Looked up {sources.join(", ")}
+        <ChevronDown className="size-3 transition-transform group-open:rotate-180" />
+      </summary>
+      <ul className="mt-1 flex flex-col gap-0.5 border-l border-border pl-2">
+        {lookups.map((l, i) => (
+          <li key={i} className={cn("truncate", l.failed && "line-through opacity-70")} title={l.failed ? "This lookup failed" : undefined}>
+            <span className="text-foreground/70">{l.source}</span> · {l.query ? `“${l.query}”` : l.tool}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
 
 // Reactions are the light way to answer in a thread: ✅ "done", 👀 "looking", 👍 "agreed". Agents use them too.
 function Reactions({ c, disabled }: { c: Comment; disabled: boolean }) {

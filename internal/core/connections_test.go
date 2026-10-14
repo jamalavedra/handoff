@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -278,4 +279,80 @@ func TestLoopbackCallback(t *testing.T) {
 	if _, ok := core.New(nil, &config.Config{BaseURL: prod}).LoopbackCallback("localhost", url.Values{"state": {"acme~abc"}}); ok {
 		t.Fatal("bounce outside local development")
 	}
+}
+
+func TestChatReplyLooksUpAndReacts(t *testing.T) {
+	search := fakeSearchServer(t)
+	model, _ := scriptedModel(t,
+		calls(toolCall("c1", "ext_web_search__web_search", map[string]any{"query": "pixel 9 ram"})),
+		say("12GB, per the store page."),
+	)
+	e, admin, bot := assistantEnv(t, model, "lookreact")
+	task := e.create(t, admin, core.NewTask{Title: "phone specs"})[0]
+	waitTriage(t, e, admin, task.ID)
+	// Connected after triage, so only the chat reply uses it.
+	if _, err := e.s.AddConnection(e.ctx, admin, core.AddConnectionIn{Name: "Web search", URL: search.URL, Auth: "bearer", Secret: "sk-mcp"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot how much ram?"}); err != nil {
+		t.Fatal(err)
+	}
+	// The reply carries its lookup, and the question it answered ends with the agent's ✅, the 👀 gone
+	// (swapped just after the reply is posted).
+	var reply, asked core.CommentOut
+	var emojis []string
+	for range 200 {
+		d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if n := len(d.Comments); n >= 2 && d.Comments[n-1].Author.ID == bot.Member.ID {
+			reply, asked, emojis = d.Comments[n-1], d.Comments[n-2], nil
+			for _, r := range asked.Reactions {
+				if slices.Contains(r.By, "Acme Bot") {
+					emojis = append(emojis, r.Emoji)
+				}
+			}
+			if slices.Equal(emojis, []string{"✅"}) {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(reply.Lookups) != 1 || reply.Lookups[0] != (core.Lookup{Source: "Web search", Tool: "web_search", Query: "pixel 9 ram"}) {
+		t.Fatalf("lookups on the reply: %+v", reply)
+	}
+	if !slices.Equal(emojis, []string{"✅"}) {
+		t.Fatalf("agent reactions on the question: %+v", asked.Reactions)
+	}
+}
+
+func TestChatReplyFailureClearsLooking(t *testing.T) {
+	model, _ := scriptedModel(t, map[string]any{"_status": 500})
+	e, admin, bot := assistantEnv(t, model, "lookfail")
+	task := e.create(t, admin, core.NewTask{Title: "anything"})[0]
+	waitTriage(t, e, admin, task.ID)
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot help?"}); err != nil {
+		t.Fatal(err)
+	}
+	var d core.TaskDetailOut
+	for range 300 {
+		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if n := len(d.Comments); n > 0 && d.Comments[n-1].Author.ID == bot.Member.ID {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	var left []core.ReactionOut
+	for range 100 { // the 👀 is cleared just after the reply is posted
+		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		left = nil
+		for _, c := range d.Comments {
+			if strings.HasPrefix(c.Body, "@Acme Bot") {
+				left = c.Reactions
+			}
+		}
+		if len(left) == 0 {
+			return
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	t.Fatalf("a failed answer left reactions: %+v", left)
 }

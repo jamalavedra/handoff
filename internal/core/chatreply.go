@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Replies in a task's chat: when a person @mentions the workspace's own agent (the one with a model,
@@ -104,6 +105,12 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 	finish := func() {
 		_ = s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `UPDATE chat_replies SET state = 'done', claim_until = NULL WHERE id::text = $1`, j.id)
+			if err != nil || comment == "" {
+				return err
+			}
+			// However it ended, the agent isn't looking at the message any more.
+			_, err = tx.Exec(ctx, `DELETE FROM comment_reactions WHERE comment_id::text = $1 AND emoji = '👀'
+				AND member_id = (SELECT agent_id FROM triage_settings)`, comment)
 			return err
 		})
 	}
@@ -216,6 +223,10 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		}
 		defer func() { _, _ = s.ReleaseTask(context.WithoutCancel(ctx), typer, ReleaseTaskIn{ID: task}) }()
 	}
+	// 👀 on the message it's answering: seen, and on it.
+	if comment != "" {
+		s.agentReact(ctx, typer, comment, "👀", true)
+	}
 	done := make(chan struct{})
 	go func() {
 		tick := time.NewTicker(4 * time.Second)
@@ -253,10 +264,44 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		}
 		agent.Owner = person.Member
 		agent.within = visible
-		if _, err := s.Comment(ctx, agent, CommentIn{ID: task, Body: reply}); err != nil {
+		if _, err := s.Comment(ctx, agent, CommentIn{ID: task, Body: reply, lookups: lookups(out.Steps)}); err != nil {
 			slog.Error("chat reply: post", "request", j.id, "err", err)
 			return // the lease runs out and the sweep tries again; the turn resumes
 		}
 	}
+	// ✅ once it's answered (the reply says when it couldn't finish).
+	if comment != "" {
+		s.agentReact(ctx, typer, comment, "👀", false)
+		if err == nil && out.Error == "" {
+			s.agentReact(ctx, typer, comment, "✅", true)
+		}
+	}
 	finish()
+}
+
+// agentReact sets or clears the agent's own reaction on a comment. Unlike React it isn't a toggle, so a
+// retried request never flips it back.
+func (s *Service) agentReact(ctx context.Context, agent *Principal, comment, emoji string, on bool) {
+	err := s.run(context.WithoutCancel(ctx), agent, func(c *call) error {
+		var taskID string
+		if err := c.tx.QueryRow(c.ctx, `SELECT task_id FROM comments WHERE id::text = $1`, comment).Scan(&taskID); err != nil {
+			return err
+		}
+		var tag pgconn.CommandTag
+		var err error
+		if on {
+			tag, err = c.tx.Exec(c.ctx, `INSERT INTO comment_reactions (org_id, comment_id, member_id, emoji) VALUES ($1, $2::uuid, $3, $4)
+				ON CONFLICT DO NOTHING`, c.p.Org.ID, comment, c.p.Member.ID, emoji)
+		} else {
+			tag, err = c.tx.Exec(c.ctx, `DELETE FROM comment_reactions WHERE comment_id::text = $1 AND member_id = $2 AND emoji = $3`,
+				comment, c.p.Member.ID, emoji)
+		}
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		return c.event(taskID, "reacted", map[string]any{"emoji": emoji, "added": on})
+	})
+	if err != nil {
+		slog.Warn("agent reaction", "comment", comment, "err", err)
+	}
 }
