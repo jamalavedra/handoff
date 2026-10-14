@@ -52,7 +52,7 @@ func (s *Server) llms(w http.ResponseWriter, r *http.Request) {
 
 1. Add %[2]s as a remote MCP server (a custom connector in Claude or ChatGPT) and sign in; a person in the workspace approves the connection. Headless agents send `+"`Authorization: Bearer hnd_...`"+` with a key from the Agents page.
 2. Call `+"`get_context`"+` first and follow its guidelines.
-3. Then: `+"`what_changed`"+` and `+"`inbox`"+` to catch up, `+"`list_ready`"+` to pick work, `+"`claim_task`"+` before starting, `+"`comment`"+` on progress, `+"`close_task`"+` when done.
+3. Then: `+"`what_changed`"+` and `+"`inbox`"+` to catch up, `+"`list_ready`"+` to pick work, `+"`claim_task`"+` before starting, write what you produce into the task body with `+"`update_task`"+`, `+"`comment`"+` to talk with people about it, `+"`close_task`"+` when done.
 `, d.base, d.mcp))
 }
 
