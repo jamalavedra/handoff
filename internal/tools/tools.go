@@ -111,6 +111,7 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "decide_approval", Description: "Approve or reject an agent request."}, s.DecideApproval),
 		def(Tool{Name: "set_webhook", Description: "Owners and admins: POST an agent's notifications (assigned, mentioned, due, approvals) to a URL, signed with a secret returned once. Empty url removes it; rotate=true issues a new secret."}, s.SetWebhook),
 		def(Tool{Name: "test_webhook", Description: "Owners and admins: send a ping to an agent's webhook and report the answer."}, s.TestWebhook),
+		def(Tool{Name: "run_automation", Description: "Run a repeating task assigned to an agent now: the workspace's agent takes it on, or another agent's webhook is called with task.due."}, s.RunAutomation),
 		def(Tool{Name: "list_connections", ReadOnly: true, Description: "Admins: remote MCP servers the workspace's agent can use, with their tools."}, s.ListConnections),
 		def(Tool{Name: "add_connection", Description: "Admins: connect a remote MCP server (streamable HTTP) for the workspace's agent; its read-only tools are switched on."}, s.AddConnection),
 		def(Tool{Name: "refresh_connection", Description: "Admins: list a connection's tools again."}, s.RefreshConnection),

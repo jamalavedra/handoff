@@ -181,7 +181,11 @@ func TestHandingATaskToTheAgent(t *testing.T) {
 	if len(d.Comments) != before+1 || d.Comments[len(d.Comments)-1].Author.ID != bot.Member.ID {
 		t.Fatalf("the agent didn't take it on: %+v", d.Comments)
 	}
-	// It let go of the task when it finished.
+	// It let go of the task when it finished (just after posting its reply).
+	for i := 0; i < 200 && d.Task.ClaimedBy != nil; i++ {
+		time.Sleep(25 * time.Millisecond)
+		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+	}
 	if d.Task.ClaimedBy != nil {
 		t.Fatalf("still claimed: %+v", d.Task.ClaimedBy)
 	}
