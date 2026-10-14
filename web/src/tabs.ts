@@ -78,10 +78,36 @@ export function restore(saved: unknown, href: string, id: string): Tabs {
     // Same-origin paths only, and no duplicate ids a bad write could have left behind.
     if (!t || typeof t.id !== "string" || typeof t.href !== "string" || !/^\/(?!\/)/.test(t.href) || ids.has(t.id)) continue;
     ids.add(t.id);
-    clean.push({ id: t.id, href: t.href });
+    clean.push(typeof t.opener === "string" ? { id: t.id, href: t.href, opener: t.opener } : { id: t.id, href: t.href });
   }
   if (!clean.length) return single;
+  // Openers keep later background tabs in order; one pointing at a tab that's gone means nothing.
+  for (const t of clean) if (t.opener !== undefined && !ids.has(t.opener)) delete t.opener;
   const cur = clean.find((t) => t.id === active) ?? clean[0];
-  if (cur.href === href) return { tabs: clean, active: cur.id };
-  return open({ tabs: clean, active: cur.id }, href, id, { foreground: true });
+  return arrive({ tabs: clean, active: cur.id }, href, id);
+}
+
+// arrive brings a location in from outside (a fresh load, or returning to desktop width): the
+// active tab if it's already there, else the tab that has it, else a new tab beside the active one.
+export function arrive(s: Tabs, href: string, id: string): Tabs {
+  if (s.tabs.find((t) => t.id === s.active)?.href === href) return s;
+  return open(s, href, id, { foreground: true });
+}
+
+// Forward is enabled when this browser tab's history has entries past the current one. The
+// bookkeeping lives in sessionStorage, which a browser copies into tabs opened from this one;
+// `keys` (each entry's history key by index) tells this history apart from such a copy.
+export type HistoryMarks = { keys: (string | null)[]; max: number };
+
+export function resumeHistory(saved: unknown, index: number, key: string): HistoryMarks {
+  const m = saved as Partial<HistoryMarks> | null;
+  if (key && m && Array.isArray(m.keys) && typeof m.max === "number" && m.keys[index] === key) return { keys: m.keys, max: m.max };
+  return stepHistory({ keys: [], max: index }, index, key, true);
+}
+
+export function stepHistory(m: HistoryMarks, index: number, key: string, push: boolean): HistoryMarks {
+  const keys = push ? m.keys.slice(0, index) : m.keys.slice();
+  while (keys.length < index) keys.push(null);
+  keys[index] = key;
+  return { keys, max: push ? index : Math.max(m.max, index) };
 }

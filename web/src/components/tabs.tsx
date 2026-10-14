@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useCanGoBack, useRouter, useRouterState } from "@tanstack/react-router";
 import { Activity, ArrowLeft, ArrowRight, Bell, Bot, CheckSquare, FolderKanban, LayoutGrid, Plus, Settings, Trash2, Users, X } from "lucide-react";
-import { api, ApiError, cn, type Project, type Task } from "../lib";
+import { api, cn, type Project, type Task } from "../lib";
 import * as tabs from "../tabs";
 import { StatusCircle } from "./app";
 import { typing } from "./shortcuts";
@@ -21,7 +21,7 @@ function useDesktop() {
 }
 
 const storeKey = "handoff-tabs";
-const forwardKey = "handoff-history-max";
+const historyKey = "handoff-history";
 const newId = () => Math.random().toString(36).slice(2, 10);
 
 function read(): unknown {
@@ -79,44 +79,56 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   latest.current = state;
 
   // History bookkeeping: whether the last move was Back/Forward, and how far Forward can go
-  // (kept per browser tab so a reload doesn't forget it).
+  // (kept per browser tab so a reload doesn't forget it, see tabs.resumeHistory).
   const traverse = useRef(false);
   const [canForward, setCanForward] = useState(false);
   useEffect(() => {
-    const index = () => (router.history.location.state as { __TSR_index?: number }).__TSR_index ?? 0;
-    let max = index();
+    const entry = () => {
+      const st = router.history.location.state as { __TSR_index?: number; __TSR_key?: string };
+      return { index: st.__TSR_index ?? 0, key: st.__TSR_key ?? "" };
+    };
+    let saved: unknown = null;
     try {
-      max = Math.max(max, Number(sessionStorage.getItem(forwardKey)) || 0);
+      saved = JSON.parse(sessionStorage.getItem(historyKey) ?? "null");
     } catch {
       // storage blocked: forward only knows this page's moves
     }
-    setCanForward(index() < max);
+    const first = entry();
+    let marks = tabs.resumeHistory(saved, first.index, first.key);
+    setCanForward(first.index < marks.max);
     return router.history.subscribe(({ action }) => {
-      const i = index();
+      const { index, key } = entry();
       traverse.current = action.type !== "PUSH" && action.type !== "REPLACE";
-      max = action.type === "PUSH" ? i : Math.max(max, i);
-      setCanForward(i < max);
+      marks = tabs.stepHistory(marks, index, key, action.type === "PUSH");
+      setCanForward(index < marks.max);
       try {
-        sessionStorage.setItem(forwardKey, String(max));
+        sessionStorage.setItem(historyKey, JSON.stringify(marks));
       } catch {
         // as above
       }
     });
   }, [router]);
 
+  // Tabs only follow the router on desktop: phone-width navigation leaves them alone, and coming
+  // back to desktop brings the current page in the way a fresh link would.
+  const wasEnabled = useRef(enabled);
   useEffect(() => {
     const t = traverse.current;
     traverse.current = false;
-    setState((s) => tabs.visit(s, href, t));
-  }, [href]);
+    const returning = enabled && !wasEnabled.current;
+    wasEnabled.current = enabled;
+    if (!enabled) return;
+    setState((s) => (returning ? tabs.arrive(s, href, newId()) : tabs.visit(s, href, t)));
+  }, [href, enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
     try {
       localStorage.setItem(storeKey, JSON.stringify(state));
     } catch {
       // private mode: tabs last until reload
     }
-  }, [state]);
+  }, [state, enabled]);
 
   // move commits a new state and shows its active tab.
   const move = useCallback(
@@ -281,19 +293,45 @@ function TabLabel({ href, onMissing }: { href: string; onMissing?: () => void })
 }
 
 // Shares the task page's cache entry; a tab only reads it, it doesn't poll or mark anything read.
+// cachedTask finds a task in whatever the app already loaded: its detail, or any task list
+// (cached as { tasks } or, on the Team board, a bare array).
+function cachedTask(qc: QueryClient, id: string) {
+  const detail = qc.getQueryData<{ task: Task }>(["task", id])?.task;
+  if (detail) return detail;
+  for (const [, data] of qc.getQueriesData<{ tasks: Task[] } | Task[]>({ queryKey: ["tasks"] })) {
+    const t = (Array.isArray(data) ? data : data?.tasks)?.find((x) => x.id === id);
+    if (t) return t;
+  }
+}
+
+// A background tab must not open the task: get_task marks it seen, which would clear its unseen
+// dot before anyone looked. So it reads the cache, else searches by id (search doesn't mark).
+// The open tab is the task page itself, whose detail query is already running.
+async function peekTask(qc: QueryClient, id: string): Promise<{ tasks: Task[] }> {
+  const cached = cachedTask(qc, id);
+  if (cached) return { tasks: [cached] };
+  const find = (input: object) => api.tool<{ tasks: Task[] }>("search_tasks", { query: id, include_done: true, limit: 5, ...input }).then((r) => r.tasks.filter((t) => t.id === id));
+  const found = await find({});
+  return { tasks: found.length ? found : await find({ trashed: true }) };
+}
+
 function TaskLabel({ id, onMissing }: { id: string; onMissing?: () => void }) {
-  const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<{ task: Task }>("get_task", { id }), refetchInterval: false, staleTime: 60_000 });
-  const missing = q.error instanceof ApiError && q.error.status === 404;
-  // Only background tabs go (onMissing is unset on the open one); checked again once it's left.
+  const qc = useQueryClient();
+  const background = !!onMissing;
+  const detail = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<{ task: Task }>("get_task", { id }), enabled: !background, refetchInterval: false, staleTime: 60_000 });
+  // Keyed under ["tasks"] so list refreshes and optimistic patches reach it too.
+  const peek = useQuery({ queryKey: ["tasks", "tab", id], queryFn: () => peekTask(qc, id), enabled: background, refetchInterval: false, staleTime: 30_000 });
+  // Only background tabs go (onMissing is unset on the open one, which shows its own error).
+  const missing = background && peek.data?.tasks.length === 0;
   const drop = useRef(onMissing);
   drop.current = onMissing;
-  const background = !!onMissing;
-  useEffect(() => { if (missing && background) drop.current?.(); }, [missing, background]);
-  const t = q.data?.task;
+  useEffect(() => { if (missing) drop.current?.(); }, [missing]);
+  const t = background ? peek.data?.tasks[0] : detail.data?.task;
+  const failed = background ? missing || peek.isError : detail.isError;
   return (
     <>
       <span className={iconBox}>{t ? <StatusCircle t={t} small /> : <CheckSquare className="size-3.5 text-foreground/40" />}</span>
-      {t ? <Title>{t.title}</Title> : <Title muted>{q.error ? "Task not found" : "Loading…"}</Title>}
+      {t ? <Title>{t.title}</Title> : <Title muted>{failed ? "Task not found" : "Loading…"}</Title>}
     </>
   );
 }

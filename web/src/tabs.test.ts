@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { activate, close, fresh, open, restore, target, visit, type Tabs } from "./tabs.ts";
+import { activate, arrive, close, fresh, open, restore, resumeHistory, stepHistory, target, visit, type Tabs } from "./tabs.ts";
 
 const s0: Tabs = { tabs: [{ id: "a", href: "/" }, { id: "b", href: "/activity" }], active: "a" };
 const hrefs = (s: Tabs) => s.tabs.map((t) => t.href);
@@ -78,4 +78,37 @@ test("restores saved tabs around the loaded URL", () => {
   assert.deepEqual(restore(junk, "/y", "n"), { tabs: [{ id: "a", href: "/" }, { id: "b", href: "/" }, { id: "d", href: "/y" }], active: "d" });
   // Reloading the second of two tabs on the same page stays on it.
   assert.equal(restore({ tabs: [{ id: "a", href: "/" }, { id: "b", href: "/" }], active: "b" }, "/", "n").active, "b");
+});
+
+test("background order survives a reload", () => {
+  let s: Tabs = { tabs: [{ id: "a", href: "/" }], active: "a" };
+  s = open(open(s, "/b", "b"), "/c", "c");
+  s = restore(JSON.parse(JSON.stringify(s)), "/", "n");
+  assert.deepEqual(hrefs(open(s, "/d", "d")), ["/", "/b", "/c", "/d"]);
+  // An opener that points at a closed tab is dropped.
+  const r = restore({ tabs: [{ id: "a", href: "/" }, { id: "b", href: "/b", opener: "gone" }], active: "a" }, "/", "n");
+  assert.equal(r.tabs[1].opener, undefined);
+});
+
+test("arriving from outside", () => {
+  assert.equal(arrive(s0, "/", "n"), s0);
+  assert.equal(arrive(s0, "/activity", "n").active, "b");
+  assert.deepEqual(hrefs(arrive(s0, "/team", "n")), ["/", "/team", "/activity"]);
+});
+
+test("forward bookkeeping belongs to one history", () => {
+  // Two pushes, then back: forward is available, and survives a reload of the same entry.
+  let m = resumeHistory(null, 0, "k0");
+  m = stepHistory(m, 1, "k1", true);
+  m = stepHistory(m, 2, "k2", true);
+  m = stepHistory(m, 1, "k1", false);
+  assert.equal(m.max, 2);
+  const saved = JSON.parse(JSON.stringify(m));
+  assert.equal(resumeHistory(saved, 1, "k1").max, 2);
+  // A new browser tab inherits the storage but not the history: its entry key doesn't match.
+  assert.equal(resumeHistory(saved, 0, "fresh").max, 0);
+  assert.equal(resumeHistory(saved, 1, "other").max, 1);
+  // A push cuts off the forward entries.
+  assert.deepEqual(stepHistory(m, 2, "k3", true), { keys: ["k0", "k1", "k3"], max: 2 });
+  assert.equal(stepHistory(stepHistory(m, 2, "k3", true), 1, "k1", false).max, 2);
 });
