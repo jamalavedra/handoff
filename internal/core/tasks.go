@@ -1432,18 +1432,22 @@ func (s *Service) React(ctx context.Context, p *Principal, in ReactIn) (ReactOut
 		if _, err := c.getTask(taskID, false, false); err != nil {
 			return err
 		}
-		// Insert-or-skip, then delete: two toggles at once act like two toggles instead of colliding.
-		tag, err := c.tx.Exec(c.ctx, `INSERT INTO comment_reactions (org_id, comment_id, member_id, emoji) VALUES ($1, $2::uuid, $3, $4)
-			ON CONFLICT DO NOTHING`, p.Org.ID, in.Comment, p.Member.ID, emoji)
+		// Toggles of the same reaction take turns, so each one sees the last one's result.
+		if _, err := c.tx.Exec(c.ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			"reaction:"+in.Comment+":"+p.Member.ID+":"+emoji); err != nil {
+			return err
+		}
+		tag, err := c.tx.Exec(c.ctx, `DELETE FROM comment_reactions WHERE comment_id::text = $1 AND member_id = $2 AND emoji = $3`,
+			in.Comment, p.Member.ID, emoji)
 		if err != nil {
 			return err
 		}
-		out.Added = tag.RowsAffected() == 1
-		if !out.Added {
-			if _, err := c.tx.Exec(c.ctx, `DELETE FROM comment_reactions WHERE comment_id::text = $1 AND member_id = $2 AND emoji = $3`,
-				in.Comment, p.Member.ID, emoji); err != nil {
+		if tag.RowsAffected() == 0 {
+			if _, err := c.tx.Exec(c.ctx, `INSERT INTO comment_reactions (org_id, comment_id, member_id, emoji) VALUES ($1, $2::uuid, $3, $4)`,
+				p.Org.ID, in.Comment, p.Member.ID, emoji); err != nil {
 				return err
 			}
+			out.Added = true
 		}
 		// Recorded like any change, which also refreshes open screens.
 		return c.event(taskID, "reacted", map[string]any{"emoji": emoji, "added": out.Added})
