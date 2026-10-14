@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { boardColumn, dueLabel, groupByDue, mentionQuery, parseQuickAdd, scheduleLabel, splitMentions } from "./quickadd.ts";
+import { agentOnIt, boardColumn, dueLabel, groupByDue, mentionQuery, parseQuickAdd, scheduleLabel, splitMentions } from "./quickadd.ts";
 
 // Tuesday 13 Oct 2026.
 const today = new Date(2026, 9, 13);
@@ -84,6 +84,20 @@ test("puts tasks in board columns", () => {
   assert.equal(boardColumn({ status: "in_progress" }), "working");
   assert.equal(boardColumn({ status: "done", claimed_by: { id: "a1" } }), "done");
   assert.equal(boardColumn({ status: "cancelled" }), "done");
+});
+
+test("knows when an agent is on a task", () => {
+  const agent = { kind: "agent" }, human = { kind: "human" };
+  assert.equal(agentOnIt({ status: "open" }), false);
+  assert.equal(agentOnIt({ status: "open", triage: "pending" }), true);
+  assert.equal(agentOnIt({ status: "open", triage: "done" }), false);
+  assert.equal(agentOnIt({ status: "in_progress", claimed_by: agent }), true);
+  assert.equal(agentOnIt({ status: "in_progress", claimed_by: human }), false);
+  assert.equal(agentOnIt({ status: "open" }, [{ member: agent }]), false);
+  assert.equal(agentOnIt({ status: "open" }, [{ member: human, typing: true }]), false);
+  assert.equal(agentOnIt({ status: "open" }, [{ member: agent, typing: true }]), true);
+  assert.equal(agentOnIt({ status: "done", triage: "pending", claimed_by: agent }), false);
+  assert.equal(agentOnIt({ status: "open", triage: "pending", deleted_at: "2026-10-14T10:00:00Z" }), false);
 });
 
 test("finds the mention being typed", () => {
