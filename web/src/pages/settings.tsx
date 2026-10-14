@@ -1,12 +1,16 @@
 import { Link } from "@tanstack/react-router";
-import { cn } from "../lib";
+import { useQuery } from "@tanstack/react-query";
+import { api, cn } from "../lib";
 import { PageHeader } from "../components/app";
 import { useMe } from "../main";
 
 // SettingsHeader is the top of every settings page: the title and its sections.
 // General (workspace, people, triage) is for admins; Agents and Activity are for everyone.
-export function SettingsHeader({ active, pending = 0 }: { active: "general" | "agents" | "activity"; pending?: number }) {
+export function SettingsHeader({ active }: { active: "general" | "agents" | "activity" }) {
   const admin = useMe().data?.member?.role === "admin";
+  // Same query as the sidebar badge, so every section shows pending agent requests.
+  const approvals = useQuery({ queryKey: ["approvals"], queryFn: () => api.tool<{ approvals: unknown[] }>("list_approvals") });
+  const pending = approvals.data?.approvals.length ?? 0;
   const tabs = [
     ...(admin ? [{ key: "general", to: "/settings", label: "General" }] : []),
     { key: "agents", to: "/settings/agents", label: "Agents" },

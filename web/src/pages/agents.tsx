@@ -47,7 +47,7 @@ export function AgentsPage() {
   const mcp = me.data?.mcp_url ?? "";
   return (
     <>
-      <SettingsHeader active="agents" pending={approvals.data?.approvals.length ?? 0} />
+      <SettingsHeader active="agents" />
       {!!approvals.data?.approvals.length && (
         <Card className="mb-6 border-amber-200">
           <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800">Waiting for your approval</div>
