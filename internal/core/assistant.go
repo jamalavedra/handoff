@@ -100,6 +100,7 @@ type assistantTurn struct {
 	done     map[string]string // write calls already made (tool and arguments) and what they returned
 	finished bool
 	reply    string
+	asked    []string // set when it asked the person (ask_person): the answers it offered
 }
 
 // takeTurn claims a turn for one request: a new one, or an earlier attempt to resume.
@@ -204,7 +205,7 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 	}
 	defer s.releaseTurn(t)
 	if t.finished {
-		return AssistantChatOut{Reply: t.reply, Steps: slices.Clone(t.steps), Agent: out.Agent, Changed: t.changed}, nil
+		return AssistantChatOut{Reply: t.reply, Steps: slices.Clone(t.steps), Agent: out.Agent, Changed: t.changed, asked: t.asked}, nil
 	}
 	out.Steps, out.Changed = append(out.Steps, t.steps...), t.changed
 	a := &assistantRun{s: s, p: p, agent: agent, out: &out, turn: t, turnID: turnID, sessions: extSessions{}}
@@ -269,7 +270,7 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 					out.Reply = strings.Join(did, ". ") + "."
 				}
 			}
-			t.finished, t.reply = true, out.Reply
+			t.finished, t.reply, t.asked = true, out.Reply, out.asked
 			return out, nil
 		}
 		t.rounds++
@@ -959,18 +960,13 @@ func (a *assistantRun) askPerson(ctx context.Context, args string) string {
 			opts = append(opts, clip(o, 80))
 		}
 	}
-	err := a.s.handBack(ctx, a.agent, a.task, a.p.Member)
-	step := AssistantStep{Type: "write", Tool: "ask_person", Summary: "Handed it back to " + a.p.Member.Name + " for their input"}
-	if err != nil {
-		step.Error = "couldn't hand it back"
-		a.add(ctx, step)
-		return `{"error":"couldn't hand the task back; ask your question in the reply anyway"}`
-	}
-	a.out.asked, a.out.Changed = opts, true
+	// The hand-back itself happens once the question is posted (replyOne), so the task never waits on
+	// someone who wasn't asked anything.
+	a.out.asked = opts
 	if opts == nil {
 		a.out.asked = []string{}
 	}
-	a.add(ctx, step)
+	a.add(ctx, AssistantStep{Type: "write", Tool: "ask_person", Summary: "Handed it back to " + a.p.Member.Name + " for their input"})
 	return `{"ok":true,"next":"now reply with your question, short and specific"}`
 }
 
@@ -980,13 +976,19 @@ func (s *Service) handBack(ctx context.Context, agent *Principal, task string, p
 		if err := c.p.require(ActUpdate); err != nil {
 			return err
 		}
-		var title string
-		err := c.tx.QueryRow(c.ctx, `UPDATE tasks SET assignee_id = $2, waiting_on = $2, updated_at = now()
-			WHERE id = $1 AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled') RETURNING title`, task, person.ID).Scan(&title)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil // gone or finished meanwhile: nothing to wait for
+		// Through getTask, so it only reaches tasks the agent may see and change for this person.
+		r, err := c.getTask(task, false, true)
+		if IsCode(err, ErrNotFound) {
+			return nil // gone meanwhile: nothing to wait for
 		}
 		if err != nil {
+			return err
+		}
+		if r.Status == "done" || r.Status == "cancelled" {
+			return nil
+		}
+		title := r.Title
+		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET assignee_id = $2, waiting_on = $2, updated_at = now() WHERE id = $1`, task, person.ID); err != nil {
 			return err
 		}
 		if err := c.event(task, "updated", map[string]any{"assignee": person.Name, "waiting_on": person.Name}); err != nil {

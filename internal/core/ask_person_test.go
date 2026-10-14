@@ -87,3 +87,30 @@ func TestWaitEndsWhenReassigned(t *testing.T) {
 		t.Fatalf("still waiting after reassigning: %+v", d.Task.WaitingOn)
 	}
 }
+
+// A turn that fails after ask_person posts no question, so the task stays the agent's.
+func TestFailedQuestionDoesNotHandBack(t *testing.T) {
+	model, _ := scriptedModel(t,
+		calls(toolCall("c1", "ask_person", map[string]any{"options": []string{"A", "B"}})),
+		map[string]any{"_status": 500},
+	)
+	e, admin, bot := assistantEnv(t, model, "askfail")
+	task := e.create(t, admin, core.NewTask{Title: "Plan the party"})[0]
+	waitTriage(t, e, admin, task.ID)
+	acme := "Acme Bot"
+	if _, err := e.s.UpdateTask(e.ctx, admin, core.UpdateTaskIn{ID: task.ID, Assignee: &acme}); err != nil {
+		t.Fatal(err)
+	}
+	var d core.TaskDetailOut
+	for range 300 {
+		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if n := len(d.Comments); n > 0 && d.Comments[n-1].Author.ID == bot.Member.ID && d.Task.ClaimedBy == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	last := d.Comments[len(d.Comments)-1]
+	if d.Task.WaitingOn != nil || d.Task.Assignee == nil || d.Task.Assignee.ID != bot.Member.ID || len(last.Options) > 0 {
+		t.Fatalf("handed back without a question: assignee %+v, waiting on %+v, last %+v", d.Task.Assignee, d.Task.WaitingOn, last)
+	}
+}

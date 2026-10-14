@@ -271,17 +271,18 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		// The reply keeps the trail of what the agent did and, when it got there, tells the person who
 		// asked that it's done. A reply saying it couldn't finish is only that.
 		// A reply that ends with a question it didn't hand back still waits on the person, if the
-		// task is the agent's: hand it to them the same way.
+		// task is the agent's: it's handed to them the same way.
 		if finished && out.asked == nil && asksPerson(reply) {
 			var assignee string
 			_ = s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
 				return tx.QueryRow(ctx, `SELECT coalesce(assignee_id::text, '') FROM tasks WHERE id = $1`, task).Scan(&assignee)
 			})
 			if assignee == agentID {
-				if err := s.handBack(ctx, agent, task, person.Member); err == nil {
-					out.asked = []string{}
-				}
+				out.asked = []string{}
 			}
+		}
+		if !finished {
+			out.asked = nil // no question was posted: nothing to wait on
 		}
 		extra := commentExtra{lookups: lookups(out.Steps), activity: activity(out.Steps), options: out.asked}
 		if finished && out.asked == nil { // a question it handed back is announced as that, not as done
@@ -290,6 +291,12 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		if _, err := s.Comment(ctx, agent, CommentIn{ID: task, Body: reply, extra: extra}); err != nil {
 			slog.Error("chat reply: post", "request", j.id, "err", err)
 			return // the lease runs out and the sweep tries again; the turn resumes
+		}
+		// The question is up: now the task waits on the person.
+		if out.asked != nil {
+			if err := s.handBack(ctx, agent, task, person.Member); err != nil {
+				slog.Warn("chat reply: hand back", "task", task, "err", err)
+			}
 		}
 	}
 	// ✅ once it's answered (the reply says when it couldn't finish).
