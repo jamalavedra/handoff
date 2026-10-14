@@ -3,6 +3,7 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import { useCanGoBack, useRouter, useRouterState } from "@tanstack/react-router";
 import { Activity, ArrowLeft, ArrowRight, Bell, Bot, CheckSquare, FolderKanban, LayoutGrid, Plus, Settings, Trash2, Users, X, Zap, Plug } from "lucide-react";
 import { api, cn, type Project, type Task } from "../lib";
+import { agentOnIt } from "../quickadd";
 import * as tabs from "../tabs";
 import { StatusCircle } from "./app";
 import { typing } from "./shortcuts";
@@ -338,6 +339,7 @@ function TaskLabel({ id, onMissing }: { id: string; onMissing?: () => void }) {
     <>
       <span className={iconBox}>{t ? <StatusCircle t={t} small /> : <CheckSquare className="size-3.5 text-foreground/40" />}</span>
       {t ? <Title>{t.title}</Title> : <Title muted>{failed ? "Task not found" : "Loading…"}</Title>}
+      {t && agentOnIt(t) && <span aria-hidden className="agent-border pointer-events-none absolute inset-0 rounded-[8px]" />}
     </>
   );
 }

@@ -215,6 +215,13 @@ export function boardColumn(t: { status: string; claimed_by?: unknown }): BoardC
   return "todo";
 }
 
+// agentOnIt: an agent is working on an open task right now: triaging it, holding its claim, or
+// typing in its chat (`here` is the task's live presence, known only on the task page).
+export function agentOnIt(t: { status: string; triage?: string; claimed_by?: { kind: string } }, here?: { member: { kind: string }; typing?: boolean }[]): boolean {
+  if (t.status === "done" || t.status === "cancelled") return false;
+  return t.triage === "pending" || t.claimed_by?.kind === "agent" || !!here?.some((h) => h.typing && h.member.kind === "agent");
+}
+
 const wordChar = /[\p{L}\p{N}._]/u;
 
 // mentionQuery returns the "@partial" being typed just before the caret, if any.

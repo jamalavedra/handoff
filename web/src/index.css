@@ -226,6 +226,38 @@
   color: transparent;
   animation: agent-shimmer 1.8s linear infinite;
 }
+/* An agent is on this task: a thin line in the shimmer's colours travels round the element's edge.
+   It's an overlay, so it never moves layout; it sits over a border of --agent-border-offset width, if any. */
+@property --agent-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes agent-border { to { --agent-angle: 360deg; } }
+/* Layered, so a positioning utility on the same element (absolute, sticky) still wins. */
+@layer components {
+  .agent-border { position: relative; }
+}
+.agent-border::after {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--agent-border-offset, 0px));
+  z-index: 1;
+  padding: 1.25px;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    conic-gradient(from var(--agent-angle), transparent 0%, var(--color-violet-500) 9%, var(--color-sky-400, #38bdf8) 14%, var(--color-violet-500) 19%, transparent 30%),
+    color-mix(in oklab, var(--color-violet-500) 18%, transparent);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: agent-border 2.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-border::after { animation: none; background: color-mix(in oklab, var(--color-violet-500) 45%, transparent); }
+}
+
 /* ...and when it's done, the tidied title blurs in. */
 @keyframes triage-reveal {
   from { filter: blur(4px); opacity: 0.4; }
