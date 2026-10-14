@@ -13,6 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
 import { completedText, markLocal, undoable, undoClose } from "../components/feedback";
 import { toast } from "sonner";
+import { useDictation } from "@/hooks/use-dictation";
+import { MicButton } from "../components/dictation";
 
 type Here = { member: MemberRef; typing?: boolean };
 type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] };
@@ -179,6 +181,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     const beat = setInterval(watch, 15000);
     return () => { clearInterval(beat); watch({ leave: true }); };
   }, [id]);
+  const dictation = useDictation((text) => { setComment(text); setCaret(text.length); typing(); });
   const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); lastTyping.current = 0; watch(); invalidate(); } });
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: invalidate });
 
@@ -383,7 +386,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             ref={commentRef}
             placeholder="Add a comment… type @ to mention"
             value={comment}
-            onChange={(e) => { setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
+            onChange={(e) => { dictation.cancel(); setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={(e) => {
               if (suggestions.length) {
@@ -395,6 +398,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             aria-label="Comment"
             className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-muted-foreground/70 sm:text-sm"
           />
+          {dictation.supported && <MicButton listening={dictation.listening} onToggle={() => dictation.toggle(comment)} wave={dictation} />}
           <button disabled={!comment.trim() || addComment.isPending} aria-label="Send comment" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:bg-foreground/10 disabled:text-muted-foreground/70">
             <ArrowUp className="size-4" />
           </button>
