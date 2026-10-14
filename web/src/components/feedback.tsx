@@ -66,8 +66,8 @@ export function useNotificationToasts() {
       if (n.read) continue;
       const open = () => {
         api.tool("mark_read", { ids: [n.id] }).then(() => qc.invalidateQueries({ queryKey: ["inbox"] }));
-        if (n.kind === "approval") navigate({ to: "/agents" });
-        else navigate({ to: "/tasks/$id", params: { id: n.task_id } });
+        // Approvals are decided on the task itself, where the request is shown.
+        navigate({ to: "/tasks/$id", params: { id: n.task_id } });
       };
       toast(`${n.actor?.name ?? "Someone"} ${kindText[n.kind]}`, {
         description: n.excerpt || n.task_title,

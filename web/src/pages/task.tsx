@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowUp, Bot, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { ArrowUp, Bot, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
 import { dueLabel, mentionQuery, splitMentions } from "../quickadd";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
 import { markLocal, reopen, undoable } from "../components/feedback";
+import { toast } from "sonner";
 
 type Here = { member: MemberRef; typing?: boolean };
 type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] };
@@ -288,6 +289,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <Button variant="secondary" size="sm" className="mb-5 self-start" onClick={() => claim.mutate()} disabled={claim.isPending}>I'm on it</Button>
       )}
 
+      <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 
       <div className="mb-6"><BodyEditor key={t.body ?? ""} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ body, body_mode: "replace", confirm: true })} /></div>
@@ -377,6 +379,33 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           </button>
         </form>
       )}
+    </div>
+  );
+}
+
+type Approval = { id: string; agent: MemberRef; action: string; task?: Task; reason?: string };
+
+// PendingApprovals shows an agent's request on the task it concerns, so it can be decided in place.
+function PendingApprovals({ id }: { id: string }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["approvals"], queryFn: () => api.tool<{ approvals: Approval[] }>("list_approvals") });
+  const decide = useMutation({
+    mutationFn: (v: { id: string; approve: boolean }) => api.tool("decide_approval", v),
+    onSuccess: (_r, v) => { qc.invalidateQueries(); toast(v.approve ? "Approved" : "Request declined"); },
+  });
+  const mine = q.data?.approvals.filter((a) => a.task?.id === id) ?? [];
+  if (!mine.length) return null;
+  return (
+    <div className="mb-5 flex flex-col gap-2">
+      {mine.map((a) => (
+        <div key={a.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          <ShieldQuestion className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1"><b className="font-medium">{a.agent.name}</b> wants to {a.action === "trash" || a.action === "delete" ? "move this task to the trash" : a.action}{a.reason ? `: ${a.reason}` : "."}</span>
+          <Button size="sm" variant="ghost" onClick={() => decide.mutate({ id: a.id, approve: false })} disabled={decide.isPending}>Deny</Button>
+          <Button size="sm" onClick={() => decide.mutate({ id: a.id, approve: true })} disabled={decide.isPending}>Approve</Button>
+        </div>
+      ))}
+      <ErrorText error={decide.error} />
     </div>
   );
 }

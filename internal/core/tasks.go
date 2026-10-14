@@ -45,6 +45,7 @@ type TaskOut struct {
 	Unseen         bool       `json:"unseen,omitempty" jsonschema:"someone else changed it since you last opened it"`
 	Triage         string     `json:"triage,omitempty" jsonschema:"pending while the workspace's triage agent evaluates it, then done or failed"`
 	TriageError    string     `json:"triage_error,omitempty"`
+	AgentNote      string     `json:"agent_note,omitempty" jsonschema:"start of the latest comment an agent left, for a one-line status"`
 	URL            string     `json:"url"`
 }
 
@@ -58,7 +59,7 @@ type taskRow struct {
 	BlockedBy, Blocks                                          []string
 	OpenBlockers                                               int
 	Unseen                                                     bool
-	Triage, TriageError                                        string
+	Triage, TriageError, AgentNote                             string
 }
 
 // openBlockers counts unfinished blockers of t; the same expression drives "ready".
@@ -71,8 +72,13 @@ const taskSelect = `SELECT t.id, t.project_id::text, t.title, t.body, t.status, 
 	t.due_at, t.claim_expires_at, t.closed_at, t.deleted_at, t.created_at, t.updated_at, t.labels,
 	coalesce((SELECT array_agg(d.blocker_id ORDER BY d.blocker_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocked_id = t.id), '{}'),
 	coalesce((SELECT array_agg(d.blocked_id ORDER BY d.blocked_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocker_id = t.id), '{}'),
-	` + openBlockers + `, ` + unseen + `, coalesce(t.triage, ''), t.triage_error
+	` + openBlockers + `, ` + unseen + `, coalesce(t.triage, ''), t.triage_error, ` + agentNote + `
 	FROM tasks t`
+
+// agentNote is the start of the newest comment by an agent: what it last said about the task.
+const agentNote = `coalesce((SELECT left(cm.body, 200) FROM comments cm
+	JOIN members am ON am.org_id = cm.org_id AND am.id = cm.author_id AND am.kind = 'agent'
+	WHERE cm.org_id = t.org_id AND cm.task_id = t.id ORDER BY cm.created_at DESC LIMIT 1), '')`
 
 // unseen: someone else changed the task after the caller last opened it.
 const unseen = `EXISTS (SELECT 1 FROM events e WHERE e.org_id = t.org_id AND e.task_id = t.id
@@ -98,7 +104,7 @@ func (c *call) queryTasks(where string, args ...any) ([]*taskRow, error) {
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.Title, &r.Body, &r.Status, &r.Priority,
 			&r.AssigneeID, &r.Parent, &r.ExternalID, &r.ClaimedBy, &r.CreatedBy, &r.OnBehalfOf, &r.CloseReason,
 			&r.Due, &r.ClaimExpires, &r.ClosedAt, &r.DeletedAt, &r.CreatedAt, &r.Updated, &r.Labels,
-			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen, &r.Triage, &r.TriageError); err != nil {
+			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen, &r.Triage, &r.TriageError, &r.AgentNote); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -117,7 +123,7 @@ func (c *call) out(r *taskRow, withBody bool) TaskOut {
 		CreatedBy: c.ref(r.CreatedBy), OnBehalfOf: c.ref(r.OnBehalfOf), CreatedAt: ts(r.CreatedAt), UpdatedAt: ts(r.Updated),
 		ClosedAt: ts(r.ClosedAt), CloseReason: r.CloseReason, DeletedAt: ts(r.DeletedAt),
 		BlockedBy: nonNil(r.BlockedBy), Blocks: nonNil(r.Blocks), Unseen: r.Unseen,
-		Triage: r.Triage, TriageError: r.TriageError,
+		Triage: r.Triage, TriageError: r.TriageError, AgentNote: r.AgentNote,
 		URL: c.s.Cfg.OrgURL(c.p.Org.Slug) + "/tasks/" + r.ID,
 	}
 	if p := c.projects[r.ProjectID]; p != nil {
