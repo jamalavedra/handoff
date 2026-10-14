@@ -744,13 +744,15 @@ func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageC
 			}
 		}
 		// The work (or, when it can't be done here, a plan) is the task's document; the chat gets a short note.
-		if work := strings.TrimSpace(sugg.Work); work != "" {
+		// If someone edited the details while the model was working, their edit wins.
+		bodyChanged := strings.TrimSpace(r.Body) != strings.TrimSpace(t.Body)
+		if work := strings.TrimSpace(sugg.Work); work != "" && !bodyChanged {
 			if len(work) > 8000 {
 				work = work[:8000]
 			}
 			// The work is the task's document (it folds in what the creator wrote); the previous text stays in history.
 			upd.Body, upd.BodyMode, upd.Confirm, changed = &work, "replace", true, append(changed, "work")
-		} else if plan := strings.TrimSpace(sugg.Plan); plan != "" {
+		} else if plan := strings.TrimSpace(sugg.Plan); plan != "" && !bodyChanged && strings.TrimSpace(sugg.Work) == "" {
 			if len(plan) > 2000 {
 				plan = plan[:2000]
 			}

@@ -130,8 +130,14 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		if err := tx.QueryRow(ctx, `SELECT agent_id::text FROM triage_settings`).Scan(&agentID); err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, `SELECT title, body, project_id::text FROM tasks WHERE id = $1 AND deleted_at IS NULL`, task).Scan(&title, &body, &project); err != nil {
+		var assignee string
+		if err := tx.QueryRow(ctx, `SELECT title, body, project_id::text, coalesce(assignee_id::text, '') FROM tasks WHERE id = $1 AND deleted_at IS NULL`, task).
+			Scan(&title, &body, &project, &assignee); err != nil {
 			return err
+		}
+		// A task handed over and then handed on to someone else isn't the agent's to do any more.
+		if kind == "take_on" && assignee != agentID {
+			return pgx.ErrNoRows
 		}
 		if !visible[project] {
 			return pgx.ErrNoRows
@@ -196,11 +202,19 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		finish()
 		return
 	}
-	// Taking a task on shows the agent working on it in every list.
+	// Taking a task on means claiming it, which also shows the agent working on it in every list. If it
+	// can't (someone else is on it, or it waits on another task), it says so instead of working anyway.
 	if kind == "take_on" {
-		if _, err := s.ClaimTask(ctx, typer, ClaimTaskIn{ID: task}); err == nil {
-			defer func() { _, _ = s.ReleaseTask(context.WithoutCancel(ctx), typer, ReleaseTaskIn{ID: task}) }()
+		if _, err := s.ClaimTask(ctx, typer, ClaimTaskIn{ID: task}); err != nil {
+			agent, perr := s.Principal(ctx, org, agentID, ViaAssistant)
+			if perr == nil {
+				agent.Owner, agent.within = person.Member, visible
+				_, _ = s.Comment(ctx, agent, CommentIn{ID: task, Body: "I can't start on this yet: " + clip(err.Error(), 200) + ". Mention me here when it's free."})
+			}
+			finish()
+			return
 		}
+		defer func() { _, _ = s.ReleaseTask(context.WithoutCancel(ctx), typer, ReleaseTaskIn{ID: task}) }()
 	}
 	done := make(chan struct{})
 	go func() {

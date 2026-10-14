@@ -186,3 +186,38 @@ func TestHandingATaskToTheAgent(t *testing.T) {
 		t.Fatalf("still claimed: %+v", d.Task.ClaimedBy)
 	}
 }
+
+func TestTakeOnRespectsOthers(t *testing.T) {
+	srv := fakeModel(t, http.StatusOK, map[string]any{"title": "x"}, new(atomic.Value))
+	e := triageEnv(t, srv)
+	admin := e.org(t, "takeonguard")
+	e.agent(t, admin, "Acme Bot", nil)
+	worker := e.agent(t, admin, "Worker", nil)
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	task := e.create(t, admin, core.NewTask{Title: "busy task", Body: "keep me"})[0]
+	waitTriage(t, e, admin, task.ID)
+	// Someone else is working on it: the agent says it can't start, and changes nothing.
+	if _, err := e.s.ClaimTask(e.ctx, worker, core.ClaimTaskIn{ID: task.ID}); err != nil {
+		t.Fatal(err)
+	}
+	to := "Acme Bot"
+	if _, err := e.s.UpdateTask(e.ctx, admin, core.UpdateTaskIn{ID: task.ID, Assignee: &to}); err != nil {
+		t.Fatal(err)
+	}
+	var d core.TaskDetailOut
+	for i := 0; i < 200; i++ {
+		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if n := len(d.Comments); n > 0 && strings.HasPrefix(d.Comments[n-1].Body, "I can't start on this yet") {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if n := len(d.Comments); n == 0 || !strings.HasPrefix(d.Comments[n-1].Body, "I can't start on this yet") {
+		t.Fatalf("no explanation: %+v", d.Comments)
+	}
+	if d.Task.ClaimedBy == nil || d.Task.ClaimedBy.ID != worker.Member.ID {
+		t.Fatalf("the worker's claim was disturbed: %+v", d.Task.ClaimedBy)
+	}
+}
