@@ -157,6 +157,67 @@ func (s *Service) DisableTriage(ctx context.Context, p *Principal, _ struct{}) (
 	return TriageOut{}, err
 }
 
+type TestTriageIn struct {
+	BaseURL    string `json:"base_url"`
+	Model      string `json:"model"`
+	Credential string `json:"credential,omitempty" jsonschema:"empty uses the saved one"`
+}
+
+type TestTriageOut struct {
+	OK      bool   `json:"ok"`
+	Reply   string `json:"reply,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Seconds string `json:"seconds"`
+}
+
+// TestTriage asks the model one small question, so an admin can check a key and model before saving.
+func (s *Service) TestTriage(ctx context.Context, p *Principal, in TestTriageIn) (TestTriageOut, error) {
+	var st triageSettings
+	err := s.run(ctx, p, func(c *call) error {
+		if err := p.requireAdmin(); err != nil {
+			return err
+		}
+		base, err := triageBaseURL(in.BaseURL)
+		if err != nil {
+			return err
+		}
+		st = triageSettings{BaseURL: base, Model: strings.TrimSpace(in.Model)}
+		if st.Model == "" {
+			return errf(ErrInvalid, "model is required")
+		}
+		if cred := strings.TrimSpace(in.Credential); cred != "" {
+			st.Credential = []byte(cred)
+			return nil
+		}
+		var sealed []byte
+		if err := c.tx.QueryRow(c.ctx, `SELECT credential FROM triage_settings`).Scan(&sealed); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errf(ErrInvalid, "enter an API key or OAuth token")
+			}
+			return err
+		}
+		st.Credential, err = s.unseal(sealed)
+		return err
+	})
+	if err != nil {
+		return TestTriageOut{}, err
+	}
+	start := time.Now()
+	lctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	sugg, err := s.askModel(lctx, &st, string(st.Credential), p.Org, triageTask{Title: "can u pls send the invoices to accounting by friday"}, nil, nil)
+	out := TestTriageOut{Seconds: fmt.Sprintf("%.1f", time.Since(start).Seconds())}
+	if err != nil {
+		out.Error = err.Error()
+		return out, nil
+	}
+	out.OK, out.Reply = true, sugg.Title
+	if sugg.Due != "" {
+		out.Reply += " · due " + sugg.Due
+	}
+	return out, nil
+}
+
 func triageBaseURL(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
@@ -503,7 +564,7 @@ func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string,
 			{"role": "system", "content": triagePrompt},
 			{"role": "user", "content": b.String()},
 		},
-		"max_tokens":      900,
+		"max_tokens":      4000, // thinking models (Gemini, o-series) spend part of this before answering
 		"response_format": map[string]string{"type": "json_object"},
 	})
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, st.BaseURL+"/chat/completions", bytes.NewReader(req))

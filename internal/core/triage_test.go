@@ -255,3 +255,22 @@ func TestTriageAgentNeedsAccess(t *testing.T) {
 		t.Fatalf("agent limited to some projects accepted: %v", err)
 	}
 }
+
+func TestTriageTestCall(t *testing.T) {
+	var auth atomic.Value
+	srv := fakeModel(t, http.StatusOK, map[string]any{"title": "Send invoices to accounting", "due": "2026-10-16"}, &auth)
+	e := triageEnv(t, srv)
+	admin := e.org(t, "tritest")
+	out, err := e.s.TestTriage(e.ctx, admin, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m", Credential: "typed-key"})
+	if err != nil || !out.OK || out.Reply != "Send invoices to accounting · due 2026-10-16" || auth.Load() != "Bearer typed-key" {
+		t.Fatalf("test call: %+v %v (auth %v)", out, err, auth.Load())
+	}
+	// No key typed and none saved yet.
+	if _, err := e.s.TestTriage(e.ctx, admin, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m"}); !core.IsCode(err, core.ErrInvalid) {
+		t.Fatalf("without a key: %v", err)
+	}
+	member := e.agent(t, admin, "Helper", nil)
+	if _, err := e.s.TestTriage(e.ctx, member, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); !core.IsCode(err, core.ErrForbidden) {
+		t.Fatalf("non-admin: %v", err)
+	}
+}

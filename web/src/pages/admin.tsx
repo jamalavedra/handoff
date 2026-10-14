@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Bot, ChevronDown, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { api, type Member } from "../lib";
+import { api, cn, type Member } from "../lib";
 import { Badge, Card, ErrorText, PageHeader } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -73,64 +74,99 @@ export function AdminPage() {
 
 type Triage = { enabled: boolean; agent?: { id: string; name: string }; base_url?: string; model?: string; has_credential: boolean };
 
-// Any OpenAI-compatible endpoint works; these are shortcuts for the common ones.
+// Any OpenAI-compatible endpoint works; these are the common ones, each with a sensible default model.
 const providers = [
-  { name: "Anthropic", url: "https://api.anthropic.com/v1", model: "claude-haiku-5-5" },
-  { name: "OpenAI", url: "https://api.openai.com/v1", model: "" },
-  { name: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "" },
-  { name: "Vercel AI Gateway", url: "https://ai-gateway.vercel.sh/v1", model: "" },
+  { name: "Google Gemini", url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash", key: "Gemini API key (aistudio.google.com/apikey)" },
+  { name: "Anthropic", url: "https://api.anthropic.com/v1", model: "claude-haiku-5-5", key: "Anthropic API key" },
+  { name: "OpenAI", url: "https://api.openai.com/v1", model: "", key: "OpenAI API key" },
+  { name: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "google/gemini-2.5-flash", key: "OpenRouter API key" },
+  { name: "Vercel AI Gateway", url: "https://ai-gateway.vercel.sh/v1", model: "google/gemini-2.5-flash", key: "AI Gateway API key" },
 ];
 
 function TriageSettings({ agents }: { agents: Member[] }) {
   const invalidate = useInvalidate();
   const q = useQuery({ queryKey: ["triage"], queryFn: () => api.tool<Triage>("get_triage") });
   const [f, setF] = useState({ agent: "", base_url: providers[0].url, model: providers[0].model, credential: "" });
+  const [advanced, setAdvanced] = useState(false);
   useEffect(() => {
     const t = q.data;
     if (t?.enabled) setF({ agent: t.agent?.id ?? "", base_url: t.base_url ?? "", model: t.model ?? "", credential: "" });
   }, [q.data]);
-  const save = useMutation({ mutationFn: () => api.tool<Triage>("set_triage", f), onSuccess: () => { setF((x) => ({ ...x, credential: "" })); invalidate(); } });
-  const off = useMutation({ mutationFn: () => api.tool("disable_triage"), onSuccess: invalidate });
-  const preset = providers.find((p) => p.url === f.base_url)?.name ?? "custom";
+  // One agent? It's the obvious choice.
+  useEffect(() => {
+    if (!f.agent && agents.length === 1) setF((x) => ({ ...x, agent: agents[0].id }));
+  }, [agents, f.agent]);
+  const provider = providers.find((p) => p.url === f.base_url);
+  const pick = (name: string) => {
+    const p = providers.find((x) => x.name === name);
+    if (p) { setF({ ...f, base_url: p.url, model: p.model }); if (!p.model) setAdvanced(true); }
+    else { setF({ ...f, base_url: "" }); setAdvanced(true); }
+  };
+  const makeAgent = useMutation({
+    mutationFn: () => api.tool<{ id: string }>("create_agent", { name: "Triage" }),
+    onSuccess: (m) => { setF((x) => ({ ...x, agent: m.id })); invalidate(); },
+  });
+  const test = useMutation({ mutationFn: () => api.tool<{ ok: boolean; reply?: string; error?: string; seconds: string }>("test_triage", { base_url: f.base_url, model: f.model, credential: f.credential }) });
+  const save = useMutation({ mutationFn: () => api.tool<Triage>("set_triage", f), onSuccess: () => { setF((x) => ({ ...x, credential: "" })); test.reset(); invalidate(); toast("Triage is on. Create a task to see it work."); } });
+  const off = useMutation({ mutationFn: () => api.tool("disable_triage"), onSuccess: () => { invalidate(); toast("Triage is off"); } });
   const t = q.data;
+  const canTest = !!f.base_url && !!f.model && (!!f.credential || !!t?.has_credential);
   return (
     <>
       <h2 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-muted-foreground"><Sparkles className="size-3.5" />Triage</h2>
       <Card className="mb-8 p-4">
-        <p className="mb-3 max-w-xl text-sm text-foreground/70">
-          When someone creates a task, this agent reads it, tidies the title, fills in the due date, priority, project and labels the text implies, suggests an owner if nobody was picked, and adds a short plan as a comment. Use the same agent your team already talks to. Without one, new tasks are left as written.
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", t?.enabled ? "bg-green-50 text-green-700" : "bg-accent text-muted-foreground")}>{t?.enabled ? "On" : "Off"}</span>
+          {t?.enabled && <span className="text-sm text-muted-foreground">{t.agent?.name} · {t.model}</span>}
+        </div>
+        <p className="mb-4 max-w-xl text-sm text-foreground/70">
+          Every task someone creates is read by this agent: it tidies the title, fills in the date, priority, project and labels the text implies, suggests an owner, and adds a short plan.
         </p>
-        {t?.enabled && <p className="mb-3 text-sm"><span className="font-medium">On</span> · {t.agent?.name} · {t.model}</p>}
-        {agents.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Connect or add an agent on the Agents page first.</p>
-        ) : (
-          <form className="flex max-w-md flex-col gap-3 text-sm" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
-            <label className="font-medium">Agent
+        <form className="flex max-w-md flex-col gap-3 text-sm" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+          <label className="font-medium">Agent
+            {agents.length === 0 ? (
+              <div className="mt-1 flex items-center gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={() => makeAgent.mutate()} disabled={makeAgent.isPending}><Bot className="size-3.5" />Create a “Triage” agent</Button>
+                <span className="text-xs font-normal text-muted-foreground">or connect one on the Agents page</span>
+              </div>
+            ) : (
               <NativeSelect required value={f.agent} onChange={(e) => setF({ ...f, agent: e.target.value })} aria-label="Triage agent">
                 <option value="" disabled>Choose an agent</option>
                 {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </NativeSelect>
-            </label>
-            <label className="font-medium">Model provider
-              <NativeSelect value={preset} onChange={(e) => { const p = providers.find((x) => x.name === e.target.value); setF({ ...f, base_url: p?.url ?? "", model: p?.model || f.model }); }} aria-label="Model provider">
-                {providers.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
-                <option value="custom">Other (OpenAI-compatible)</option>
-              </NativeSelect>
-            </label>
-            {preset === "custom" && <label className="font-medium">Base URL<Input required placeholder="https://…/v1" value={f.base_url} onChange={(e) => setF({ ...f, base_url: e.target.value })} /></label>}
-            <label className="font-medium">Model<Input required placeholder="model id as the provider names it" value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} /></label>
-            <label className="font-medium">API key or OAuth token
-              <Input type="password" autoComplete="off" required={!t?.has_credential} placeholder={t?.has_credential ? "Saved · leave empty to keep it" : "sk-…"} value={f.credential} onChange={(e) => setF({ ...f, credential: e.target.value })} />
-              <span className="text-xs font-normal text-muted-foreground">Sent as a bearer token. Stored encrypted and never shown again.</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <Button type="submit" disabled={save.isPending}>{t?.enabled ? "Save" : "Turn on triage"}</Button>
-              {t?.enabled && <Button type="button" variant="ghost" onClick={() => off.mutate()} disabled={off.isPending}>Turn off</Button>}
-              {save.isSuccess && <span className="text-xs text-green-700">Saved.</span>}
+            )}
+          </label>
+          <label className="font-medium">Model provider
+            <NativeSelect value={provider?.name ?? "other"} onChange={(e) => pick(e.target.value)} aria-label="Model provider">
+              {providers.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+              <option value="other">Other (OpenAI-compatible)</option>
+            </NativeSelect>
+          </label>
+          <label className="font-medium">{provider?.key ?? "API key or OAuth token"}
+            <Input type="password" autoComplete="off" required={!t?.has_credential} placeholder={t?.has_credential ? "Saved · leave empty to keep it" : "Paste your key"} value={f.credential} onChange={(e) => { setF({ ...f, credential: e.target.value }); test.reset(); }} />
+          </label>
+          <button type="button" onClick={() => setAdvanced(!advanced)} className="flex items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground">
+            <ChevronDown className={cn("size-3.5 transition-transform", !advanced && "-rotate-90")} />Model {f.model ? <span className="font-mono">{f.model}</span> : null}
+          </button>
+          {advanced && (
+            <div className="flex flex-col gap-3 rounded-lg bg-muted p-3">
+              <label className="font-medium">Base URL<Input required placeholder="https://…/v1" value={f.base_url} onChange={(e) => { setF({ ...f, base_url: e.target.value }); test.reset(); }} /></label>
+              <label className="font-medium">Model<Input required placeholder="model id as the provider names it" value={f.model} onChange={(e) => { setF({ ...f, model: e.target.value }); test.reset(); }} /></label>
+              <span className="text-xs text-muted-foreground">The key is sent as a bearer token and stored encrypted.</span>
             </div>
-            <ErrorText error={save.error || off.error || q.error} />
-          </form>
-        )}
+          )}
+          {test.data && (
+            <p className={cn("rounded-lg px-3 py-2 text-xs", test.data.ok ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800")}>
+              {test.data.ok ? <>Works ({test.data.seconds}s): “{test.data.reply}”</> : <>Didn't work: {test.data.error}</>}
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" onClick={() => test.mutate()} disabled={!canTest || test.isPending}>{test.isPending ? "Testing…" : "Test"}</Button>
+            <Button type="submit" disabled={save.isPending || !f.agent}>{t?.enabled ? "Save" : "Turn on"}</Button>
+            {t?.enabled && <Button type="button" variant="ghost" onClick={() => off.mutate()} disabled={off.isPending}>Turn off</Button>}
+          </div>
+          <ErrorText error={save.error || off.error || q.error || test.error || makeAgent.error} />
+        </form>
       </Card>
     </>
   );

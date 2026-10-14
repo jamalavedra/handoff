@@ -113,6 +113,7 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "test_webhook", Description: "Owners and admins: send a ping to an agent's webhook and report the answer."}, s.TestWebhook),
 		def(Tool{Name: "get_triage", ReadOnly: true, Description: "Admins: which agent and model triage new tasks."}, s.GetTriage),
 		def(Tool{Name: "set_triage", Description: "Admins: choose the agent that triages each new task people create, and the OpenAI-compatible model it uses."}, s.SetTriage),
+		def(Tool{Name: "test_triage", ReadOnly: true, Description: "Admins: ask a model one small question to check a key and model."}, s.TestTriage),
 		def(Tool{Name: "disable_triage", Description: "Admins: stop triaging new tasks."}, s.DisableTriage),
 		def(Tool{Name: "invite", Description: "Invite a person by email (admins)."}, s.Invite),
 		def(Tool{Name: "update_member", Description: "Change a person's role or remove them (admins)."}, s.UpdateMember),
