@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useCanGoBack, useRouter, useRouterState } from "@tanstack/react-router";
-import { Activity, ArrowLeft, ArrowRight, Bell, Bot, CheckSquare, FolderKanban, LayoutGrid, Plus, Settings, Trash2, Users, X } from "lucide-react";
+import { Activity, ArrowLeft, ArrowRight, Bell, Bot, CheckSquare, FolderKanban, LayoutGrid, Plus, Settings, Trash2, Users, X, Zap } from "lucide-react";
 import { api, cn, type Project, type Task } from "../lib";
 import * as tabs from "../tabs";
 import { StatusCircle } from "./app";
@@ -269,6 +269,7 @@ const pages: Record<string, { label: string; icon: typeof Bell }> = {
   "/settings/activity": { label: "Activity", icon: Activity },
   "/settings/agents": { label: "Agents", icon: Bot },
   "/trash": { label: "Trash", icon: Trash2 },
+  "/automations": { label: "Automations", icon: Zap },
   "/settings": { label: "Settings", icon: Settings },
   // Tabs saved before these moved into Settings keep their names until they're opened.
   "/agents": { label: "Agents", icon: Bot },
