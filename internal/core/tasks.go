@@ -550,6 +550,7 @@ func (s *Service) CreateTasks(ctx context.Context, p *Principal, in CreateTasksI
 		if err := p.require(ActCreate); err != nil {
 			return err
 		}
+		c.mine = !p.Member.IsAgent() && p.Via == "web"
 		// Tasks people create go to the triage agent; agents' own tasks are taken as written.
 		if !p.Member.IsAgent() {
 			on, err := c.triageEnabled()
@@ -750,6 +751,9 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 			return "", false, err
 		}
 		assignee = &m.ID
+	} else if c.mine {
+		// A task someone adds for themselves in the app is theirs unless they say otherwise.
+		assignee = &c.p.Member.ID
 	}
 	due, err := parseDue(nt.Due)
 	if err != nil {
@@ -1201,6 +1205,19 @@ func (c *call) addComment(taskID, body string) error {
 	if a := c.members[assignee]; a != nil && a.IsAgent() && !slices.Contains(mentioned, a) {
 		if err := c.notify(a, "mention", taskID, body); err != nil {
 			return err
+		}
+	}
+	// A person talking to the workspace's own agent (by @mention, or on a task it owns) gets an answer
+	// from it in this chat, once this comment is committed.
+	if !c.p.Member.IsAgent() {
+		var agentID string
+		err := c.tx.QueryRow(c.ctx, `SELECT agent_id::text FROM triage_settings`).Scan(&agentID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if a := c.members[agentID]; a != nil && (slices.Contains(mentioned, a) || assignee == agentID) {
+			job := replyJob{org: c.p.Org.ID, task: taskID, author: c.p.Member.ID}
+			c.after = append(c.after, func() { c.s.enqueueReply(job) })
 		}
 	}
 	return c.event(taskID, "commented", map[string]any{"excerpt": excerpt(body)})

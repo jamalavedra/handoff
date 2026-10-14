@@ -111,8 +111,9 @@ func TestTriage(t *testing.T) {
 		t.Fatalf("model got Authorization %q", auth.Load())
 	}
 	got := d.Task
+	// The creator made it in the app, so it's theirs; triage leaves the owner alone.
 	if got.Triage != "done" || got.Title != "Edit the episode 14 intro" || got.Due != "2026-10-16" || got.Priority != 3 ||
-		got.Project != "Podcast" || !slices.Equal(got.Labels, []string{"audio"}) || got.Assignee == nil || got.Assignee.ID != bot.Member.ID {
+		got.Project != "Podcast" || !slices.Equal(got.Labels, []string{"audio"}) || got.Assignee == nil || got.Assignee.ID != admin.Member.ID {
 		t.Fatalf("triaged task: %+v (error %q)", got, got.TriageError)
 	}
 	// The plan is the task's document; the chat gets a one-line note.
@@ -120,7 +121,7 @@ func TestTriage(t *testing.T) {
 		t.Fatalf("plan not in the body: %q", got.Body)
 	}
 	if len(d.Comments) != 1 || d.Comments[0].Author.ID != bot.Member.ID ||
-		d.Comments[0].Body != "I tidied the title, set it due Fri, Oct 16, moved it to Podcast, labelled it “audio”, assigned it to Acme Bot and wrote a plan in the details." {
+		d.Comments[0].Body != "I tidied the title, set it due Fri, Oct 16, moved it to Podcast, labelled it “audio” and wrote a plan in the details. Mention me here if you want changes." {
 		t.Fatalf("triage note: %+v", d.Comments)
 	}
 	if !strings.HasPrefix(got.AgentNote, "I tidied the title") {
@@ -302,5 +303,28 @@ func TestTriageTestNeedsATitle(t *testing.T) {
 	out, err := e.s.TestTriage(e.ctx, admin, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"})
 	if err != nil || out.OK || out.Error == "" {
 		t.Fatalf("empty answer passed the test: %+v %v", out, err)
+	}
+}
+
+func TestTriageDoesTheWork(t *testing.T) {
+	var auth atomic.Value
+	srv := fakeModel(t, http.StatusOK, map[string]any{
+		"title": "Compare Pixel 8 and Pixel 9", "labels": []string{"research"},
+		"work": "Here's how they compare.\n\n| | Pixel 8 | Pixel 9 |\n|---|---|---|\n| Chip | Tensor G3 | Tensor G4 |",
+		"plan": "should be ignored when there is work",
+	}, &auth)
+	e := triageEnv(t, srv)
+	admin := e.org(t, "triwork")
+	e.agent(t, admin, "Acme Bot", nil)
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	task := e.create(t, admin, core.NewTask{Title: "hey can u compare pixel 8 vs pixel 9"})[0]
+	d := waitTriage(t, e, admin, task.ID)
+	if !strings.Contains(d.Task.Body, "| Chip | Tensor G3 | Tensor G4 |") || strings.Contains(d.Task.Body, "ignored") {
+		t.Fatalf("work not in the body: %q", d.Task.Body)
+	}
+	if len(d.Comments) != 1 || !strings.Contains(d.Comments[0].Body, "did it: the result is in the details") {
+		t.Fatalf("note: %+v", d.Comments)
 	}
 }

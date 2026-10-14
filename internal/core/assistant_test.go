@@ -381,7 +381,9 @@ func TestAssistantReadsLeaveNoTrace(t *testing.T) {
 	e, admin, bot := assistantEnv(t, srv, "asstquiet")
 	// The agent's own task, so triage (which reads as the agent too) leaves it alone.
 	task := e.create(t, bot, core.NewTask{Title: "Check the contract"})[0].ID
-	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task, Body: "@Acme Bot can you check this?"}); err != nil {
+	// Another agent leaves the mention: a person's would get the agent answering in the chat.
+	helper := e.agent(t, admin, "Helper", nil)
+	if _, err := e.s.Comment(e.ctx, helper, core.CommentIn{ID: task, Body: "@Acme Bot can you check this?"}); err != nil {
 		t.Fatal(err)
 	}
 	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"TASK": task}, srv.Client().Transport}}
@@ -399,7 +401,7 @@ func TestAssistantReadsLeaveNoTrace(t *testing.T) {
 		t.Fatalf("the assistant's reads cleared the agent's alerts: %d unread", after.Unread)
 	}
 	d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task})
-	if len(d.Here) != 0 {
+	if slices.ContainsFunc(d.Here, func(h core.HereOut) bool { return h.Member.ID == bot.Member.ID }) {
 		t.Fatalf("the assistant's reads showed the agent as here: %+v", d.Here)
 	}
 }
