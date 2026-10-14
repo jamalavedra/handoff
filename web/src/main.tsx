@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Navigate, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bell, Bot, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users } from "lucide-react";
+import { Activity, Bell, Bot, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun, Trash2, Users } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
 import "./index.css";
@@ -23,6 +23,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useNotificationToasts } from "./components/feedback";
 import { CommandPaletteProvider, useCommandPalette } from "./components/command-palette";
 import { ShortcutsDialog, useShortcuts } from "./components/shortcuts";
+import { AssistantButton, AssistantPanel, AssistantProvider, clearAssistant, useAssistant, useAssistantInset } from "./components/assistant";
 import { TabsProvider, TabStrip, useOpenInTab } from "./components/tabs";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
@@ -127,6 +128,7 @@ function useLogout() {
   return async () => {
     await api.post("/api/logout");
     qcl.clear();
+    clearAssistant();
     window.location.href = "/login";
   };
 }
@@ -148,6 +150,7 @@ function Layout({ me }: { me: Me }) {
   return (
     <TabsProvider>
     <QuickAddProvider>
+      <AssistantProvider>
       <CommandPaletteProvider me={me} onShortcuts={showHelp}>
       <ShortcutsDialog open={help} onOpenChange={setHelp} />
       <div className="min-h-dvh md:flex">
@@ -158,6 +161,7 @@ function Layout({ me }: { me: Me }) {
           </div>
           <SearchButton />
           <nav className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto px-1 pb-2">
+            <AssistantButton />
             <NavLink to="/" icon={CheckSquare}>My tasks</NavLink>
             <NavLink to="/notifications" icon={Bell}>
               <span className="flex-1">Notifications</span>
@@ -198,18 +202,27 @@ function Layout({ me }: { me: Me }) {
             <TaskPanel />
           </div>
         </div>
+        <AssistantPanel me={me} />
         {!onTask && <MobileTabBar pending={pending} unread={unread} />}
-        <Toaster />
+        <AppToaster />
       </div>
       </CommandPaletteProvider>
+      </AssistantProvider>
     </QuickAddProvider>
     </TabsProvider>
   );
 }
 
+// Toasts keep clear of the assistant panel.
+function AppToaster() {
+  const inset = useAssistantInset();
+  return <Toaster offset={inset ? { right: inset } : undefined} />;
+}
+
 // TaskPanel shows ?task=<id> beside the list on wide screens; narrow screens get the full task page.
 function TaskPanel() {
   const task = usePanelTask();
+  const assistant = useAssistant();
   const wide = useWide();
   const navigate = useNavigate();
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -230,7 +243,7 @@ function TaskPanel() {
   if (!open || !wide) return null;
   // Wide screens always have the tab strip (h-11) above the panel.
   return (
-    <aside key={task} aria-label="Task" className="sticky top-11 h-[calc(100dvh-2.75rem)] w-[30rem] shrink-0 overflow-y-auto border-l border-border bg-background xl:w-[34rem]">
+    <aside key={task} aria-label="Task" className={cn("sticky top-11 h-[calc(100dvh-2.75rem)] shrink-0 overflow-y-auto border-l border-border bg-background", assistant.open ? "w-[26rem] 2xl:w-[34rem]" : "w-[30rem] xl:w-[34rem]")}>
       <TaskView id={task} panel />
     </aside>
   );
@@ -238,6 +251,7 @@ function TaskPanel() {
 
 function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
   const quick = useQuickAdd();
+  const assistant = useAssistant();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const project = path.match(/^\/projects\/([^/]+)/)?.[1];
   return (
@@ -245,6 +259,9 @@ function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
       <div className="flex h-14 items-center justify-between px-4">
         <span className="truncate rounded-full border border-border bg-card px-3 py-1 text-sm font-semibold">{me.org?.name}</span>
         <div className="flex items-center gap-2">
+          <button onClick={() => assistant.setOpen(true)} className="flex size-10 items-center justify-center rounded-full border border-border bg-card" aria-label="Assistant">
+            <Sparkles className="size-5" />
+          </button>
           <Link to="/notifications" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"} className="relative flex size-10 items-center justify-center rounded-full border border-border bg-card">
             <Bell className="size-5" />
             {unread > 0 && <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold text-white">{unread > 9 ? "9+" : unread}</span>}

@@ -115,6 +115,8 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "set_triage", Description: "Admins: choose the agent that triages each new task people create, and the OpenAI-compatible model it uses."}, s.SetTriage),
 		def(Tool{Name: "test_triage", ReadOnly: true, Description: "Admins: ask a model one small question to check a key and model."}, s.TestTriage),
 		def(Tool{Name: "disable_triage", Description: "Admins: stop triaging new tasks."}, s.DisableTriage),
+		def(Tool{Name: "get_assistant", ReadOnly: true, Description: "Whether the in-app assistant is set up, and which agent it acts as."}, s.GetAssistant),
+		def(Tool{Name: "assistant_chat", Description: "Ask the workspace's assistant (the triage agent and model) to answer or act, given the conversation so far. It acts as that agent on your behalf."}, s.AssistantChat),
 		def(Tool{Name: "invite", Description: "Invite a person by email (admins)."}, s.Invite),
 		def(Tool{Name: "update_member", Description: "Change a person's role or remove them (admins)."}, s.UpdateMember),
 		def(Tool{Name: "update_org", Description: "Change workspace settings (admins)."}, s.UpdateOrg),

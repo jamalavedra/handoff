@@ -112,7 +112,12 @@ type Principal struct {
 	Owner *Member
 	// Via is the channel: web, mcp or api.
 	Via string
+	// within, when set, further limits the projects this principal sees (the assistant: the person's own).
+	within map[string]bool
 }
+
+// ViaAssistant marks calls the in-app assistant makes as the triage agent. Its reads leave no trace.
+const ViaAssistant = "assistant"
 
 func (p *Principal) IsAdmin() bool { return !p.Member.IsAgent() && p.Member.Role == "admin" }
 
@@ -158,6 +163,9 @@ type Service struct {
 	// outboundHTTP is the shared guarded client, built on first use.
 	outboundHTTP *http.Client
 	outboundOnce sync.Once
+	// assistant turns in progress or recently finished, so a retried turn resumes instead of repeating writes.
+	turnsMu sync.Mutex
+	turns   map[string]*assistantTurn
 }
 
 func New(d *db.DB, cfg *config.Config) *Service {
@@ -254,6 +262,9 @@ func (c *call) loadProjects() error {
 		if ok && c.p.Member.IsAgent() {
 			perm := c.p.Member.Permissions.Projects
 			ok = slices.Contains(perm, "*") || slices.Contains(perm, pr.ID)
+		}
+		if ok && c.p.within != nil {
+			ok = c.p.within[pr.ID]
 		}
 		if ok {
 			c.visible = append(c.visible, pr.ID)
