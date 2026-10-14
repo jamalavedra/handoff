@@ -1,8 +1,8 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bell, Bot, CheckSquare, ChevronDown, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
+import { Activity, Bell, Bot, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
 import "./index.css";
@@ -21,6 +21,8 @@ import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Toaster } from "@/components/ui/sonner";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useNotificationToasts } from "./components/feedback";
+import { CommandPaletteProvider, useCommandPalette } from "./components/command-palette";
+import { ShortcutsDialog, useShortcuts } from "./components/shortcuts";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
 
@@ -48,6 +50,17 @@ function NavLink({ to, icon: Icon, children }: { to: string; icon: typeof Inbox;
       <Icon className="size-4 text-foreground/50 transition-colors group-hover:text-foreground/80 group-data-[status=active]:text-foreground" />
       {children}
     </Link>
+  );
+}
+
+function SearchButton() {
+  const palette = useCommandPalette();
+  return (
+    <button onClick={palette.open} className="mb-3 flex h-8 items-center gap-2 rounded-[10px] border border-sidebar-border bg-background/60 px-2 text-[13px] text-muted-foreground transition-colors hover:bg-background hover:text-foreground">
+      <Search className="size-4" />
+      <span className="flex-1 text-left">Search</span>
+      <kbd className="rounded border border-border px-1 font-sans text-[10px]">⌘K</kbd>
+    </button>
   );
 }
 
@@ -120,14 +133,20 @@ function Layout({ me }: { me: Me }) {
   useNotificationToasts();
   const { projects, pending, unread } = useLayoutData();
   const logout = useLogout();
+  const [help, setHelp] = useState(false);
+  const showHelp = useCallback(() => setHelp(true), []);
+  useShortcuts(showHelp);
   return (
     <QuickAddProvider>
+      <CommandPaletteProvider me={me} onShortcuts={showHelp}>
+      <ShortcutsDialog open={help} onOpenChange={setHelp} />
       <div className="min-h-dvh md:flex">
         <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-3 text-sidebar-foreground md:flex">
           <div className="mb-5 px-2 pt-1">
             <div className="truncate font-display text-[17px] font-semibold tracking-tight">{me.org?.name}</div>
             <div className="text-xs text-muted-foreground">Handoff</div>
           </div>
+          <SearchButton />
           <nav className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto px-1 pb-2">
             <NavLink to="/" icon={CheckSquare}>My tasks</NavLink>
             <NavLink to="/notifications" icon={Bell}>
@@ -168,6 +187,7 @@ function Layout({ me }: { me: Me }) {
         <MobileTabBar pending={pending} />
         <Toaster />
       </div>
+      </CommandPaletteProvider>
     </QuickAddProvider>
   );
 }

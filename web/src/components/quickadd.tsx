@@ -12,16 +12,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { typing } from "./shortcuts";
 
 type Ctx = { open: (project?: string) => void };
 const QuickAddContext = createContext<Ctx>({ open: () => {} });
 
 export const useQuickAdd = () => useContext(QuickAddContext);
-
-function typing(t: EventTarget | null) {
-  const el = t as HTMLElement | null;
-  return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
-}
 
 export function QuickAddProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<{ project?: string } | null>(null);

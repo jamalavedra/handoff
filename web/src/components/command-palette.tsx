@@ -1,0 +1,133 @@
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
+import { api, projectName, type Me, type Project, type Task } from "../lib";
+import { setTheme } from "../theme";
+import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
+import { useQuickAdd } from "./quickadd";
+import { useWide } from "./tasklink";
+import { typing } from "./shortcuts";
+
+type Ctx = { open: () => void };
+const PaletteContext = createContext<Ctx>({ open: () => {} });
+export const useCommandPalette = () => useContext(PaletteContext);
+
+type Item = { id: string; label: string; icon: typeof Plus; keys?: string; run: () => void };
+
+// CommandPaletteProvider owns ⌘K: jump anywhere, run an action, or find a task by title.
+export function CommandPaletteProvider({ me, onShortcuts, children }: { me: Me; onShortcuts: () => void; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ctx = useMemo<Ctx>(() => ({ open: () => setOpen(true) }), []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing(e.target))) {
+        e.preventDefault();
+        setOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  useEffect(() => { if (!open) setQuery(""); }, [open]);
+  return (
+    <PaletteContext.Provider value={ctx}>
+      {children}
+      <CommandDialog open={open} onOpenChange={setOpen} shouldFilter={false} title="Command menu" description="Jump to a page, run an action, or find a task" className="top-24 translate-y-0 rounded-2xl sm:max-w-xl">
+        {open && <Palette me={me} query={query} setQuery={setQuery} close={() => setOpen(false)} onShortcuts={onShortcuts} />}
+      </CommandDialog>
+    </PaletteContext.Provider>
+  );
+}
+
+function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: string; setQuery: (q: string) => void; close: () => void; onShortcuts: () => void }) {
+  const navigate = useNavigate();
+  const quick = useQuickAdd();
+  const wide = useWide();
+  const q = query.trim().toLowerCase();
+  const [debounced, setDebounced] = useState(q);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q), 150);
+    return () => clearTimeout(t);
+  }, [q]);
+  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
+  const tasks = useQuery({
+    queryKey: ["tasks", "palette", debounced],
+    queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { query: debounced, limit: 8 }),
+    enabled: debounced.length > 1,
+    placeholderData: (prev) => prev,
+  });
+  const go = (fn: () => void) => () => { close(); fn(); };
+  const to = (path: string) => go(() => navigate({ to: path }));
+  const actions: Item[] = [
+    { id: "new", label: "New task", icon: Plus, keys: "N", run: go(() => quick.open()) },
+    { id: "light", label: "Theme: light", icon: Sun, run: go(() => setTheme("light")) },
+    { id: "dark", label: "Theme: dark", icon: Moon, run: go(() => setTheme("dark")) },
+    { id: "system", label: "Theme: match device", icon: Monitor, run: go(() => setTheme("system")) },
+    { id: "keys", label: "Keyboard shortcuts", icon: Keyboard, keys: "?", run: go(onShortcuts) },
+  ];
+  const pages: Item[] = [
+    { id: "/", label: "My tasks", icon: CheckSquare, keys: "G T", run: to("/") },
+    { id: "/notifications", label: "Notifications", icon: Bell, keys: "G N", run: to("/notifications") },
+    { id: "/ready", label: "Ready", icon: Zap, keys: "G R", run: to("/ready") },
+    { id: "/team", label: "Team", icon: Users, run: to("/team") },
+    { id: "/projects", label: "Projects", icon: FolderKanban, keys: "G P", run: to("/projects") },
+    { id: "/activity", label: "Activity", icon: Activity, run: to("/activity") },
+    { id: "/agents", label: "Agents", icon: Bot, keys: "G A", run: to("/agents") },
+    { id: "/trash", label: "Trash", icon: Trash2, run: to("/trash") },
+    ...(me.member?.role === "admin" ? [{ id: "/admin", label: "Admin", icon: Settings, run: to("/admin") }] : []),
+  ];
+  const match = (s: string) => !q || s.toLowerCase().includes(q);
+  const shownActions = actions.filter((a) => match(a.label));
+  const shownPages = pages.filter((p) => match(p.label));
+  const shownProjects = (projects.data?.projects ?? []).filter((p) => match(p.name)).slice(0, q ? 6 : 4);
+  const found = debounced.length > 1 ? tasks.data?.tasks ?? [] : [];
+  const openTask = (id: string) => go(() => (wide ? navigate({ to: ".", search: (p) => ({ ...p, task: id }) }) : navigate({ to: "/tasks/$id", params: { id } })));
+  return (
+    <>
+      <CommandInput placeholder="Search tasks, pages and actions…" value={query} onValueChange={setQuery} />
+      <CommandList className="max-h-[min(60dvh,26rem)]">
+        <CommandEmpty>{tasks.isFetching ? "Searching…" : "No matches."}</CommandEmpty>
+        {found.length > 0 && (
+          <CommandGroup heading="Tasks">
+            {found.map((t) => (
+              <CommandItem key={t.id} value={`task-${t.id}`} onSelect={openTask(t.id)}>
+                <CheckSquare className="text-muted-foreground" />
+                <span className="truncate">{t.title}</span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">{t.project}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+        {shownActions.length > 0 && <Group heading="Actions" items={shownActions} />}
+        {shownPages.length > 0 && <Group heading="Go to" items={shownPages} />}
+        {shownProjects.length > 0 && (
+          <CommandGroup heading="Projects">
+            {shownProjects.map((p) => (
+              <CommandItem key={p.id} value={`project-${p.id}`} onSelect={go(() => navigate({ to: "/projects/$id", params: { id: p.id } }))}>
+                <FolderKanban className="text-muted-foreground" />
+                <span className="truncate">{projectName(p)}</span>
+                <span className="ml-auto text-xs text-muted-foreground tabular-nums">{p.open_tasks}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+      </CommandList>
+    </>
+  );
+}
+
+function Group({ heading, items }: { heading: string; items: Item[] }) {
+  return (
+    <CommandGroup heading={heading}>
+      {items.map(({ id, label, icon: Icon, keys, run }) => (
+        <CommandItem key={id} value={`${heading}-${id}`} onSelect={run}>
+          <Icon className="text-muted-foreground" />
+          {label}
+          {keys && <CommandShortcut>{keys}</CommandShortcut>}
+        </CommandItem>
+      ))}
+    </CommandGroup>
+  );
+}
