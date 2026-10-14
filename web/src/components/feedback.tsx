@@ -80,7 +80,7 @@ export function useNotificationToasts() {
         // Approvals are decided on the task, where the request is shown, if the task can still be opened;
         // otherwise (say its project was archived) on the Agents page, which lists every pending request.
         const approvals = qc.getQueryData<{ approvals: { task?: { id: string } }[] }>(["approvals"])?.approvals;
-        if (n.kind === "approval" && !approvals?.some((a) => a.task?.id === n.task_id)) navigate({ to: "/agents" });
+        if (n.kind === "approval" && !approvals?.some((a) => a.task?.id === n.task_id)) navigate({ to: "/settings/agents" });
         else navigate({ to: "/tasks/$id", params: { id: n.task_id } });
       };
       toast(`${n.actor?.name ?? "Someone"} ${kindText[n.kind]}`, {

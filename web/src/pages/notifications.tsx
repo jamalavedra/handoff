@@ -58,7 +58,7 @@ export function NotificationsPage() {
               return (
                 <li key={n.id} className={cn("border-b border-border last:border-0", !n.read && "bg-accent/50")}>
                   {n.kind === "approval" ? (
-                    <Link to="/agents" onClick={() => readOne.mutate(n.id)} className={rowClass}>{body}</Link>
+                    <Link to="/settings/agents" onClick={() => readOne.mutate(n.id)} className={rowClass}>{body}</Link>
                   ) : (
                     <TaskLink id={n.task_id} className={rowClass}>{body}</TaskLink>
                   )}

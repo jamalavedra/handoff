@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sparkles, Sun, Trash2, Users } from "lucide-react";
-import { api, projectName, type Me, type Project, type Task } from "../lib";
+import { api, projectName, type Project, type Task } from "../lib";
 import { setTheme } from "../theme";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { useQuickAdd } from "./quickadd";
@@ -21,7 +21,7 @@ type Item = { id: string; label: string; icon: typeof Plus; keys?: string; run: 
 const isMod = (e: React.KeyboardEvent | React.PointerEvent) => e.metaKey || e.ctrlKey;
 
 // CommandPaletteProvider owns ⌘K: jump anywhere, run an action, or find a task by title.
-export function CommandPaletteProvider({ me, onShortcuts, children }: { me: Me; onShortcuts: () => void; children: React.ReactNode }) {
+export function CommandPaletteProvider({ onShortcuts, children }: { onShortcuts: () => void; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ctx = useMemo<Ctx>(() => ({ open: () => setOpen(true) }), []);
@@ -40,13 +40,13 @@ export function CommandPaletteProvider({ me, onShortcuts, children }: { me: Me; 
     <PaletteContext.Provider value={ctx}>
       {children}
       <CommandDialog open={open} onOpenChange={setOpen} shouldFilter={false} title="Command menu" description="Jump to a page, run an action, or find a task" className="top-24 translate-y-0 rounded-2xl sm:max-w-xl">
-        {open && <Palette me={me} query={query} setQuery={setQuery} close={() => setOpen(false)} onShortcuts={onShortcuts} />}
+        {open && <Palette query={query} setQuery={setQuery} close={() => setOpen(false)} onShortcuts={onShortcuts} />}
       </CommandDialog>
     </PaletteContext.Provider>
   );
 }
 
-function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: string; setQuery: (q: string) => void; close: () => void; onShortcuts: () => void }) {
+function Palette({ query, setQuery, close, onShortcuts }: { query: string; setQuery: (q: string) => void; close: () => void; onShortcuts: () => void }) {
   const navigate = useNavigate();
   const quick = useQuickAdd();
   const assistant = useAssistant();
@@ -89,10 +89,10 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
     { id: "/notifications", label: "Notifications", icon: Bell, keys: "G N", run: to("/notifications") },
     { id: "/team", label: "Team", icon: Users, run: to("/team") },
     { id: "/projects", label: "Projects", icon: FolderKanban, keys: "G P", run: to("/projects") },
-    { id: "/activity", label: "Activity", icon: Activity, run: to("/activity") },
-    { id: "/agents", label: "Agents", icon: Bot, keys: "G A", run: to("/agents") },
+    { id: "/settings/agents", label: "Agents", icon: Bot, keys: "G A", run: to("/settings/agents") },
+    { id: "/settings/activity", label: "Activity", icon: Activity, run: to("/settings/activity") },
     { id: "/trash", label: "Trash", icon: Trash2, run: to("/trash") },
-    ...(me.member?.role === "admin" ? [{ id: "/admin", label: "Admin", icon: Settings, run: to("/admin") }] : []),
+    { id: "/settings", label: "Settings", icon: Settings, keys: "G S", run: to("/settings") },
   ];
   const match = (s: string) => !q || s.toLowerCase().includes(q);
   const shownActions = actions.filter((a) => match(a.label));

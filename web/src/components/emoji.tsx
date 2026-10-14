@@ -21,7 +21,7 @@ export function EmojiPicker({ value, onChange, label }: { value: string; onChang
   const pick = (e: string) => { onChange(e); setOpen(false); setCustom(""); };
   return (
     <div ref={ref} className="relative">
-      <button type="button" aria-label={label} aria-expanded={open} onClick={() => setOpen(!open)} className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-xl hover:border-input md:size-9">
+      <button type="button" aria-label={label} aria-expanded={open} onClick={() => setOpen(!open)} className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-lg hover:border-input md:size-8">
         {value || <Smile className="size-4 text-muted-foreground/70" />}
       </button>
       {open && (
