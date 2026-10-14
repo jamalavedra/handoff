@@ -66,6 +66,7 @@ type AssistantStep struct {
 	Summary string             `json:"summary"`
 	Tasks   []AssistantTaskRef `json:"tasks,omitempty"`
 	Error   string             `json:"error,omitempty"`
+	Lookup  *Lookup            `json:"lookup,omitempty"` // a call to a connected service
 }
 
 type AssistantChatOut struct {
@@ -890,10 +891,12 @@ func (a *assistantRun) callExternal(ctx context.Context, t extTool, args string)
 	if strings.TrimSpace(args) == "" {
 		raw = json.RawMessage("{}")
 	}
-	step := AssistantStep{Tool: t.fn, Summary: t.conn + ": " + extSummary(t.tool, raw)}
+	lk := extLookup(t, raw)
+	step := AssistantStep{Tool: t.fn, Summary: t.conn + ": " + extSummary(t.tool, raw), Lookup: &lk}
 	text, err := a.s.callExternal(ctx, a.sessions, t, raw)
 	if err != nil {
 		step.Error = clip(err.Error(), 200)
+		lk.Failed = true
 		a.out.Steps = append(a.out.Steps, step)
 		b, _ := json.Marshal(map[string]string{"error": step.Error})
 		return string(b)
@@ -905,19 +908,42 @@ func (a *assistantRun) callExternal(ctx context.Context, t extTool, args string)
 
 // extSummary is a short line for a step: the tool and what it was asked, e.g. "web_search · pixel 9 ram".
 func extSummary(tool string, raw json.RawMessage) string {
+	if q := extQuery(raw); q != "" {
+		return tool + " · " + q
+	}
+	return tool
+}
+
+// extQuery is what a connected tool was asked, from the usual argument names.
+func extQuery(raw json.RawMessage) string {
 	var args map[string]any
 	_ = json.Unmarshal(raw, &args)
 	for _, k := range []string{"query", "objective", "q", "search_query", "url", "urls", "question", "prompt"} {
 		switch v := args[k].(type) {
 		case string:
-			return tool + " · " + clip(v, 80)
+			return clip(v, 80)
 		case []any:
 			if len(v) > 0 {
 				if s, ok := v[0].(string); ok {
-					return tool + " · " + clip(s, 80)
+					return clip(s, 80)
 				}
 			}
 		}
 	}
-	return tool
+	return ""
+}
+
+func extLookup(t extTool, raw json.RawMessage) Lookup {
+	return Lookup{Source: t.conn, Tool: t.tool, Query: extQuery(raw)}
+}
+
+// lookups lists the connected-service calls among a turn's steps.
+func lookups(steps []AssistantStep) []Lookup {
+	var out []Lookup
+	for _, st := range steps {
+		if st.Lookup != nil {
+			out = append(out, *st.Lookup)
+		}
+	}
+	return out
 }
