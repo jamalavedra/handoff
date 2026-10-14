@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, cn, type Member, type Task } from "../lib";
-import { Avatar, Card, Empty, ErrorText, PageHeader } from "../components/ui";
+import { Avatar, Card, Empty, ErrorText, PageHeader } from "../components/app";
 import { TaskRow, useInvalidate } from "./tasks";
 
 const unassigned = "";
@@ -72,12 +72,12 @@ export function TeamPage() {
                 const t = byId.get(e.dataTransfer.getData("application/x-handoff-task"));
                 if (t && (t.assignee?.id ?? unassigned) !== c.id) move.mutate({ t, to: c.id });
               }}
-              className={cn("flex w-[82vw] max-w-xs shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-zinc-100 p-2 transition-colors md:w-72", over === c.id && "bg-accent-soft ring-2 ring-accent")}
+              className={cn("flex w-[82vw] max-w-xs shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-accent p-2 transition-colors md:w-72", over === c.id && "bg-accent ring-2 ring-ring")}
             >
               <h2 className="flex items-center gap-2 px-2 pt-1 text-sm font-semibold">
                 {c.member && <Avatar m={c.member} />}
                 <span className="truncate">{label}</span>
-                <span className="ml-auto shrink-0 text-xs font-normal text-zinc-500">{c.tasks.length} open{working ? ` · ${working} working` : ""}</span>
+                <span className="ml-auto shrink-0 text-xs font-normal text-muted-foreground">{c.tasks.length} open{working ? ` · ${working} working` : ""}</span>
               </h2>
               {c.tasks.map((t) => (
                 <div
@@ -89,7 +89,7 @@ export function TeamPage() {
                   <TaskRow t={t} />
                 </div>
               ))}
-              {c.tasks.length === 0 && <div className="px-2 py-6 text-center text-sm text-zinc-400">Nothing assigned</div>}
+              {c.tasks.length === 0 && <div className="px-2 py-6 text-center text-sm text-muted-foreground/70">Nothing assigned</div>}
             </section>
           );
         })}

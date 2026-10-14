@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Bot } from "lucide-react";
 import { api, type Me } from "../lib";
-import { Button, Card, ErrorText, Input } from "../components/ui";
+import { Card, ErrorText } from "../components/app";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useMe } from "../main";
 
 function Centered({ children }: { children: React.ReactNode }) {
@@ -40,7 +42,7 @@ export function LoginPage() {
   return (
     <Centered>
       <h1 className="text-lg font-semibold">Sign in to {me.data?.org?.name}</h1>
-      <p className="mb-4 text-sm text-zinc-500">Handoff · {window.location.host}</p>
+      <p className="mb-4 text-sm text-muted-foreground">Handoff · {window.location.host}</p>
       {sent ? (
         <>
           <p className="text-sm">If <b>{email}</b> is a member, a sign-in link is on its way.</p>
@@ -78,7 +80,7 @@ export function SignupPage({ me }: { me: Me }) {
   return (
     <Centered>
       <h1 className="text-lg font-semibold">Handoff</h1>
-      <p className="mb-4 text-sm text-zinc-500">One task list for your company's people and agents.</p>
+      <p className="mb-4 text-sm text-muted-foreground">One task list for your company's people and agents.</p>
       {!me.signup ? (
         <p className="text-sm">Signup is closed on this server. Ask your admin for your workspace address.</p>
       ) : done ? (
@@ -94,7 +96,7 @@ export function SignupPage({ me }: { me: Me }) {
           <label className="text-sm font-medium">Address
             <div className="flex items-center gap-1">
               <Input required value={f.slug} onChange={(e) => setF({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "") })} placeholder="acme" />
-              <span className="text-sm text-zinc-500">.{me.base_host}</span>
+              <span className="text-sm text-muted-foreground">.{me.base_host}</span>
             </div>
           </label>
           <label className="text-sm font-medium">Your work email
@@ -131,10 +133,10 @@ export function AuthorizePage() {
     <Centered>
       <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-violet-100"><Bot className="size-5 text-violet-700" /></div>
       <h1 className="text-lg font-semibold">Connect {info.data.client_name} to {info.data.org}?</h1>
-      <p className="mt-1 text-sm text-zinc-600">
+      <p className="mt-1 text-sm text-foreground/70">
         It will join Handoff as an agent owned by you, and can read and change tasks you can see. Deleting needs your approval. You can change its permissions or disconnect it any time on the Agents page.
       </p>
-      <p className="mt-2 text-xs text-zinc-500">Returns to {info.data.redirect_host}</p>
+      <p className="mt-2 text-xs text-muted-foreground">Returns to {info.data.redirect_host}</p>
       <label className="mt-4 block text-sm font-medium">Agent name
         <Input value={name} onChange={(e) => setName(e.target.value)} />
       </label>

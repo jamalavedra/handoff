@@ -1,35 +1,115 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/space-grotesk";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --color-accent: oklch(51.1% 0.262 276.966);
-  --color-accent-soft: oklch(96.2% 0.018 272.314);
-  --color-on-accent: #fff;
-  --color-surface: #fff;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk Variable", "Inter Variable", ui-sans-serif, sans-serif;
 }
 
-/* Dark mode flips every palette (50 <-> 950), so existing light/dark pairs keep their contrast. */
-@layer theme {
-  .dark {
-    color-scheme: dark;
-    --color-white: oklch(18.5% 0.006 286);
-    --color-surface: oklch(18.5% 0.006 286);
-    --color-accent: oklch(67.3% 0.182 276.935);
-    --color-accent-soft: oklch(28% 0.08 278);
-    --color-on-accent: oklch(18.5% 0.006 286);
-    --color-zinc-50: oklch(14.1% 0.005 285.823);
-    --color-zinc-100: oklch(23.5% 0.006 286);
-    --color-zinc-200: oklch(29% 0.007 286);
-    --color-zinc-300: oklch(37% 0.01 286);
-    --color-zinc-400: oklch(52% 0.014 286);
-    --color-zinc-500: oklch(64% 0.015 286);
-    --color-zinc-600: oklch(72% 0.013 286);
-    --color-zinc-700: oklch(82% 0.008 286);
-    --color-zinc-800: oklch(89% 0.005 286);
-    --color-zinc-900: oklch(95% 0.002 286);
-    --color-zinc-950: oklch(98.5% 0 0);
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-today: var(--today);
+  --color-unseen: var(--unseen);
+}
+
+/* Neutral ink on paper: hairline alpha borders, soft pill fills, colour only where it means something. */
+:root {
+  --radius: 0.75rem;
+  --background: #fff;
+  --foreground: #1a1a1a;
+  --card: #fff;
+  --card-foreground: #1a1a1a;
+  --popover: #fff;
+  --popover-foreground: #1a1a1a;
+  --primary: #1a1a1a;
+  --primary-foreground: #fafafa;
+  --secondary: rgb(0 0 0 / 0.06);
+  --secondary-foreground: #1a1a1a;
+  --muted: rgb(0 0 0 / 0.04);
+  --muted-foreground: #737373;
+  --accent: rgb(0 0 0 / 0.06);
+  --accent-foreground: #1a1a1a;
+  --destructive: #dc2626;
+  --border: rgb(0 0 0 / 0.08);
+  --input: rgb(0 0 0 / 0.14);
+  --ring: rgb(0 0 0 / 0.32);
+  --sidebar: #f7f7f7;
+  --sidebar-foreground: #1a1a1a;
+  --sidebar-primary: #1a1a1a;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #fff;
+  --sidebar-accent-foreground: #1a1a1a;
+  --sidebar-border: rgb(0 0 0 / 0.06);
+  --sidebar-ring: rgb(0 0 0 / 0.32);
+  --today: #3b82f6;
+  --unseen: #f99c00;
+}
+
+/* Dark mode: semantic tokens above, plus the coloured palettes flipped (50 <-> 950) so status tints keep their contrast. */
+.dark {
+  color-scheme: dark;
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+  --card: #141414;
+  --card-foreground: #fafafa;
+  --popover: #171717;
+  --popover-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #0a0a0a;
+  --secondary: rgb(255 255 255 / 0.1);
+  --secondary-foreground: #fafafa;
+  --muted: rgb(255 255 255 / 0.05);
+  --muted-foreground: #a3a3a3;
+  --accent: rgb(255 255 255 / 0.08);
+  --accent-foreground: #fafafa;
+  --destructive: #f87171;
+  --border: rgb(255 255 255 / 0.1);
+  --input: rgb(255 255 255 / 0.15);
+  --ring: rgb(255 255 255 / 0.28);
+  --sidebar: #111;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #fafafa;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: rgb(255 255 255 / 0.1);
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: rgb(255 255 255 / 0.08);
+  --sidebar-ring: rgb(255 255 255 / 0.28);
+  --today: #60a5fa;
+  --unseen: #fcbb00;
     --color-red-50: oklch(25.8% 0.092 26.042);
     --color-red-100: oklch(39.6% 0.141 25.723);
     --color-red-200: oklch(44.4% 0.177 26.899);
@@ -107,10 +187,14 @@
     --color-violet-800: oklch(89.4% 0.057 293.283);
     --color-violet-900: oklch(94.3% 0.029 294.588);
     --color-violet-950: oklch(96.9% 0.016 293.756);
-  }
 }
 
-body {
-  @apply bg-zinc-50 text-zinc-900 antialiased;
-  -webkit-tap-highlight-color: transparent;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
 }
