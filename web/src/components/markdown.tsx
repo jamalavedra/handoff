@@ -27,13 +27,30 @@ function remarkMentions(names: string[]) {
 
 // Markdown renders task bodies and comments: GitHub-flavoured (lists, tables, task lists, links),
 // with @mentions of members shown as chips. Raw HTML is not rendered.
-export function Markdown({ text, mentions = [], className }: { text: string; mentions?: string[]; className?: string }) {
+// With onToggle, checklist items ("- [ ] step") can be ticked: it gets the item's index in the text.
+export function Markdown({ text, mentions = [], className, onToggle }: { text: string; mentions?: string[]; className?: string; onToggle?: (index: number) => void }) {
+  let item = 0; // checklist items render in document order
   return (
     <div className={cn("md", className)}>
       <ReactMarkdown
         remarkPlugins={mentions.length ? [remarkGfm, remarkMentions(mentions)] : [remarkGfm]}
         urlTransform={(url) => (url === "mention:" ? url : defaultUrlTransform(url))}
         components={{
+          input: ({ type, checked }) => {
+            if (type !== "checkbox") return null;
+            const index = item++;
+            return (
+              <input
+                type="checkbox"
+                checked={!!checked}
+                disabled={!onToggle}
+                aria-label={checked ? "Done; mark not done" : "Mark done"}
+                onClick={(e) => e.stopPropagation()}
+                onChange={() => onToggle?.(index)}
+                className={cn("mr-1.5 size-3.5 translate-y-0.5 accent-foreground", onToggle && "cursor-pointer")}
+              />
+            );
+          },
           a: ({ href, children }) =>
             href === "mention:" ? (
               <span className="rounded bg-accent px-0.5 font-medium text-foreground">{children}</span>

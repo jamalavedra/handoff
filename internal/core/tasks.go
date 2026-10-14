@@ -48,6 +48,7 @@ type TaskOut struct {
 	TriageError    string     `json:"triage_error,omitempty"`
 	AgentNote      string     `json:"agent_note,omitempty" jsonschema:"start of the latest comment an agent left, for a one-line status"`
 	Repeat         string     `json:"repeat,omitempty" jsonschema:"daily, weekdays, weekly, biweekly, monthly or yearly: completing it creates the next one"`
+	WaitingOn      *MemberRef `json:"waiting_on,omitempty" jsonschema:"the person the workspace's agent handed this back to for their input"`
 	URL            string     `json:"url"`
 }
 
@@ -61,7 +62,7 @@ type taskRow struct {
 	BlockedBy, Blocks                                          []string
 	OpenBlockers                                               int
 	Unseen                                                     bool
-	Triage, TriageError, AgentNote, Repeat                     string
+	Triage, TriageError, AgentNote, Repeat, WaitingOn          string
 }
 
 // openBlockers counts unfinished blockers of t; the same expression drives "ready".
@@ -74,7 +75,7 @@ const taskSelect = `SELECT t.id, t.project_id::text, t.title, t.body, t.status, 
 	t.due_at, t.claim_expires_at, t.closed_at, t.deleted_at, t.created_at, t.updated_at, t.labels,
 	coalesce((SELECT array_agg(d.blocker_id ORDER BY d.blocker_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocked_id = t.id), '{}'),
 	coalesce((SELECT array_agg(d.blocked_id ORDER BY d.blocked_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocker_id = t.id), '{}'),
-	` + openBlockers + `, ` + unseen + `, coalesce(t.triage, ''), t.triage_error, ` + agentNote + `, t.repeat
+	` + openBlockers + `, ` + unseen + `, coalesce(t.triage, ''), t.triage_error, ` + agentNote + `, t.repeat, coalesce(t.waiting_on::text, '')
 	FROM tasks t`
 
 // agentNote is the start of the newest comment by an agent: what it last said about the task.
@@ -106,7 +107,7 @@ func (c *call) queryTasks(where string, args ...any) ([]*taskRow, error) {
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.Title, &r.Body, &r.Status, &r.Priority,
 			&r.AssigneeID, &r.Parent, &r.ExternalID, &r.ClaimedBy, &r.CreatedBy, &r.OnBehalfOf, &r.CloseReason,
 			&r.Due, &r.ClaimExpires, &r.ClosedAt, &r.DeletedAt, &r.CreatedAt, &r.Updated, &r.Labels,
-			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen, &r.Triage, &r.TriageError, &r.AgentNote, &r.Repeat); err != nil {
+			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen, &r.Triage, &r.TriageError, &r.AgentNote, &r.Repeat, &r.WaitingOn); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -125,7 +126,7 @@ func (c *call) out(r *taskRow, withBody bool) TaskOut {
 		CreatedBy: c.ref(r.CreatedBy), OnBehalfOf: c.ref(r.OnBehalfOf), CreatedAt: ts(r.CreatedAt), UpdatedAt: ts(r.Updated),
 		ClosedAt: ts(r.ClosedAt), CloseReason: r.CloseReason, DeletedAt: ts(r.DeletedAt),
 		BlockedBy: nonNil(r.BlockedBy), Blocks: nonNil(r.Blocks), Unseen: r.Unseen,
-		Triage: r.Triage, TriageError: r.TriageError, AgentNote: r.AgentNote, Repeat: r.Repeat,
+		Triage: r.Triage, TriageError: r.TriageError, AgentNote: r.AgentNote, Repeat: r.Repeat, WaitingOn: c.ref(r.WaitingOn),
 		URL: c.s.Cfg.OrgURL(c.p.Org.Slug) + "/tasks/" + r.ID,
 	}
 	if p := c.projects[r.ProjectID]; p != nil {
@@ -447,6 +448,7 @@ type CommentOut struct {
 	CreatedAt  string        `json:"created_at"`
 	Reactions  []ReactionOut `json:"reactions"`
 	Lookups    []Lookup      `json:"lookups,omitempty"`
+	Options    []string      `json:"options,omitempty" jsonschema:"quick answers the agent offered with its question"`
 	// Activity is what the agent did while working on this message, in order.
 	Activity []ActivityStep `json:"activity,omitempty"`
 }
@@ -504,7 +506,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 		if out.Here, err = c.here(r.ID); err != nil {
 			return err
 		}
-		rows, err := c.tx.Query(c.ctx, `SELECT id, author_id::text, coalesce(on_behalf_of::text, ''), body, created_at, lookups, activity
+		rows, err := c.tx.Query(c.ctx, `SELECT id, author_id::text, coalesce(on_behalf_of::text, ''), body, created_at, lookups, activity, options
 			FROM comments WHERE task_id = $1 ORDER BY created_at`, r.ID)
 		if err != nil {
 			return err
@@ -513,7 +515,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 			var co CommentOut
 			var author, obo string
 			var at time.Time
-			if err := rows.Scan(&co.ID, &author, &obo, &co.Body, &at, &co.Lookups, &co.Activity); err != nil {
+			if err := rows.Scan(&co.ID, &author, &obo, &co.Body, &at, &co.Lookups, &co.Activity, &co.Options); err != nil {
 				rows.Close()
 				return err
 			}
@@ -1201,7 +1203,8 @@ type CommentIn struct {
 type commentExtra struct {
 	lookups  []Lookup
 	activity []ActivityStep
-	done     *Member // gets an agent_done notification
+	done     *Member  // gets an agent_done notification
+	options  []string // quick answers to the question it asks
 }
 
 func (s *Service) Comment(ctx context.Context, p *Principal, in CommentIn) (TaskDetailOut, error) {
@@ -1234,8 +1237,12 @@ func (c *call) addComment(taskID, body string, x commentExtra) error {
 	if len(x.activity) > 0 {
 		act, _ = json.Marshal(x.activity)
 	}
-	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body, lookups, activity) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body, lk, act).Scan(&commentID); err != nil {
+	var opts []byte
+	if len(x.options) > 0 {
+		opts, _ = json.Marshal(x.options)
+	}
+	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body, lookups, activity, options) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body, lk, act, opts).Scan(&commentID); err != nil {
 		return err
 	}
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, taskID); err != nil {
@@ -1256,8 +1263,8 @@ func (c *call) addComment(taskID, body string, x commentExtra) error {
 	}
 	// The task's chat is a conversation with the agent that owns it: a message there reaches the agent
 	// (its inbox and webhook) without an @mention. People are only notified when mentioned.
-	var assignee string
-	if err := c.tx.QueryRow(c.ctx, `SELECT coalesce(assignee_id::text, '') FROM tasks WHERE id = $1`, taskID).Scan(&assignee); err != nil {
+	var assignee, waitingOn string
+	if err := c.tx.QueryRow(c.ctx, `SELECT coalesce(assignee_id::text, ''), coalesce(waiting_on::text, '') FROM tasks WHERE id = $1`, taskID).Scan(&assignee, &waitingOn); err != nil {
 		return err
 	}
 	if a := c.members[assignee]; a != nil && a.IsAgent() && !slices.Contains(mentioned, a) {
@@ -1273,7 +1280,17 @@ func (c *call) addComment(taskID, body string, x commentExtra) error {
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		if a := c.members[agentID]; a != nil && (slices.Contains(mentioned, a) || assignee == agentID) {
+		// The agent handed this back for the person's input: their answer hands it to the agent again.
+		resume := waitingOn != "" && waitingOn == c.p.Member.ID && c.members[agentID] != nil
+		if resume {
+			if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET assignee_id = $2, waiting_on = NULL, updated_at = now() WHERE id = $1`, taskID, agentID); err != nil {
+				return err
+			}
+			if err := c.event(taskID, "updated", map[string]any{"assignee": c.members[agentID].Name, "answered": true}); err != nil {
+				return err
+			}
+		}
+		if a := c.members[agentID]; a != nil && (slices.Contains(mentioned, a) || assignee == agentID || resume) {
 			// Stored with the comment, so the request outlives a full queue or a restart.
 			if err := c.requestAgent("reply", taskID, &commentID); err != nil {
 				return err

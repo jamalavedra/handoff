@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { Bot, CircleAlert, Flag, Lock, Plus, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
+import { Bot, CircleAlert, Flag, Lock, MessageCircleQuestion, Plus, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
 import { ago, api, cn, projectName, type Event, type Project, type Task } from "../lib";
 import { EmojiPicker } from "../components/emoji";
 import { Avatar, Card, DuePill, Empty, ErrorText, PageHeader, TaskCheck, Who } from "../components/app";
@@ -70,6 +70,11 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
             <span className="relative flex size-2"><span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", t.claimed_by.kind === "agent" ? "bg-violet-400" : "bg-amber-400")} /><span className={cn("relative inline-flex size-2 rounded-full", t.claimed_by.kind === "agent" ? "bg-violet-500" : "bg-amber-500")} /></span>
             <span className="hidden max-w-32 truncate sm:inline">{t.claimed_by.name}</span>
             <Avatar m={t.claimed_by} className="size-5 sm:hidden" />
+          </span>
+        )}
+        {t.waiting_on && !closed && (
+          <span title={`${t.assignee?.kind === "agent" ? t.assignee.name : "The agent"} needs ${t.waiting_on.id === me.data?.member?.id ? "your" : `${t.waiting_on.name}'s`} input to go on`} className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">
+            <MessageCircleQuestion className="size-3" /><span className="hidden sm:inline">{t.waiting_on.id === me.data?.member?.id ? "Needs you" : `Needs ${t.waiting_on.name.split(" ")[0]}`}</span>
           </span>
         )}
         {waiting && <span title={`Waits on ${t.blocked_by.join(", ")}`} className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"><Lock className="size-3" /><span className="hidden sm:inline">Waiting</span></span>}

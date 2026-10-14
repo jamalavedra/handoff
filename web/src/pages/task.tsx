@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { AppWindow, Bot, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { AppWindow, Bot, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { useTabs } from "../components/tabs";
 import { taskHref } from "../tabs";
@@ -15,6 +15,7 @@ import { EventLine, useInvalidate } from "./tasks";
 import { completedText, markLocal, undoable, undoClose } from "../components/feedback";
 import { toast } from "sonner";
 import { ChatPreview, names, taskQuery } from "../components/task-chat";
+import { useMe } from "../main";
 import { useAssistant, useTaskChatShown } from "../components/assistant";
 
 
@@ -108,6 +109,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const q = useQuery({ ...taskQuery(id), refetchInterval: 10000 });
   const assistant = useAssistant();
   const chatShown = useTaskChatShown();
+  const meId = useMe().data?.member?.id;
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const invalidate = useInvalidate();
@@ -266,6 +268,16 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </div>
       )}
 
+      {t.waiting_on && !closed && (
+        <button
+          type="button"
+          onClick={() => { if (panel) navigate({ to: "/tasks/$id", params: { id } }); assistant.openTaskChat(); }}
+          className="mb-4 flex w-full items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-left text-sm text-amber-800 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/15"
+        >
+          <MessageCircleQuestion className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">{t.waiting_on.id === meId ? "Your input is needed to go on" : `Waiting on ${t.waiting_on.name}`}: answer in the chat</span>
+        </button>
+      )}
       <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 

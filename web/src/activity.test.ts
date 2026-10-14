@@ -42,4 +42,5 @@ test("reads assistant steps, old and new", () => {
   assert.deepEqual(summary(steps.slice(0, 1)), { headline: "Thought it through", label: "reasoning", failed: 0 });
   assert.equal(summary(steps.slice(0, 2)).headline, "Made changes");
   assert.equal(summary(steps.slice(3)).headline, "Checked the tasks");
+  assert.equal(summary([...steps, { type: "write", text: "Handed it back", tool: "ask_person" }]).headline, "Needs your input");
 });
