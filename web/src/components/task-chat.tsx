@@ -157,7 +157,7 @@ export function ChatPreview({ comments, agent, typing, onOpen }: { comments: Com
       type="button"
       onClick={onOpen}
       aria-label={`Open chat${comments.length ? `, ${comments.length} messages` : ""}`}
-      className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 mt-auto flex w-full items-center gap-2.5 rounded-2xl border border-border bg-card p-1.5 pl-3 text-left shadow-lg transition-colors hover:bg-accent/60 md:bottom-4"
+      className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 mt-auto flex w-full items-center gap-2.5 rounded-2xl border border-border bg-card p-1.5 pl-3 text-left shadow-lg transition-colors hover:bg-[linear-gradient(var(--accent),var(--accent))] md:bottom-4"
     >
       <MessageSquare className="size-4 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 py-1.5 text-sm">
