@@ -292,10 +292,11 @@ func (s *Service) webhookTick(ctx context.Context, org, slug string) {
 			ON CONFLICT (org_id, member_id, task_id, excerpt) WHERE kind = 'due' DO NOTHING`); err != nil {
 			return err
 		}
+		// agent_done is for people only and has no webhook type; it's never sent.
 		_, err := tx.Exec(ctx, `INSERT INTO webhook_deliveries (org_id, notification_id, agent_id)
 			SELECT n.org_id, n.id, n.member_id FROM notifications n
 			JOIN agent_webhooks w ON w.org_id = n.org_id AND w.agent_id = n.member_id
-			WHERE n.created_at >= w.since
+			WHERE n.created_at >= w.since AND n.kind <> 'agent_done'
 				AND NOT EXISTS (SELECT 1 FROM webhook_deliveries d WHERE d.org_id = n.org_id AND d.notification_id = n.id)
 			ON CONFLICT DO NOTHING`)
 		return err

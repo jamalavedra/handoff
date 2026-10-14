@@ -19,6 +19,43 @@ type liveMsg struct {
 	Project string `json:"project,omitempty"`
 	// FromProject is set when the task moved; viewers of the old project need to hear it left.
 	FromProject string `json:"from_project,omitempty"`
+	// Progress from the agent at work (see core/activity.go). Member keeps a step to that member alone.
+	Member string          `json:"member,omitempty"`
+	Turn   string          `json:"turn,omitempty"`
+	Step   json.RawMessage `json:"step,omitempty"`
+	Done   bool            `json:"done,omitempty"`
+}
+
+// liveOut is what a browser gets: which task changed and who changed it, or the agent's progress.
+type liveOut struct {
+	Kind  string          `json:"kind"`
+	Task  string          `json:"task"`
+	Actor string          `json:"actor"`
+	Turn  string          `json:"turn,omitempty"`
+	Step  json.RawMessage `json:"step,omitempty"`
+	Done  bool            `json:"done,omitempty"`
+}
+
+// forViewer is what one viewer may see of m, if anything.
+func forViewer(m liveMsg, member string, visible map[string]bool) (liveOut, bool) {
+	out := liveOut{Kind: m.Kind, Task: m.Task, Actor: m.Actor}
+	if m.Member != "" && m.Member != member {
+		return out, false
+	}
+	if m.Kind == "progress" && m.Member == "" && (m.Project == "" || !visible[m.Project]) {
+		return out, false // task progress only goes to people who can see the task
+	}
+	if m.Project != "" && !visible[m.Project] {
+		if !visible[m.FromProject] {
+			return out, false
+		}
+		// Moved somewhere this viewer can't see: just tell them to refresh.
+		out.Task, out.Actor = "", ""
+	}
+	if m.Kind == "progress" {
+		out.Turn, out.Step, out.Done = m.Turn, m.Step, m.Done
+	}
+	return out, true
 }
 
 type hub struct {
@@ -152,14 +189,11 @@ func (s *Server) liveStream(w http.ResponseWriter, r *http.Request) {
 			if m.Kind == "event" && m.Task == "" && !refresh() {
 				return
 			}
-			if m.Project != "" && !visible[m.Project] {
-				if !visible[m.FromProject] {
-					continue
-				}
-				// Moved somewhere this viewer can't see: just tell them to refresh.
-				m.Task, m.Actor = "", ""
+			out, ok := forViewer(m, p.Member.ID, visible)
+			if !ok {
+				continue
 			}
-			b, _ := json.Marshal(map[string]string{"kind": m.Kind, "task": m.Task, "actor": m.Actor})
+			b, _ := json.Marshal(out)
 			fmt.Fprintf(w, "data: %s\n\n", b)
 		}
 		fl.Flush()

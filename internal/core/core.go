@@ -159,8 +159,10 @@ type Service struct {
 	Cfg *config.Config
 	// OutboundHTTP, when set, replaces the client for triage models and agent webhooks (tests).
 	OutboundHTTP *http.Client
-	triageJobs   chan triageJob
-	replyJobs    chan replyJob
+	// OnProgress, when set, also gets every progress payload the agent publishes (tests).
+	OnProgress func(payload []byte)
+	triageJobs chan triageJob
+	replyJobs  chan replyJob
 	// outboundHTTP is the shared guarded client, built on first use.
 	outboundHTTP *http.Client
 	outboundOnce sync.Once

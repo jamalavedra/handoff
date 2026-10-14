@@ -12,7 +12,7 @@ import (
 
 type NotificationOut struct {
 	ID        int64      `json:"id"`
-	Kind      string     `json:"kind" jsonschema:"mention, assigned or approval"`
+	Kind      string     `json:"kind" jsonschema:"mention, assigned, approval, due (agents) or agent_done (the workspace's agent finished what you asked)"`
 	TaskID    string     `json:"task_id"`
 	TaskTitle string     `json:"task_title"`
 	Actor     *MemberRef `json:"actor"`
@@ -29,6 +29,15 @@ func (c *call) notify(to *Member, kind, taskID, text string) error {
 	_, err := c.tx.Exec(c.ctx, `INSERT INTO notifications (org_id, member_id, kind, task_id, actor_id, excerpt)
 		VALUES ($1, $2, $3, $4, $5, $6)`, c.p.Org.ID, to.ID, kind, taskID, c.p.Member.ID, excerpt(text))
 	return err
+}
+
+// notifyDone tells a person that the workspace's agent finished what they asked for. Agents never
+// get it: they don't wait on the agent, and it would reach their webhooks.
+func (c *call) notifyDone(to *Member, taskID, text string) error {
+	if to == nil || to.IsAgent() {
+		return nil
+	}
+	return c.notify(to, "agent_done", taskID, firstLine(text))
 }
 
 // mentioned finds "@Name" for members, longest name first so "@Legal bot" wins over "@Legal".

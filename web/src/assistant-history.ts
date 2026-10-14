@@ -1,7 +1,8 @@
 // What the browser keeps of an assistant conversation, and how it goes back to the server.
 
 export type TaskRef = { id: string; title: string };
-export type Step = { tool: string; summary: string; tasks?: TaskRef[]; error?: string };
+// type: thought, tool, lookup or write (older replies have none); lookup: a connected service it called.
+export type Step = { tool: string; summary: string; tasks?: TaskRef[]; error?: string; type?: "thought" | "tool" | "lookup" | "write"; lookup?: { source: string; tool: string; query?: string; failed?: boolean } };
 export type Msg = {
   role: "user" | "assistant";
   content: string;

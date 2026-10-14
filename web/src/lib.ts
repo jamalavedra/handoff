@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { ActivityStep } from "./activity";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -101,7 +102,7 @@ export type Reaction = { emoji: string; count: number; mine?: boolean; by: strin
 
 // Lookup is one call the agent made to a connected service (web search, an internal tool…) for a message.
 export type Lookup = { source: string; tool: string; query?: string; failed?: boolean };
-export type Comment = { id: string; author: MemberRef; on_behalf_of?: MemberRef; body: string; created_at: string; reactions?: Reaction[]; lookups?: Lookup[] };
+export type Comment = { id: string; author: MemberRef; on_behalf_of?: MemberRef; body: string; created_at: string; reactions?: Reaction[]; lookups?: Lookup[]; activity?: ActivityStep[] };
 
 export type Me = {
   apex?: boolean;
@@ -136,7 +137,7 @@ export const projectName = (p: { name: string; emoji?: string }) => (p.emoji ? `
 
 export type Notification = {
   id: number;
-  kind: "mention" | "assigned" | "approval";
+  kind: "mention" | "assigned" | "approval" | "agent_done";
   task_id: string;
   task_title: string;
   actor?: MemberRef;

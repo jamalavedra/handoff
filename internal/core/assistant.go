@@ -53,6 +53,10 @@ type AssistantChatIn struct {
 	Turn     string             `json:"turn,omitempty" jsonschema:"an id the client picks for this message; retrying with the same id resumes the turn instead of repeating its changes"`
 	// note adds to the system prompt when the server runs a turn itself (a reply in a task's chat).
 	note string
+	// shared is set when the server runs the turn on a task: its progress goes to everyone who can see
+	// the task (in project) instead of only the person.
+	shared  bool
+	project string
 }
 
 type AssistantTaskRef struct {
@@ -60,8 +64,10 @@ type AssistantTaskRef struct {
 	Title string `json:"title"`
 }
 
-// AssistantStep is one tool call the assistant made, for the "steps" shown under its reply.
+// AssistantStep is one thing the assistant did, for the "steps" shown under its reply: a tool call,
+// or what it said it would do (a thought).
 type AssistantStep struct {
+	Type    string             `json:"type,omitempty" jsonschema:"thought, tool, lookup or write"`
 	Tool    string             `json:"tool"`
 	Summary string             `json:"summary"`
 	Tasks   []AssistantTaskRef `json:"tasks,omitempty"`
@@ -200,6 +206,13 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 	}
 	out.Steps, out.Changed = append(out.Steps, t.steps...), t.changed
 	a := &assistantRun{s: s, p: p, agent: agent, out: &out, turn: t, turnID: turnID, sessions: extSessions{}}
+	// Steps go out as they happen: to the person alone, or to the task's viewers when the server runs it there.
+	a.progress = &progress{org: p.Org.ID, member: p.Member.ID, turn: turnID}
+	if in.shared {
+		a.progress = &progress{org: p.Org.ID, task: strings.TrimSpace(in.Task), project: in.project, turn: turnID}
+	} else {
+		defer s.progressDone(ctx, a.progress)
+	}
 	defer a.sessions.close()
 	if a.ext, err = s.externalTools(ctx, p.Org.ID); err != nil {
 		return out, err
@@ -230,12 +243,18 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 			return out, nil
 		}
 		if len(msg.ToolCalls) == 0 || !withTools {
+			// Its reasoning before answering is a thought; the answer itself is the reply.
+			if th := thoughts(assistantMsg{ReasoningContent: msg.ReasoningContent, Reasoning: msg.Reasoning}); len(th) > 0 {
+				a.thought(lctx, th[0])
+			}
 			out.Reply = strings.TrimSpace(msg.Content)
 			if out.Reply == "" {
 				// Never claim work that wasn't done: say what changed, or ask.
 				var did []string
 				for _, st := range out.Steps {
-					did = append(did, st.Summary)
+					if st.Type != "thought" {
+						did = append(did, st.Summary)
+					}
 				}
 				out.Reply = "I'm not sure what you'd like me to do. Could you say a bit more?"
 				if len(did) > 0 {
@@ -246,6 +265,10 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 			return out, nil
 		}
 		t.rounds++
+		// What it says alongside its tool calls is its plan ("I'll check the venues first").
+		for _, th := range thoughts(msg) {
+			a.thought(lctx, th)
+		}
 		calls := msg.ToolCalls
 		if room := assistantMaxCalls - t.calls; len(calls) > room {
 			calls = calls[:room]
@@ -383,6 +406,9 @@ type assistantToolCall struct {
 type assistantMsg struct {
 	Content   string              `json:"content"`
 	ToolCalls []assistantToolCall `json:"tool_calls"`
+	// Some providers return the model's reasoning beside the answer (DeepSeek, OpenRouter).
+	ReasoningContent string `json:"reasoning_content"`
+	Reasoning        string `json:"reasoning"`
 }
 
 func (s *Service) assistantComplete(ctx context.Context, st *triageSettings, cred string, msgs []map[string]any, tools []map[string]any, maxTokens int) (assistantMsg, error) {
@@ -529,6 +555,17 @@ type assistantRun struct {
 	// ext are the tools of the workspace's connections (web search…), with sessions kept for the turn.
 	ext      []extTool
 	sessions extSessions
+	progress *progress
+}
+
+// add records a step and shows it on open screens.
+func (a *assistantRun) add(ctx context.Context, st AssistantStep) {
+	a.out.Steps = append(a.out.Steps, st)
+	a.s.progressStep(ctx, a.progress, st.activity())
+}
+
+func (a *assistantRun) thought(ctx context.Context, text string) {
+	a.add(ctx, AssistantStep{Type: "thought", Summary: clip(text, thoughtChars)})
 }
 
 // call runs one tool call from the model and returns what the model sees. Anything not on the
@@ -544,7 +581,7 @@ func (a *assistantRun) call(ctx context.Context, name, args string) string {
 		if i := slices.IndexFunc(a.ext, func(t extTool) bool { return t.fn == name }); i >= 0 {
 			return a.callExternal(ctx, a.ext[i], args)
 		}
-		a.out.Steps = append(a.out.Steps, AssistantStep{Tool: clip(name, 40), Summary: "Tried a tool it doesn't have", Error: "not allowed"})
+		a.add(ctx, AssistantStep{Type: "tool", Tool: clip(name, 40), Summary: "Tried a tool it doesn't have", Error: "not allowed"})
 		return `{"error":"unknown tool; use only the tools listed"}`
 	}
 	raw := json.RawMessage(args)
@@ -567,7 +604,10 @@ func (a *assistantRun) call(ctx context.Context, name, args string) string {
 	if step == nil {
 		step = &AssistantStep{Tool: name}
 	}
-	step.Tool = name
+	step.Tool, step.Type = name, "tool"
+	if tool.write {
+		step.Type = "write"
+	}
 	if err != nil {
 		msg := "internal error"
 		var ce *Error
@@ -578,14 +618,14 @@ func (a *assistantRun) call(ctx context.Context, name, args string) string {
 		if step.Summary == "" {
 			step.Summary = toolVerb[name] + " failed"
 		}
-		a.out.Steps = append(a.out.Steps, *step)
+		a.add(ctx, *step)
 		b, _ := json.Marshal(map[string]string{"error": msg})
 		return string(b)
 	}
 	if tool.write {
 		a.out.Changed = true
 	}
-	a.out.Steps = append(a.out.Steps, *step)
+	a.add(ctx, *step)
 	b, _ := json.Marshal(res)
 	if len(b) > assistantResultChars {
 		// Too long for the model: say so instead of sending broken JSON.
@@ -892,16 +932,16 @@ func (a *assistantRun) callExternal(ctx context.Context, t extTool, args string)
 		raw = json.RawMessage("{}")
 	}
 	lk := extLookup(t, raw)
-	step := AssistantStep{Tool: t.fn, Summary: t.conn + ": " + extSummary(t.tool, raw), Lookup: &lk}
+	step := AssistantStep{Type: "lookup", Tool: t.fn, Summary: t.conn + ": " + extSummary(t.tool, raw), Lookup: &lk}
 	text, err := a.s.callExternal(ctx, a.sessions, t, raw)
 	if err != nil {
 		step.Error = clip(err.Error(), 200)
 		lk.Failed = true
-		a.out.Steps = append(a.out.Steps, step)
+		a.add(ctx, step)
 		b, _ := json.Marshal(map[string]string{"error": step.Error})
 		return string(b)
 	}
-	a.out.Steps = append(a.out.Steps, step)
+	a.add(ctx, step)
 	b, _ := json.Marshal(map[string]string{"source": t.conn, "content": text})
 	return string(b)
 }

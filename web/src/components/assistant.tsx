@@ -1,15 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState, useSearch } from "@tanstack/react-router";
-import { AlertCircle, ArrowUp, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, FileText, FolderKanban, ListPlus, MessageSquare, Pencil, Plus, RotateCcw, Search, Sparkles, SquarePen, Users, X } from "lucide-react";
+import { AlertCircle, ArrowUp, CalendarDays, Check, ChevronDown, ChevronRight, FileText, FolderKanban, ListPlus, MessageSquare, RotateCcw, Search, Sparkles, SquarePen, X } from "lucide-react";
 import { api, cn, projectName, type Me, type MemberRef, type Project, type Task } from "../lib";
 import { parseStored, stored, toApi, type Msg, type Step } from "../assistant-history";
 import { Markdown } from "./markdown";
-import { TaskLink } from "./tasklink";
 import { Avatar } from "./app";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TaskChat } from "./task-chat";
+import { ActivityTrail } from "./activity-trail";
+import { useAgentActivity } from "../agent-activity";
+import { fromSteps } from "../activity";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -177,11 +178,6 @@ function usePageContext() {
   if (project) return { key: `project:${project}`, kind: "project" as const, project, label: p ? projectName(p) : "Project" };
   return { key: `page:${path}`, kind: "page" as const, label: pages[path] ?? "Handoff" };
 }
-
-const stepIcon: Record<string, typeof Search> = {
-  search_tasks: Search, get_task: FileText, list_projects: FolderKanban, list_members: Users,
-  create_tasks: Plus, update_task: Pencil, close_task: CheckCircle2, comment: MessageSquare,
-};
 
 const newTurn = () => (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -374,7 +370,7 @@ function AssistantChat({ me, onClose, drawer, page, active }: { me: Me; onClose:
         ) : (
           <div className="flex flex-col gap-4">
             {msgs.map((m, i) => (m.role === "user" ? <UserBubble key={i} text={m.content} /> : <AssistantMessage key={i} m={m} agent={agent} onNavigate={drawer ? onClose : undefined} />))}
-            {send.isPending && <Thinking agent={agent} />}
+            {send.isPending && <Thinking agent={agent} turn={send.variables?.turn} onNavigate={drawer ? onClose : undefined} />}
             {lastFailed && !send.isPending && (
               <button onClick={retry} className="ml-8 flex w-fit items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
                 <RotateCcw className="size-3.5" />Try again
@@ -480,7 +476,7 @@ function AssistantMessage({ m, agent, onNavigate }: { m: Msg; agent?: MemberRef;
     <div className="flex gap-2.5">
       <Avatar m={agent ?? fallbackAgent} className="mt-0.5" />
       <div className="min-w-0 flex-1">
-        {m.steps && m.steps.length > 0 && <Steps steps={m.steps} onNavigate={onNavigate} />}
+        {m.steps && m.steps.length > 0 && <ActivityTrail steps={fromSteps(m.steps)} onNavigate={onNavigate} />}
         {m.error ? (
           <p className="flex items-start gap-1.5 text-sm text-red-600"><AlertCircle className="mt-0.5 size-4 shrink-0" />{m.content}</p>
         ) : (
@@ -491,49 +487,16 @@ function AssistantMessage({ m, agent, onNavigate }: { m: Msg; agent?: MemberRef;
   );
 }
 
-// Steps lists the tool calls behind an answer. Changes start open so created tasks are one click away.
-function Steps({ steps, onNavigate }: { steps: Step[]; onNavigate?: () => void }) {
-  const wrote = steps.some((s) => !s.error && ["create_tasks", "update_task", "close_task", "comment"].includes(s.tool));
-  const [open, setOpen] = useState(wrote);
-  const failed = steps.filter((s) => s.error).length;
+// Thinking stands in for the reply while the turn runs, with the steps so far as they happen.
+function Thinking({ agent, turn, onNavigate }: { agent?: MemberRef; turn?: string; onNavigate?: () => void }) {
+  const live = useAgentActivity({ turn });
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="mb-1.5">
-      <CollapsibleTrigger className="flex items-center gap-1 rounded-full py-0.5 pr-2 pl-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
-        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
-        {steps.length === 1 ? "1 step" : `${steps.length} steps`}
-        {failed > 0 && <span className="text-amber-600">· {failed} failed</span>}
-      </CollapsibleTrigger>
-      <CollapsibleContent className="mt-1 flex flex-col gap-1">
-        {steps.map((s, i) => {
-          const Icon = s.error ? AlertCircle : stepIcon[s.tool] ?? Check;
-          return (
-            <div key={i} className="rounded-lg bg-muted px-2 py-1.5 text-xs">
-              <div className={cn("flex items-start gap-1.5", s.error ? "text-amber-700" : "text-foreground/70")}>
-                <Icon className="mt-px size-3.5 shrink-0" />
-                <span className="min-w-0">{s.summary}{s.error && <span className="text-muted-foreground"> · {s.error}</span>}</span>
-              </div>
-              {s.tasks && s.tasks.length > 0 && s.tool !== "search_tasks" && (
-                <div className="mt-1 ml-5 flex flex-wrap gap-1" onClickCapture={onNavigate}>
-                  {s.tasks.map((t) => (
-                    <TaskLink key={t.id} id={t.id} className="max-w-full truncate rounded-full border border-border bg-card px-2 py-0.5 text-foreground/80 hover:bg-accent hover:text-foreground">
-                      {t.title}
-                    </TaskLink>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function Thinking({ agent }: { agent?: MemberRef }) {
-  return (
-    <div className="flex items-center gap-2.5" role="status">
+    <div className="flex gap-2.5" role="status">
       <Avatar m={agent ?? fallbackAgent} className="agent-working" />
-      <span className="agent-shimmer text-sm">{agent ? `${agent.name} is working on it…` : "Thinking…"}</span>
+      <div className="min-w-0 flex-1">
+        <span className="agent-shimmer text-sm">{agent ? `${agent.name} is working on it…` : "Thinking…"}</span>
+        <ActivityTrail steps={live.steps} live onNavigate={onNavigate} className="mt-1.5" />
+      </div>
     </div>
   );
 }

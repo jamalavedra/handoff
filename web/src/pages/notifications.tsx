@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { AtSign, CheckCheck, ShieldQuestion, UserPlus } from "lucide-react";
+import { AtSign, CheckCheck, ShieldQuestion, Sparkles, UserPlus } from "lucide-react";
 import { ago, api, cn, type Notification } from "../lib";
 import { Avatar, Card, Empty, ErrorText, PageHeader } from "../components/app";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,8 @@ export const useInbox = () => useQuery({ queryKey: ["inbox"], queryFn: () => api
 
 const rowClass = "flex items-start gap-3 px-4 py-3 hover:bg-muted";
 
-const verb = { mention: "mentioned you in", assigned: "assigned you", approval: "needs your approval on" } as const;
-const icon = { mention: AtSign, assigned: UserPlus, approval: ShieldQuestion } as const;
+const verb = { mention: "mentioned you in", assigned: "assigned you", approval: "needs your approval on", agent_done: "finished" } as const;
+const icon = { mention: AtSign, assigned: UserPlus, approval: ShieldQuestion, agent_done: Sparkles } as const;
 
 export function NotificationsPage() {
   const q = useInbox();
@@ -36,7 +36,7 @@ export function NotificationsPage() {
         {!items ? (
           <Empty>Loading…</Empty>
         ) : items.length === 0 ? (
-          <Empty>Nothing yet. When someone @mentions you, gives you a task, or one of your agents needs approval, it shows up here.</Empty>
+          <Empty>Nothing yet. When someone @mentions you, gives you a task, one of your agents needs approval, or the agent finishes something you asked for, it shows up here.</Empty>
         ) : (
           <ul aria-label="Notifications">
             {items.map((n) => {

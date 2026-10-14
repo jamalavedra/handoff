@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api, type Task } from "../lib";
 import { dueLabel } from "../quickadd";
 import { useInbox } from "../pages/notifications";
+import { chatInView } from "../agent-activity";
 
 // Tasks this tab changed in the last few seconds. Rows flash only for changes made elsewhere.
 const local = new Map<string, number>();
@@ -55,7 +56,7 @@ export async function undoClose(id: string, next?: Task) {
   if (next) await api.tool("trash_task", { id: next.id });
 }
 
-const kindText = { mention: "mentioned you", assigned: "assigned you a task", approval: "needs your approval" } as const;
+const kindText = { mention: "mentioned you", assigned: "assigned you a task", approval: "needs your approval", agent_done: "finished" } as const;
 
 // useNotificationToasts pops a toast for each inbox item that arrives while the app is open.
 export function useNotificationToasts() {
@@ -74,7 +75,9 @@ export function useNotificationToasts() {
     for (const n of items) {
       if (seen.current.has(n.id)) continue;
       seen.current.add(n.id);
-      if (n.read) continue;
+      // The agent's reply in a chat you have open needs no toast. Otherwise it gets one even if opening
+      // the task already marked it read: the reply sits in a chat that isn't showing.
+      if (n.kind === "agent_done" ? chatInView(n.task_id) : n.read) continue;
       const open = () => {
         api.tool("mark_read", { ids: [n.id] }).then(() => qc.invalidateQueries({ queryKey: ["inbox"] }));
         // Approvals are decided on the task, where the request is shown, if the task can still be opened;
@@ -83,7 +86,8 @@ export function useNotificationToasts() {
         if (n.kind === "approval" && !approvals?.some((a) => a.task?.id === n.task_id)) navigate({ to: "/settings/agents" });
         else navigate({ to: "/tasks/$id", params: { id: n.task_id } });
       };
-      toast(`${n.actor?.name ?? "Someone"} ${kindText[n.kind]}`, {
+      const title = n.kind === "agent_done" ? `${n.actor?.name ?? "The agent"} finished “${n.task_title}”` : `${n.actor?.name ?? "Someone"} ${kindText[n.kind]}`;
+      toast(title, {
         description: n.excerpt || n.task_title,
         action: { label: n.kind === "approval" ? "Review" : "Open", onClick: open },
       });

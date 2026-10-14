@@ -294,6 +294,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
 
       {/* The chat lives in the assistant panel, beside the task; this opens it there. */}
       {!chatShown && <ChatPreview
+        task={id}
         comments={comments}
         agent={t.assignee?.kind === "agent" ? t.assignee : undefined}
         typing={typers.length ? `${names(typers)} ${typers.length === 1 ? "is" : "are"} typing…` : undefined}

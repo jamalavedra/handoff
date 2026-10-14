@@ -454,17 +454,24 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 	lctx, cancel := context.WithTimeout(ctx, 3*time.Minute) // room for a few lookups
 	defer cancel()
 	t := triageTask{Title: d.Task.Title, Body: d.Task.Body, Explicit: cl.explicit}
+	// Whoever has the task open sees the agent at work on it.
+	pr := &progress{org: j.org, task: j.task, project: d.Task.ProjectID, turn: "triage-" + j.task}
+	defer s.progressDone(ctx, pr)
+	s.progressStep(ctx, pr, ActivityStep{Type: "tool", Tool: "get_task", Text: "Read “" + d.Task.Title + "”"})
 	// With connected tools (web search…) triage looks things up first; otherwise it answers from the model.
 	var sugg triageSuggestion
 	if ext, xerr := s.externalTools(ctx, j.org); xerr == nil && len(ext) > 0 {
-		sugg, err = s.askModelResearching(lctx, st, string(cred), org, t, projects.Projects, members.Members, ext)
+		sugg, err = s.askModelResearching(lctx, st, string(cred), org, t, projects.Projects, members.Members, ext, pr)
 	} else {
+		s.progressStep(ctx, pr, ActivityStep{Type: "write", Text: "Writing it up"})
 		sugg, err = s.askModel(lctx, st, string(cred), org, t, projects.Projects, members.Members)
 	}
 	if err != nil {
 		s.failTriage(ctx, cl, st.AgentID, err.Error())
 		return
 	}
+	// The note keeps the trail its viewers watched live.
+	sugg.activity = pr.trail
 	err = s.applyTriage(ctx, agent, cl, t, sugg, members.Members)
 	if errors.Is(err, errTriageStale) {
 		return
@@ -559,7 +566,8 @@ type triageSuggestion struct {
 	Work      string   `json:"work"`
 	Questions []string `json:"questions"`
 
-	lookups []Lookup // what it looked up in connected services first
+	lookups  []Lookup       // what it looked up in connected services first
+	activity []ActivityStep // and what it said it would do, for the trail under its note
 }
 
 const triagePrompt = `You triage new tasks in a shared task list used by a team of people and AI agents, and you do the work yourself when you can.
@@ -788,7 +796,14 @@ func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageC
 			if qs := cleanQuestions(sugg.Questions); len(qs) > 0 {
 				note += "\n\nA few questions to make it better:\n- " + strings.Join(qs, "\n- ")
 			}
-			if err := c.addComment(r.ID, note, sugg.lookups...); err != nil {
+			// Work done for someone's new task tells them it's ready.
+			var done *Member
+			if slices.Contains(changed, "work") {
+				if done = c.members[r.CreatedBy]; done == nil || done.IsAgent() {
+					done = c.members[r.OnBehalfOf]
+				}
+			}
+			if err := c.addComment(r.ID, note, commentExtra{lookups: sugg.lookups, activity: sugg.activity, done: done}); err != nil {
 				return err
 			}
 		}
@@ -858,11 +873,12 @@ const triageResearchNote = `You can use the tools listed (connected services suc
 
 // askModelResearching is askModel with the workspace's connected tools: a few rounds of lookups, then
 // the same JSON answer. Tool results go to the model only; nothing is written until applyTriage.
-func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, cred string, org *Org, t triageTask, projects []ProjectOut, members []MemberOut, ext []extTool) (triageSuggestion, error) {
+func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, cred string, org *Org, t triageTask, projects []ProjectOut, members []MemberOut, ext []extTool, pr *progress) (triageSuggestion, error) {
 	var sugg triageSuggestion
 	sessions := extSessions{}
 	defer sessions.close()
 	var looked []Lookup
+	step := func(a ActivityStep) { s.progressStep(ctx, pr, a) }
 	msgs := []map[string]any{
 		{"role": "system", "content": triagePrompt + "\n\n" + triageResearchNote},
 		{"role": "user", "content": triageUserMessage(org, t, projects, members)},
@@ -883,9 +899,13 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 				msgs = append(msgs, map[string]any{"role": "assistant", "content": msg.Content})
 			}
 			msgs = append(msgs, map[string]any{"role": "user", "content": "Now reply with the JSON object only, using what you found."})
+			s.progressStep(ctx, pr, ActivityStep{Type: "write", Text: "Writing it up"})
 			sugg, err := s.completeJSON(ctx, st, cred, msgs)
 			sugg.lookups = looked
 			return sugg, err
+		}
+		for _, th := range thoughts(msg) {
+			step(ActivityStep{Type: "thought", Text: th})
 		}
 		calls := msg.ToolCalls
 		if len(calls) > 4 {
@@ -910,6 +930,11 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 				text, err := s.callExternal(ctx, sessions, ext[i], args)
 				lk.Failed = err != nil
 				looked = append(looked, lk)
+				a := ActivityStep{Type: "lookup", Text: ext[i].conn + ": " + extSummary(ext[i].tool, args), Tool: ext[i].fn, Source: lk.Source, Query: lk.Query}
+				if err != nil {
+					a.Error = err.Error()
+				}
+				step(a)
 				if err != nil {
 					b, _ := json.Marshal(map[string]string{"error": clip(err.Error(), 200)})
 					out = string(b)
