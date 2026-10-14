@@ -7,7 +7,6 @@ import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, ty
 import { dueLabel, mentionQuery, splitMentions } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck, Who } from "../components/app";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
 import { markLocal, reopen, undoable } from "../components/feedback";
@@ -87,7 +86,7 @@ function TitleEditor({ t, onSave, disabled }: { t: Task; onSave: (title: string)
         if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
         if (e.key === "Escape") { discard.current = true; setV(t.title); e.currentTarget.blur(); }
       }}
-      className={cn("-mx-1 min-w-0 flex-1 resize-none rounded-md bg-transparent px-1 text-2xl leading-tight font-semibold outline-none [field-sizing:content] focus:bg-card focus:ring-2 focus:ring-input", (t.status === "done" || t.status === "cancelled") && "text-muted-foreground/70")}
+      className={cn("-mx-1 min-w-0 flex-1 resize-none rounded-md bg-transparent px-1 text-2xl leading-tight font-semibold outline-none [field-sizing:content] focus:bg-card focus:ring-2 focus:ring-input", (t.status === "done" || t.status === "cancelled") && "text-muted-foreground/70", t.triage === "pending" && "agent-shimmer")}
     />
   );
 }
@@ -143,7 +142,6 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     document.addEventListener("visibilitychange", read);
     return () => document.removeEventListener("visibilitychange", read);
   }, [id, loaded, commentCount, qc]);
-  const [blocker, setBlocker] = useState("");
   const dueRef = useRef<HTMLInputElement>(null);
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
   const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => { markLocal(id); return api.tool("update_task", { id, ...patch }); }, onSuccess: invalidate });
@@ -171,7 +169,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     return () => { clearInterval(beat); watch({ leave: true }); };
   }, [id]);
   const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); lastTyping.current = 0; watch(); invalidate(); } });
-  const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: () => { setBlocker(""); invalidate(); } });
+  const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: invalidate });
 
   if (q.error) {
     if (!panel) return <ErrorText error={q.error} />;
@@ -287,17 +285,16 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </div>
       )}
       {!t.claimed_by && t.ready && !closed && !locked && (
-        <button onClick={() => claim.mutate()} className="mb-5 flex w-full items-center gap-2 rounded-xl border border-dashed border-input px-3 py-2.5 text-left text-sm text-foreground/70 hover:border-foreground/40 hover:bg-card">
-          Ready to start — <span className="font-medium text-foreground">I'm on it</span>
-        </button>
+        <Button variant="secondary" size="sm" className="mb-5 self-start" onClick={() => claim.mutate()} disabled={claim.isPending}>I'm on it</Button>
       )}
 
       <ErrorText error={err} />
 
       <div className="mb-6"><BodyEditor key={t.body ?? ""} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ body, body_mode: "replace", confirm: true })} /></div>
 
+      {/* Dependencies are usually set by agents over the API; people see them and can drop them. */}
+      {(t.blocked_by.length > 0 || t.blocks.length > 0) && (
       <section className="mb-6" aria-label="Dependencies">
-        {(t.blocked_by.length > 0 || t.blocks.length > 0) && (
           <div className="mb-2 flex flex-col gap-1.5">
             {t.blocked_by.map((b) => (
               <div key={b} className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -311,14 +308,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
               </div>
             ))}
           </div>
-        )}
-        {!locked && (
-          <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); link.mutate({ blocker }); }}>
-            <Input placeholder="Waits on task ID…" value={blocker} onChange={(e) => setBlocker(e.target.value)} className="h-9 max-w-56 sm:h-8" aria-label="Blocker id" />
-            {blocker && <Button size="sm" variant="outline">Add</Button>}
-          </form>
-        )}
       </section>
+      )}
 
       {comments.length > 0 && (
         <section className="mb-4 flex flex-col gap-2" aria-label="Comments">

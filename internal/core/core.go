@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -150,9 +151,14 @@ func (p *Principal) ownerName() string {
 type Service struct {
 	DB  *db.DB
 	Cfg *config.Config
+	// TriageHTTP, when set, replaces the client used to call triage models (tests).
+	TriageHTTP *http.Client
+	triageJobs chan triageJob
 }
 
-func New(d *db.DB, cfg *config.Config) *Service { return &Service{DB: d, Cfg: cfg} }
+func New(d *db.DB, cfg *config.Config) *Service {
+	return &Service{DB: d, Cfg: cfg, triageJobs: make(chan triageJob, 1024)}
+}
 
 // call wraps a principal-scoped transaction and loads the per-call view of the org.
 type call struct {
@@ -164,6 +170,8 @@ type call struct {
 	// visible is the set of project IDs the principal may see.
 	visible  []string
 	projects map[string]*Project
+	// triage is set while creating tasks that the workspace's triage agent should evaluate.
+	triage bool
 }
 
 func (s *Service) run(ctx context.Context, p *Principal, fn func(c *call) error) error {

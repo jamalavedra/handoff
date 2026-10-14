@@ -43,6 +43,8 @@ type TaskOut struct {
 	Blocks         []string   `json:"blocks"`
 	Ready          bool       `json:"ready"`
 	Unseen         bool       `json:"unseen,omitempty" jsonschema:"someone else changed it since you last opened it"`
+	Triage         string     `json:"triage,omitempty" jsonschema:"pending while the workspace's triage agent evaluates it, then done or failed"`
+	TriageError    string     `json:"triage_error,omitempty"`
 	URL            string     `json:"url"`
 }
 
@@ -56,6 +58,7 @@ type taskRow struct {
 	BlockedBy, Blocks                                          []string
 	OpenBlockers                                               int
 	Unseen                                                     bool
+	Triage, TriageError                                        string
 }
 
 // openBlockers counts unfinished blockers of t; the same expression drives "ready".
@@ -68,7 +71,7 @@ const taskSelect = `SELECT t.id, t.project_id::text, t.title, t.body, t.status, 
 	t.due_at, t.claim_expires_at, t.closed_at, t.deleted_at, t.created_at, t.updated_at, t.labels,
 	coalesce((SELECT array_agg(d.blocker_id ORDER BY d.blocker_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocked_id = t.id), '{}'),
 	coalesce((SELECT array_agg(d.blocked_id ORDER BY d.blocked_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocker_id = t.id), '{}'),
-	` + openBlockers + `, ` + unseen + `
+	` + openBlockers + `, ` + unseen + `, coalesce(t.triage, ''), t.triage_error
 	FROM tasks t`
 
 // unseen: someone else changed the task after the caller last opened it.
@@ -95,7 +98,7 @@ func (c *call) queryTasks(where string, args ...any) ([]*taskRow, error) {
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.Title, &r.Body, &r.Status, &r.Priority,
 			&r.AssigneeID, &r.Parent, &r.ExternalID, &r.ClaimedBy, &r.CreatedBy, &r.OnBehalfOf, &r.CloseReason,
 			&r.Due, &r.ClaimExpires, &r.ClosedAt, &r.DeletedAt, &r.CreatedAt, &r.Updated, &r.Labels,
-			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen); err != nil {
+			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen, &r.Triage, &r.TriageError); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -114,6 +117,7 @@ func (c *call) out(r *taskRow, withBody bool) TaskOut {
 		CreatedBy: c.ref(r.CreatedBy), OnBehalfOf: c.ref(r.OnBehalfOf), CreatedAt: ts(r.CreatedAt), UpdatedAt: ts(r.Updated),
 		ClosedAt: ts(r.ClosedAt), CloseReason: r.CloseReason, DeletedAt: ts(r.DeletedAt),
 		BlockedBy: nonNil(r.BlockedBy), Blocks: nonNil(r.Blocks), Unseen: r.Unseen,
+		Triage: r.Triage, TriageError: r.TriageError,
 		URL: c.s.Cfg.OrgURL(c.p.Org.Slug) + "/tasks/" + r.ID,
 	}
 	if p := c.projects[r.ProjectID]; p != nil {
@@ -508,9 +512,18 @@ func (s *Service) CreateTasks(ctx context.Context, p *Principal, in CreateTasksI
 	if len(in.Tasks) == 0 || len(in.Tasks) > 50 {
 		return out, errf(ErrInvalid, "send between 1 and 50 tasks")
 	}
+	var triaged []string
 	err := s.run(ctx, p, func(c *call) error {
 		if err := p.require(ActCreate); err != nil {
 			return err
+		}
+		// Tasks people create go to the triage agent; agents' own tasks are taken as written.
+		if !p.Member.IsAgent() {
+			on, err := c.triageEnabled()
+			if err != nil {
+				return err
+			}
+			c.triage = on
 		}
 		ids := make([]string, len(in.Tasks))
 		byExt := map[string]string{}
@@ -521,6 +534,9 @@ func (s *Service) CreateTasks(ctx context.Context, p *Principal, in CreateTasksI
 				return fmt.Errorf("task %d (%q): %w", i+1, nt.Title, err)
 			}
 			ids[i], fresh[i] = id, created
+			if created && c.triage {
+				triaged = append(triaged, id)
+			}
 			if nt.ExternalID != "" {
 				byExt[nt.ExternalID] = id
 			}
@@ -553,7 +569,33 @@ func (s *Service) CreateTasks(ctx context.Context, p *Principal, in CreateTasksI
 		}
 		return nil
 	})
+	if err == nil {
+		for _, id := range triaged {
+			s.enqueueTriage(p.Org.ID, id)
+		}
+	}
 	return out, err
+}
+
+// explicitFields lists what the creator set on purpose, so triage never second-guesses it.
+func explicitFields(nt NewTask) []string {
+	f := []string{}
+	if strings.TrimSpace(nt.Project) != "" {
+		f = append(f, "project")
+	}
+	if nt.Priority != nil {
+		f = append(f, "priority")
+	}
+	if nt.Assignee != "" {
+		f = append(f, "assignee")
+	}
+	if nt.Due != "" {
+		f = append(f, "due")
+	}
+	if len(nt.Labels) > 0 {
+		f = append(f, "labels")
+	}
+	return f
 }
 
 func (c *call) createOne(nt NewTask) (string, bool, error) {
@@ -607,9 +649,16 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
+		var triage *string
+		if c.triage {
+			pending := "pending"
+			triage = &pending
+		}
 		_, err = c.tx.Exec(c.ctx, `INSERT INTO tasks (org_id, id, project_id, title, body, priority, assignee_id, due_at, labels,
-			parent_id, external_id, created_by, on_behalf_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-			c.p.Org.ID, id, pr.ID, title, nt.Body, prio, assignee, due, cleanLabels(nt.Labels), parent, ext, c.p.Member.ID, c.p.onBehalfOf())
+			parent_id, external_id, created_by, on_behalf_of, triage, triage_explicit)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+			c.p.Org.ID, id, pr.ID, title, nt.Body, prio, assignee, due, cleanLabels(nt.Labels), parent, ext, c.p.Member.ID, c.p.onBehalfOf(),
+			triage, explicitFields(nt))
 		if db.IsUniqueViolation(err) {
 			if _, err := c.tx.Exec(c.ctx, `ROLLBACK TO SAVEPOINT create_task`); err != nil {
 				return "", false, err

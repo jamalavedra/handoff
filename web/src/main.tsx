@@ -1,14 +1,14 @@
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bell, Bot, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
+import { createRootRoute, createRoute, createRouter, Link, Navigate, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Activity, Bell, Bot, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
 import "./index.css";
 import { api, cn, projectName, type Me, type Project } from "./lib";
 import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
-import { ActivityPage, MyTasksPage, ProjectPage, ProjectsPage, ReadyPage, TrashPage } from "./pages/tasks";
+import { ActivityPage, MyTasksPage, ProjectPage, ProjectsPage, TrashPage } from "./pages/tasks";
 import { TaskPage, TaskView } from "./pages/task";
 import { TeamPage } from "./pages/team";
 import { NotificationsPage, useInbox } from "./pages/notifications";
@@ -153,7 +153,6 @@ function Layout({ me }: { me: Me }) {
               <span className="flex-1">Notifications</span>
               <Badge n={unread} />
             </NavLink>
-            <NavLink to="/ready" icon={Zap}>Ready</NavLink>
             <NavLink to="/team" icon={Users}>Team</NavLink>
             <ProjectsNav projects={projects} />
             <NavLink to="/activity" icon={Activity}>Activity</NavLink>
@@ -184,7 +183,7 @@ function Layout({ me }: { me: Me }) {
           </main>
         </div>
         <TaskPanel />
-        <MobileTabBar pending={pending} />
+        <MobileTabBar pending={pending} unread={unread} />
         <Toaster />
       </div>
       </CommandPaletteProvider>
@@ -256,14 +255,14 @@ function Tab({ to, icon: Icon, label, active, badge }: { to: string; icon: typeo
   );
 }
 
-function MobileTabBar({ pending }: { pending: number }) {
+function MobileTabBar({ pending, unread }: { pending: number; unread: number }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const more = moreRoutes.some((r) => path === r || path.startsWith(r + "/"));
   const [open, setOpen] = useState(false);
   return (
     <nav aria-label="Main" className="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-30 grid grid-cols-4 gap-1 rounded-2xl border border-border bg-background/95 p-1 shadow-lg backdrop-blur md:hidden">
       <Tab to="/" icon={CheckSquare} label="Tasks" active={path === "/" || path.startsWith("/tasks/")} />
-      <Tab to="/ready" icon={Zap} label="Ready" active={path === "/ready"} />
+      <Tab to="/notifications" icon={Bell} label="Inbox" active={path === "/notifications"} badge={unread} />
       <Tab to="/agents" icon={Bot} label="Agents" active={path === "/agents"} badge={pending} />
       <Drawer open={open} onOpenChange={setOpen}>
         <button type="button" onClick={() => setOpen(true)} className={tabClass(more || open)}>
@@ -369,7 +368,8 @@ const r = <P extends string>(path: P, component: () => React.ReactNode) => creat
 const router = createRouter({
   routeTree: root.addChildren([
     r("/", MyTasksPage),
-    r("/ready", ReadyPage),
+    // Ready is an agent concept (list_ready); old links land on My tasks.
+    r("/ready", () => <Navigate to="/" replace />),
     r("/team", TeamPage),
     r("/notifications", NotificationsPage),
     r("/projects", ProjectsPage),

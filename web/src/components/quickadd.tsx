@@ -100,7 +100,7 @@ function QuickAddForm({ project, draft, onDraft, onClose }: { project?: string; 
   const assignee = people.find((m) => m.id === final.assignee);
   const m = useMutation({
     mutationFn: () =>
-      api.tool("create_tasks", { tasks: [{ title: parsed.title, body: body || undefined, assignee: final.assignee || undefined, priority: final.priority, due: final.due || undefined, project: final.project || undefined }] }),
+      api.tool("create_tasks", { tasks: [{ title: parsed.title, body: body || undefined, assignee: final.assignee || undefined, priority: o.priority !== undefined || parsed.priority !== undefined ? final.priority : undefined, due: final.due || undefined, project: final.project || undefined }] }),
     onSuccess: () => {
       qc.invalidateQueries();
       onClose();

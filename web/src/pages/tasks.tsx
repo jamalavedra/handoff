@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { Flag, Lock, Plus, RotateCcw } from "lucide-react";
+import { CircleAlert, Flag, Lock, Plus, RotateCcw } from "lucide-react";
 import { ago, api, cn, projectName, type Event, type Project, type Task } from "../lib";
 import { EmojiPicker } from "../components/emoji";
 import { Avatar, Card, DuePill, Empty, ErrorText, PageHeader, TaskCheck, Who } from "../components/app";
@@ -13,7 +13,7 @@ import { groupByDue } from "../quickadd";
 import { useMe } from "../main";
 import { Board, useView, ViewToggle } from "./board";
 import { TaskLink, usePanelTask } from "../components/tasklink";
-import { patchTask, reopen, undoable, useChangeFlash } from "../components/feedback";
+import { patchTask, reopen, undoable, useChangeFlash, useTriageReveal } from "../components/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function useInvalidate() {
@@ -36,6 +36,7 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
     onSettled: invalidate,
   });
   const flash = useChangeFlash(t.id, t.updated_at);
+  const reveal = useTriageReveal(t.triage);
   const agentWorking = !closed && t.claimed_by?.kind === "agent";
   const waiting = !closed && !t.ready && t.blocked_by.length > 0 && !t.claimed_by;
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
@@ -46,7 +47,8 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate(closed)} />
       <TaskLink id={t.id} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
         {t.unseen && !closed && !selected && <span role="img" aria-label="Changed by someone else" title="Changed by someone else since you last opened it" className="size-2 shrink-0 rounded-full bg-unseen" />}
-        <span className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-muted-foreground/70 line-through")}>{t.title}</span>
+        <span title={t.triage === "pending" ? "The triage agent is looking at this task" : undefined} className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-muted-foreground/70 line-through", t.triage === "pending" && "agent-shimmer", reveal && "triage-reveal")}>{t.title}</span>
+        {t.triage === "failed" && <span title={`Triage failed: ${t.triage_error ?? ""}`} className="shrink-0 text-amber-600"><CircleAlert aria-label="Triage failed" className="size-3.5" /></span>}
         {t.priority < 2 && !closed && <Flag aria-label={t.priority === 0 ? "Urgent" : "High priority"} className={cn("size-3.5 shrink-0", t.priority === 0 ? "fill-red-500 text-red-500" : "text-orange-500")} />}
       </TaskLink>
       <div className="flex shrink-0 items-center gap-1.5">
@@ -173,17 +175,6 @@ function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: (
   );
 }
 
-export function ReadyPage() {
-  const q = useQuery({ queryKey: ["tasks", "ready"], queryFn: () => api.tool<{ tasks: Task[] }>("list_ready", { limit: 100 }) });
-  return (
-    <>
-      <PageHeader title="Ready to start"><NewTask /></PageHeader>
-      <p className="mb-3 text-sm text-muted-foreground">Open, unclaimed, and nothing they wait on is unfinished. This is what agents see when they call <code>list_ready</code>.</p>
-      <TaskList tasks={q.data?.tasks} empty="Nothing is ready right now." />
-    </>
-  );
-}
-
 export function ProjectsPage() {
   const q = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const [f, setF] = useState({ name: "", emoji: "", visibility: "company" });
@@ -261,11 +252,12 @@ const verbs: Record<string, string> = {
   approval_requested: "asked to delete", approval_approved: "approved deleting", approval_rejected: "rejected deleting",
   agent_added: "added an agent", agent_revoked: "revoked an agent", agent_permissions_changed: "changed an agent's permissions",
   api_key_created: "created an API key", api_key_revoked: "revoked an API key", project_created: "created a project",
+  triaged: "triaged", triage_failed: "couldn't triage",
   member_invited: "invited someone", member_changed: "changed a member", org_changed: "changed workspace settings", project_changed: "changed a project",
 };
 
 export function EventLine({ e, showTask = true }: { e: Event; showTask?: boolean }) {
-  const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).filter((k) => k !== "from_project_id").join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : "";
+  const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).filter((k) => k !== "from_project_id").join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "triaged" ? ((e.data.changed as string[] | undefined) ?? []).join(", ") : e.kind === "triage_failed" ? String(e.data.error ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : "";
   return (
     <div className="flex gap-3 py-1.5 text-sm">
       <span className="w-14 shrink-0 text-xs leading-5 text-muted-foreground/70 sm:w-20">{ago(e.at)}</span>

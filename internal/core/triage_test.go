@@ -1,0 +1,150 @@
+package core_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/joalavedra/handoff/internal/config"
+	"github.com/joalavedra/handoff/internal/core"
+	"github.com/joalavedra/handoff/internal/testutil"
+)
+
+// fakeModel is an OpenAI-compatible endpoint that answers every request with reply.
+func fakeModel(t *testing.T, status int, reply map[string]any, gotAuth *atomic.Value) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		gotAuth.Store(r.Header.Get("Authorization"))
+		if status != http.StatusOK {
+			http.Error(w, `{"error":"bad key"}`, status)
+			return
+		}
+		content, _ := json.Marshal(reply)
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "Here you go:\n" + string(content)}}}})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func triageEnv(t *testing.T, srv *httptest.Server) *env {
+	t.Helper()
+	base, _ := url.Parse("http://handoff.test")
+	s := core.New(testutil.DB(t), &config.Config{BaseURL: base, Secret: []byte("test secret")})
+	s.TriageHTTP = srv.Client()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go s.RunTriage(ctx)
+	return &env{s: s, ctx: context.Background()}
+}
+
+// waitTriage polls until the task leaves the pending state.
+func waitTriage(t *testing.T, e *env, p *core.Principal, id string) core.TaskDetailOut {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		d, err := e.s.GetTask(e.ctx, p, core.TaskIDIn{ID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Task.Triage != "pending" {
+			return d
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s still pending", id)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestTriage(t *testing.T) {
+	var auth atomic.Value
+	srv := fakeModel(t, http.StatusOK, map[string]any{
+		"title": "Edit the episode 14 intro", "due": "2026-10-16", "priority": 0, "project": "Podcast",
+		"labels": []string{"audio"}, "assignee": "Acme Bot", "plan": "Done when the intro is under 30s.\n- Trim\n- Export",
+	}, &auth)
+	e := triageEnv(t, srv)
+	admin := e.org(t, "tri")
+	bot := e.agent(t, admin, "Acme Bot", nil)
+	if _, err := e.s.CreateProject(e.ctx, admin, core.CreateProjectIn{Name: "Podcast", Visibility: "company"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only admins configure it, and the credential never comes back.
+	member := e.agent(t, admin, "Helper", nil)
+	if _, err := e.s.SetTriage(e.ctx, member, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); !core.IsCode(err, core.ErrForbidden) {
+		t.Fatalf("non-admin set triage: %v", err)
+	}
+	cfg, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1/", Model: "test-model", Credential: "sk-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Enabled || !cfg.HasCredential || cfg.Agent.ID != bot.Member.ID || cfg.BaseURL != srv.URL+"/v1" {
+		t.Fatalf("settings: %+v", cfg)
+	}
+	if b, _ := json.Marshal(cfg); strings.Contains(string(b), "sk-test") {
+		t.Fatal("credential leaked in settings output")
+	}
+
+	// A person's task is triaged; the priority they chose stays.
+	three := 3
+	task := e.create(t, admin, core.NewTask{Title: "can u pls edit the ep 14 intro by thursday", Priority: &three})[0]
+	if task.Triage != "pending" {
+		t.Fatalf("new task triage = %q, want pending", task.Triage)
+	}
+	d := waitTriage(t, e, admin, task.ID)
+	if auth.Load() != "Bearer sk-test" {
+		t.Fatalf("model got Authorization %q", auth.Load())
+	}
+	got := d.Task
+	if got.Triage != "done" || got.Title != "Edit the episode 14 intro" || got.Due != "2026-10-16" || got.Priority != 3 ||
+		got.Project != "Podcast" || !slices.Equal(got.Labels, []string{"audio"}) || got.Assignee == nil || got.Assignee.ID != bot.Member.ID {
+		t.Fatalf("triaged task: %+v (error %q)", got, got.TriageError)
+	}
+	if len(d.Comments) != 1 || d.Comments[0].Author.ID != bot.Member.ID || !strings.HasPrefix(d.Comments[0].Body, "Done when") {
+		t.Fatalf("plan comment: %+v", d.Comments)
+	}
+	if !slices.ContainsFunc(d.Events, func(ev core.EventOut) bool { return ev.Kind == "triaged" && ev.Actor.ID == bot.Member.ID }) {
+		t.Fatalf("no triaged event by the agent: %+v", d.Events)
+	}
+
+	// Agents' own tasks are taken as written.
+	own := e.create(t, bot, core.NewTask{Title: "agent task"})[0]
+	if own.Triage != "" {
+		t.Fatalf("agent-created task triage = %q", own.Triage)
+	}
+
+	// Switching it off leaves new tasks alone.
+	if _, err := e.s.DisableTriage(e.ctx, admin, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	if off := e.create(t, admin, core.NewTask{Title: "after off"})[0]; off.Triage != "" {
+		t.Fatalf("triage after disable = %q", off.Triage)
+	}
+}
+
+func TestTriageFailure(t *testing.T) {
+	var auth atomic.Value
+	srv := fakeModel(t, http.StatusUnauthorized, nil, &auth)
+	e := triageEnv(t, srv)
+	admin := e.org(t, "trifail")
+	e.agent(t, admin, "Acme Bot", nil)
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "bad"}); err != nil {
+		t.Fatal(err)
+	}
+	task := e.create(t, admin, core.NewTask{Title: "buy milk"})[0]
+	d := waitTriage(t, e, admin, task.ID)
+	if d.Task.Triage != "failed" || !strings.Contains(d.Task.TriageError, "401") || d.Task.Title != "buy milk" {
+		t.Fatalf("failed triage: %+v", d.Task)
+	}
+}

@@ -58,6 +58,9 @@ export type Task = {
   blocks: string[];
   ready: boolean;
   unseen?: boolean;
+  // pending while the workspace's triage agent evaluates a new task.
+  triage?: "pending" | "done" | "failed";
+  triage_error?: string;
 };
 
 export type Project = { id: string; name: string; description?: string; emoji?: string; visibility: string; open_tasks: number; members?: string[] };

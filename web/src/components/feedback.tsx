@@ -77,6 +77,21 @@ export function useNotificationToasts() {
   }, [inbox.data, navigate, qc]);
 }
 
+// useTriageReveal is true for a moment after triage finishes, so the tidied title can blur in.
+export function useTriageReveal(triage: Task["triage"]) {
+  const prev = useRef(triage);
+  const [reveal, setReveal] = useState(false);
+  useEffect(() => {
+    const was = prev.current;
+    prev.current = triage;
+    if (was !== "pending" || triage === "pending") return;
+    setReveal(true);
+    const t = setTimeout(() => setReveal(false), 700);
+    return () => clearTimeout(t);
+  }, [triage]);
+  return reveal;
+}
+
 // useChangeFlash is true for a moment after someone else (a person or an agent) edits the task.
 export function useChangeFlash(id: string, updatedAt: string) {
   const prev = useRef(updatedAt);
