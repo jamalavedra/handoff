@@ -1,13 +1,14 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sun, Trash2, Users } from "lucide-react";
+import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sparkles, Sun, Trash2, Users } from "lucide-react";
 import { api, projectName, type Me, type Project, type Task } from "../lib";
 import { setTheme } from "../theme";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { useQuickAdd } from "./quickadd";
 import { useWide } from "./tasklink";
 import { typing } from "./shortcuts";
+import { useAssistant } from "./assistant";
 
 type Ctx = { open: () => void };
 const PaletteContext = createContext<Ctx>({ open: () => {} });
@@ -44,6 +45,7 @@ export function CommandPaletteProvider({ me, onShortcuts, children }: { me: Me; 
 function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: string; setQuery: (q: string) => void; close: () => void; onShortcuts: () => void }) {
   const navigate = useNavigate();
   const quick = useQuickAdd();
+  const assistant = useAssistant();
   const wide = useWide();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const currentProject = path.match(/^\/projects\/([^/]+)/)?.[1];
@@ -64,6 +66,7 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
   const to = (path: string) => go(() => navigate({ to: path }));
   const actions: Item[] = [
     { id: "new", label: "New task", icon: Plus, keys: "N", run: go(() => quick.open(currentProject)) },
+    { id: "assistant", label: "Ask the assistant", icon: Sparkles, keys: "⌘J", run: go(() => assistant.setOpen(true)) },
     { id: "light", label: "Theme: light", icon: Sun, run: go(() => setTheme("light")) },
     { id: "dark", label: "Theme: dark", icon: Moon, run: go(() => setTheme("dark")) },
     { id: "system", label: "Theme: match device", icon: Monitor, run: go(() => setTheme("system")) },
