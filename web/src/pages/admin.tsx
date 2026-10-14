@@ -3,11 +3,13 @@ import { Bot, ChevronDown, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, cn, type Member } from "../lib";
-import { Badge, Card, ErrorText, PageHeader } from "../components/app";
+import { Badge, Card, ErrorText } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { useMe } from "../main";
+import { SettingsHeader } from "./settings";
+import { Navigate } from "@tanstack/react-router";
 import { useInvalidate } from "./tasks";
 
 export function AdminPage() {
@@ -23,11 +25,12 @@ export function AdminPage() {
   const invite = useMutation({ mutationFn: () => api.tool("invite", inv), onSuccess: () => { setInv({ email: "", role: "member" }); invalidate(); } });
   const change = useMutation({ mutationFn: (v: { id: string; role?: string; remove?: boolean }) => api.tool("update_member", v), onSuccess: invalidate });
   const saveOrg = useMutation({ mutationFn: () => api.tool("update_org", org), onSuccess: invalidate });
-  if (me.data?.member?.role !== "admin") return <p className="text-sm">Only admins can see this page.</p>;
+  // General settings are for admins; everyone else lands on their agents.
+  if (me.data && me.data.member?.role !== "admin") return <Navigate to="/settings/agents" replace />;
   const people = members.data?.members.filter((m) => m.kind === "human") ?? [];
   return (
     <>
-      <PageHeader title="Admin" />
+      <SettingsHeader active="general" />
       <h2 className="mb-2 text-sm font-medium text-muted-foreground">People</h2>
       <Card className="mb-3 p-3">
         <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); invite.mutate(); }}>

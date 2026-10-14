@@ -7,7 +7,7 @@ export function typing(t: EventTarget | null) {
   return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
 }
 
-const jumps: Record<string, string> = { t: "/", n: "/notifications", p: "/projects", a: "/agents" };
+const jumps: Record<string, string> = { t: "/", n: "/notifications", p: "/projects", a: "/settings/agents", s: "/settings" };
 
 // When G was last pressed. Other single-key handlers (N for new task) stand down during a jump,
 // whichever listener happens to run first.
@@ -81,7 +81,7 @@ export function useShortcuts(onHelp: () => void) {
 const groups: { title: string; keys: [string, string][] }[] = [
   { title: "Anywhere", keys: [["⌘ K  or  /", "Command menu"], ["⌘ J", "Assistant"], ["N", "New task"], ["?", "This list"]] },
   { title: "Lists", keys: [["J / ↓", "Next task"], ["K / ↑", "Previous task"], ["Enter", "Open task"], ["X", "Complete or reopen"], ["Esc", "Close the task panel"]] },
-  { title: "Go to", keys: [["G T", "My tasks"], ["G N", "Notifications"], ["G P", "Projects"], ["G A", "Agents"]] },
+  { title: "Go to", keys: [["G T", "My tasks"], ["G N", "Notifications"], ["G P", "Projects"], ["G A", "Agents"], ["G S", "Settings"]] },
   // Browsers keep ⌘W, ⌘T and Ctrl+Tab for their own tabs, so ours sit on ⌥ (Alt elsewhere).
   {
     title: "Tabs (desktop)",

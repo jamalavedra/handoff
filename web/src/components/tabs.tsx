@@ -266,10 +266,14 @@ const pages: Record<string, { label: string; icon: typeof Bell }> = {
   "/notifications": { label: "Notifications", icon: Bell },
   "/team": { label: "Team", icon: Users },
   "/projects": { label: "Projects", icon: FolderKanban },
-  "/activity": { label: "Activity", icon: Activity },
-  "/agents": { label: "Agents", icon: Bot },
+  "/settings/activity": { label: "Activity", icon: Activity },
+  "/settings/agents": { label: "Agents", icon: Bot },
   "/trash": { label: "Trash", icon: Trash2 },
-  "/admin": { label: "Admin", icon: Settings },
+  "/settings": { label: "Settings", icon: Settings },
+  // Tabs saved before these moved into Settings keep their names until they're opened.
+  "/agents": { label: "Agents", icon: Bot },
+  "/activity": { label: "Activity", icon: Activity },
+  "/admin": { label: "Settings", icon: Settings },
   "/more": { label: "More", icon: LayoutGrid },
 };
 

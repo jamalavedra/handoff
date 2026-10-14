@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Navigate, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bell, Bot, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun, Trash2, Users } from "lucide-react";
+import { Bell, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sparkles, Sun, Trash2, Users } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
 import "./index.css";
@@ -151,7 +151,7 @@ function Layout({ me }: { me: Me }) {
     <TabsProvider>
     <QuickAddProvider>
       <AssistantProvider>
-      <CommandPaletteProvider me={me} onShortcuts={showHelp}>
+      <CommandPaletteProvider onShortcuts={showHelp}>
       <ShortcutsDialog open={help} onOpenChange={setHelp} />
       <div className="min-h-dvh md:flex">
         <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-3 text-sidebar-foreground md:flex">
@@ -169,13 +169,11 @@ function Layout({ me }: { me: Me }) {
             </NavLink>
             <NavLink to="/team" icon={Users}>Team</NavLink>
             <ProjectsNav projects={projects} />
-            <NavLink to="/activity" icon={Activity}>Activity</NavLink>
-            <NavLink to="/agents" icon={Bot}>
-              <span className="flex-1">Agents</span>
+            <NavLink to="/trash" icon={Trash2}>Trash</NavLink>
+            <NavLink to="/settings" icon={Settings}>
+              <span className="flex-1">Settings</span>
               <Badge n={pending} />
             </NavLink>
-            <NavLink to="/trash" icon={Trash2}>Trash</NavLink>
-            {me.member?.role === "admin" && <NavLink to="/admin" icon={Settings}>Admin</NavLink>}
           </nav>
           <div className="mt-auto px-2 pb-3"><ThemeToggle /></div>
           <div className="flex items-center justify-between border-t border-border px-2 pt-3 text-sm">
@@ -275,7 +273,7 @@ function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
   );
 }
 
-const moreRoutes = ["/more", "/team", "/projects", "/activity", "/trash", "/admin"];
+const moreRoutes = ["/more", "/team", "/trash", "/settings"];
 
 const tabClass = (active: boolean) => cn("relative flex flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-medium text-foreground/50", active && "bg-accent text-foreground");
 
@@ -297,11 +295,12 @@ function MobileTabBar({ pending, unread }: { pending: number; unread: number }) 
     <nav aria-label="Main" className="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-30 grid grid-cols-4 gap-1 rounded-2xl border border-border bg-background/95 p-1 shadow-lg backdrop-blur md:hidden">
       <Tab to="/" icon={CheckSquare} label="Tasks" active={path === "/" || path.startsWith("/tasks/")} />
       <Tab to="/notifications" icon={Bell} label="Inbox" active={path === "/notifications"} badge={unread} />
-      <Tab to="/agents" icon={Bot} label="Agents" active={path === "/agents"} badge={pending} />
+      <Tab to="/projects" icon={FolderKanban} label="Projects" active={path === "/projects" || path.startsWith("/projects/")} />
       <Drawer open={open} onOpenChange={setOpen}>
         <button type="button" onClick={() => setOpen(true)} className={tabClass(more || open)}>
           <MoreHorizontal className="size-5" />
           More
+          {pending > 0 && <span className="absolute top-1 right-[calc(50%-1.25rem)] rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 text-white">{pending}</span>}
         </button>
         <DrawerContent className="px-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           <DrawerTitle className="sr-only">More</DrawerTitle>
@@ -361,10 +360,8 @@ function MoreContent({ onNavigate }: { onNavigate?: () => void }) {
     <>
       <div className="mb-6 overflow-hidden rounded-xl border border-border bg-card">
         <MoreRow to="/team" icon={Users} onNavigate={onNavigate}>Team</MoreRow>
-        <MoreRow to="/projects" icon={FolderKanban} onNavigate={onNavigate}>Projects</MoreRow>
-        <MoreRow to="/activity" icon={Activity} onNavigate={onNavigate}>Activity</MoreRow>
         <MoreRow to="/trash" icon={Trash2} onNavigate={onNavigate}>Trash</MoreRow>
-        {me.data?.member?.role === "admin" && <MoreRow to="/admin" icon={Settings} onNavigate={onNavigate}>Admin</MoreRow>}
+        <MoreRow to="/settings" icon={Settings} onNavigate={onNavigate}>Settings</MoreRow>
       </div>
       {projects.length > 0 && (
         <>
@@ -409,10 +406,14 @@ const router = createRouter({
     r("/projects", ProjectsPage),
     r("/projects/$id", ProjectPage),
     r("/tasks/$id", TaskPage),
-    r("/activity", ActivityPage),
-    r("/agents", AgentsPage),
     r("/trash", TrashPage),
-    r("/admin", AdminPage),
+    r("/settings", AdminPage),
+    r("/settings/agents", AgentsPage),
+    r("/settings/activity", ActivityPage),
+    // Agents, Activity and Admin moved into Settings; old links still land there.
+    r("/admin", () => <Navigate to="/settings" replace />),
+    r("/agents", () => <Navigate to="/settings/agents" replace />),
+    r("/activity", () => <Navigate to="/settings/activity" replace />),
     r("/more", MorePage),
     r("/login", LoginPage),
     r("/authorize", AuthorizePage),

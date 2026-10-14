@@ -37,8 +37,8 @@ export function ViewToggle({ view, onChange }: { view: View; onChange: (v: View)
     <div role="radiogroup" aria-label="View" className="inline-flex rounded-full bg-accent p-0.5">
       {opts.map(({ v, icon: Icon, label }) => (
         <button key={v} role="radio" aria-checked={view === v} aria-label={label} title={label} onClick={() => onChange(v)}
-          className={cn("flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors", view === v && "bg-card text-foreground shadow-sm")}>
-          <Icon className="size-4" />
+          className={cn("flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors", view === v && "bg-card text-foreground shadow-sm")}>
+          <Icon className="size-3.5" />
         </button>
       ))}
     </div>

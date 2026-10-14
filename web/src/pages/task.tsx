@@ -36,10 +36,10 @@ const priorityText = ["Urgent", "High", "Normal", "Low", "Someday"];
 
 function Pill({ icon: Icon, children, className, label, select }: { icon?: typeof Flag; children: React.ReactNode; className?: string; label: string; select?: React.ReactNode }) {
   return (
-    <span className={cn("relative inline-flex h-8 max-w-full shrink-0 items-center gap-1.5 rounded-full bg-accent px-3 text-sm font-medium text-foreground/80 focus-within:ring-2 focus-within:ring-foreground/40 hover:bg-foreground/10", className)}>
-      {Icon && <Icon className="size-3.5 shrink-0" />}
+    <span className={cn("relative inline-flex h-7 max-w-full shrink-0 items-center gap-1.5 rounded-full bg-accent px-2.5 text-[13px] font-medium text-foreground/80 focus-within:ring-2 focus-within:ring-foreground/40 hover:bg-foreground/10", className)}>
+      {Icon && <Icon className="size-3 shrink-0" />}
       <span className="truncate">{children}</span>
-      {select && <ChevronDown className="size-3.5 shrink-0 opacity-50" />}
+      {select && <ChevronDown className="size-3 shrink-0 opacity-50" />}
       {select && <span className="sr-only">{label}</span>}
       {select}
     </span>
@@ -292,7 +292,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <Pill label="Due" icon={CalendarDays} className={cn(due?.tone === "overdue" && !closed && "bg-red-50 text-red-700", due?.tone === "today" && !closed && "bg-blue-50 text-blue-700")} select={!locked && (
           <input ref={dueRef} type="date" className={overlay} value={t.due ?? ""} onClick={() => { try { dueRef.current?.showPicker(); } catch { /* not supported */ } }} onChange={(e) => update.mutate({ due: e.target.value })} aria-label="Due" />
         )}>{due ? due.text : "No date"}</Pill>
-        {t.due && !locked && <button onClick={() => update.mutate({ due: "" })} aria-label="Clear due date" className="-ml-1.5 flex size-8 items-center justify-center rounded-full text-muted-foreground/70 hover:bg-accent"><X className="size-3.5" /></button>}
+        {t.due && !locked && <button onClick={() => update.mutate({ due: "" })} aria-label="Clear due date" className="-ml-1.5 flex size-7 items-center justify-center rounded-full text-muted-foreground/70 hover:bg-accent"><X className="size-3.5" /></button>}
         <Pill label="Assignee" icon={t.assignee?.kind === "agent" ? Bot : User} className={t.assignee?.kind === "agent" ? "bg-violet-50 text-violet-700" : ""} select={!locked && (
           <select className={overlay} value={t.assignee?.id ?? ""} onChange={(e) => update.mutate({ assignee: e.target.value })} aria-label="Assignee">
             <option value="">Unassigned</option>

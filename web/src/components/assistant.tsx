@@ -119,7 +119,7 @@ function usePageContext() {
   const t = useQuery({ queryKey: ["task", task], queryFn: () => api.tool<{ task: Task }>("get_task", { id: task }), enabled: !!task, refetchInterval: false });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const p = projects.data?.projects.find((x) => x.id === project);
-  const pages: Record<string, string> = { "/": "My tasks", "/notifications": "Notifications", "/team": "Team", "/projects": "Projects", "/activity": "Activity", "/agents": "Agents", "/trash": "Trash", "/admin": "Admin" };
+  const pages: Record<string, string> = { "/": "My tasks", "/notifications": "Notifications", "/team": "Team", "/projects": "Projects", "/settings/activity": "Activity", "/settings/agents": "Agents", "/settings": "Settings", "/trash": "Trash", "/admin": "Admin" };
   if (task) return { key: `task:${task}`, kind: "task" as const, task, label: t.data?.task.title ?? task };
   if (project) return { key: `project:${project}`, kind: "project" as const, project, label: p ? projectName(p) : "Project" };
   return { key: `page:${path}`, kind: "page" as const, label: pages[path] ?? "Handoff" };
@@ -314,7 +314,7 @@ function NotSetUp({ admin, onNavigate }: { admin: boolean; onNavigate?: () => vo
         <p className="mt-1 text-sm text-muted-foreground">It uses the workspace's triage agent and model. {admin ? "Choose them in Admin → Triage." : "Ask an admin to set up triage in Admin."}</p>
       </div>
       {admin && (
-        <Link to="/admin" onClick={onNavigate} className="inline-flex h-8 items-center gap-1 rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground">
+        <Link to="/settings" onClick={onNavigate} className="inline-flex h-8 items-center gap-1 rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground">
           Set up triage<ChevronRight className="size-4" />
         </Link>
       )}

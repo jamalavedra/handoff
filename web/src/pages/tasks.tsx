@@ -11,6 +11,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { useQuickAdd } from "../components/quickadd";
 import { groupByDue } from "../quickadd";
 import { useMe } from "../main";
+import { SettingsHeader } from "./settings";
 import { Board, useView, ViewToggle } from "./board";
 import { TaskLink, usePanelTask } from "../components/tasklink";
 import { completedText, patchTask, reopen, undoable, undoClose, useChangeFlash, useTriageReveal } from "../components/feedback";
@@ -181,7 +182,7 @@ function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: (
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={cn("flex h-9 shrink-0 select-none items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[15px] font-medium transition-colors", active ? "bg-accent text-foreground" : "text-foreground/50 hover:text-foreground/80")}
+      className={cn("flex h-8 shrink-0 select-none items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[13px] font-medium transition-colors", active ? "bg-accent text-foreground" : "text-foreground/50 hover:text-foreground/80")}
     >
       {name}<span className={cn("tabular-nums", active ? "text-foreground/40" : "text-foreground/35")}>{n}</span>
     </button>
@@ -237,7 +238,7 @@ export function ProjectPage() {
     <>
       <PageHeader title={p ? projectName(p) : "Project"}>
         {p && <EmojiPicker value={p.emoji ?? ""} onChange={(emoji) => setEmoji.mutate(emoji)} label="Project emoji" />}
-        {view === "list" && <label className="flex items-center gap-1.5 text-sm text-foreground/70"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
+        {view === "list" && <label className="flex items-center gap-1.5 text-[13px] text-foreground/70"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
         <ViewToggle view={view} onChange={setView} />
         <NewTask project={id} />
       </PageHeader>
@@ -288,7 +289,7 @@ export function ActivityPage() {
   const q = useQuery({ queryKey: ["activity"], queryFn: () => api.tool<{ events: Event[] }>("activity", { limit: 200 }) });
   return (
     <>
-      <PageHeader title="Activity" />
+      <SettingsHeader active="activity" />
       <Card className="px-4 py-2">{q.data?.events.length === 0 ? <Empty>No activity yet.</Empty> : q.data?.events.map((e) => <EventLine key={e.id} e={e} />)}</Card>
     </>
   );
