@@ -43,22 +43,32 @@ const writeTools = ["create_tasks", "update_task", "close_task", "comment"];
 export function fromSteps(steps: Step[]): ActivityStep[] {
   return steps.map((s) => {
     const type = s.lookup ? "lookup" : s.type ?? (writeTools.includes(s.tool) ? "write" : "tool");
-    return { type, text: s.summary, tool: s.tool || undefined, source: s.lookup?.source, query: s.lookup?.query, tasks: s.tasks, error: s.error };
+    return { type, text: s.summary, tool: s.lookup?.tool || s.tool || undefined, source: s.lookup?.source, query: s.lookup?.query, tasks: s.tasks, error: s.error };
   });
 }
 
+// toolName drops the prefix a connected tool carries for the model (ext_<connection>__), for trails
+// saved before steps carried the service's own tool name.
+const toolName = (fn = "") => fn.replace(/^ext_.*?__/, "");
+
 // line is how a step reads in one line: a lookup as "Source · “query”", anything else as its text.
 export function line(s: ActivityStep) {
-  if (s.type === "lookup" && s.source) return `${s.source} · ${s.query ? `“${s.query}”` : s.tool ?? ""}`;
+  if (s.type === "lookup" && s.source) return `${s.source} · ${s.query ? `“${s.query}”` : toolName(s.tool)}`;
   return s.text;
 }
 
-// summary is the collapsed trail: how many steps, how many failed. Thoughts aren't steps.
+// summary is the folded trail: a headline for what the agent did, how many steps (thoughts aren't
+// steps) and how many failed.
 export function summary(steps: ActivityStep[]) {
   const n = steps.filter((s) => s.type !== "thought").length;
   const failed = steps.filter((s) => s.error).length;
-  const label = n === 0 ? "Reasoning" : n === 1 ? "1 step" : `${n} steps`;
-  return { label, failed };
+  const label = n === 0 ? "reasoning" : n === 1 ? "1 step" : `${n} steps`;
+  const sources = [...new Set(steps.filter((s) => s.type === "lookup" && s.source).map((s) => s.source!))];
+  const headline = sources.length ? `Looked up ${sources.join(", ")}`
+    : wrote(steps) ? "Made changes"
+    : n === 0 ? "Thought it through"
+    : "Checked the tasks";
+  return { headline, label, failed };
 }
 
 // wrote says whether the turn changed something, so its trail starts open (changes one click away).

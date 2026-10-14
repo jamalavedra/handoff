@@ -159,7 +159,8 @@ func (st AssistantStep) activity() ActivityStep {
 		a.Type = "tool"
 	}
 	if st.Lookup != nil {
-		a.Type, a.Source, a.Query = "lookup", st.Lookup.Source, st.Lookup.Query
+		// The service's own tool name, not the identifier the model was given for it.
+		a.Type, a.Source, a.Query, a.Tool = "lookup", st.Lookup.Source, st.Lookup.Query, st.Lookup.Tool
 	}
 	if a.Type == "thought" {
 		a.Tool = ""

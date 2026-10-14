@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Check, CheckCircle2, ChevronRight, FileText, FolderKanban, Globe, Lightbulb, MessageSquare, Pencil, Plus, Search, Users } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, FileText, FolderKanban, Globe, Lightbulb, MessageSquare, Pencil, Plus, Search, Sparkles, Users } from "lucide-react";
 import { api, cn, type MemberRef } from "../lib";
-import { line, summary, wrote, type ActivityStep } from "../activity";
+import { line, summary, type ActivityStep } from "../activity";
 import { useAgentActivity } from "../agent-activity";
 import { TaskLink } from "./tasklink";
 import { Avatar } from "./app";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceDescription, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 
 const toolIcon: Record<string, typeof Search> = {
   search_tasks: Search, get_task: FileText, list_projects: FolderKanban, list_members: Users,
@@ -20,44 +20,46 @@ function icon(s: ActivityStep) {
   return (s.tool && toolIcon[s.tool]) || (s.type === "write" ? Pencil : Check);
 }
 
-// ActivityTrail is what the agent did for a message, one line per step, newest last. Live, it shows
-// every step as it comes, the latest shimmering; done, it folds into "N steps" (open when it changed
-// something, so new tasks are one click away).
+// ActivityTrail is what the agent did for a message, as a trace under it: folded to one line ("Looked
+// up Centaur · 3 steps") that opens to every step. Live, each step shows as it comes, the latest
+// shimmering.
 export function ActivityTrail({ steps, live, onNavigate, className }: { steps: ActivityStep[]; live?: boolean; onNavigate?: () => void; className?: string }) {
-  const [open, setOpen] = useState(() => wrote(steps));
   if (!steps.length) return null;
-  const list = <Steps steps={steps} live={live} onNavigate={onNavigate} />;
-  if (live) return <div className={cn("flex flex-col gap-1", className)} aria-live="polite">{list}</div>;
+  const rows = <Rows steps={steps} live={live} onNavigate={onNavigate} />;
+  if (live) return <Trace className={className} aria-live="polite">{rows}</Trace>;
   const s = summary(steps);
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className={cn("mb-1.5", className)}>
-      <CollapsibleTrigger className="flex items-center gap-1 rounded-full py-0.5 pr-2 pl-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
-        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
-        {s.label}
-        {s.failed > 0 && <span className="text-amber-600">· {s.failed} failed</span>}
-      </CollapsibleTrigger>
-      <CollapsibleContent className="mt-1 flex flex-col gap-1">{list}</CollapsibleContent>
-    </Collapsible>
+    <TraceCollapsible className={className}>
+      <TraceCollapsibleTrigger>
+        <TraceLine status={s.failed ? "error" : undefined}>
+          <TraceIcon><Sparkles /></TraceIcon>
+          <TraceTitle>{s.headline}</TraceTitle>
+          <TraceDescription>{s.label}{s.failed > 0 && ` · ${s.failed} failed`}</TraceDescription>
+        </TraceLine>
+      </TraceCollapsibleTrigger>
+      <TraceCollapsibleContent>
+        <Trace>{rows}</Trace>
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
   );
 }
 
-function Steps({ steps, live, onNavigate }: { steps: ActivityStep[]; live?: boolean; onNavigate?: () => void }) {
+function Rows({ steps, live, onNavigate }: { steps: ActivityStep[]; live?: boolean; onNavigate?: () => void }) {
   return <>{steps.map((s, i) => {
     const Icon = icon(s);
-    const latest = live && i === steps.length - 1;
-    const thought = s.type === "thought";
+    const running = live && i === steps.length - 1;
+    const links = s.tasks && s.tasks.length > 0 && s.tool !== "search_tasks";
     return (
-      <div key={i} className={cn("rounded-lg px-2 py-1.5 text-xs", thought ? "bg-transparent" : "bg-muted")}>
-        <div className={cn("flex items-start gap-1.5", s.error ? "text-amber-700" : thought ? "text-muted-foreground italic" : "text-foreground/70")}>
-          <Icon className="mt-px size-3.5 shrink-0" />
-          <span className={cn("min-w-0 break-words", latest && "agent-shimmer")}>
-            {line(s)}{s.error && <span className="text-muted-foreground"> · {s.error}</span>}
-          </span>
-        </div>
-        {s.tasks && s.tasks.length > 0 && s.tool !== "search_tasks" && (
-          <div className="mt-1 ml-5 flex flex-wrap gap-1" onClickCapture={onNavigate}>
-            {s.tasks.map((t) => (
-              <TaskLink key={t.id} id={t.id} className="max-w-full truncate rounded-full border border-border bg-card px-2 py-0.5 text-foreground/80 hover:bg-accent hover:text-foreground">
+      <div key={i} className="flex min-w-0 flex-col gap-1">
+        <TraceLine status={s.error ? "error" : undefined} className={cn(s.type === "thought" && "italic")} title={line(s)}>
+          <TraceIcon><Icon /></TraceIcon>
+          <TraceTitle running={running}>{line(s)}</TraceTitle>
+        </TraceLine>
+        {s.error && <p className="ml-5 text-xs break-words text-amber-700 dark:text-amber-500">{s.error}</p>}
+        {links && (
+          <div className="ml-5 flex flex-wrap gap-1" onClickCapture={onNavigate}>
+            {s.tasks!.map((t) => (
+              <TaskLink key={t.id} id={t.id} className="max-w-full truncate rounded-full border border-border bg-card px-2 py-0.5 text-xs text-foreground/80 hover:bg-accent hover:text-foreground">
                 {t.title}
               </TaskLink>
             ))}

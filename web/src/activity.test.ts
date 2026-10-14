@@ -35,8 +35,11 @@ test("reads assistant steps, old and new", () => {
   ]);
   assert.deepEqual(steps.map((s) => s.type), ["thought", "write", "lookup", "tool"]);
   assert.equal(line(steps[2]), "Web · “sf”");
+  assert.equal(line({ type: "lookup", text: "", source: "Centaur", tool: "ext_centaur__whoami" }), "Centaur · whoami");
   assert.equal(line(steps[1]), "Updated “Plan”");
-  assert.deepEqual(summary(steps), { label: "3 steps", failed: 1 });
+  assert.deepEqual(summary(steps), { headline: "Looked up Web", label: "3 steps", failed: 1 });
   assert.ok(wrote(steps));
-  assert.deepEqual(summary(steps.slice(0, 1)), { label: "Reasoning", failed: 0 });
+  assert.deepEqual(summary(steps.slice(0, 1)), { headline: "Thought it through", label: "reasoning", failed: 0 });
+  assert.equal(summary(steps.slice(0, 2)).headline, "Made changes");
+  assert.equal(summary(steps.slice(3)).headline, "Checked the tasks");
 });
