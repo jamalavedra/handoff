@@ -1,0 +1,247 @@
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUp, ChevronDown, MessageSquare, Search, SmilePlus } from "lucide-react";
+import { toast } from "sonner";
+import { ago, api, cn, type Comment, type Event, type Lookup, type Member, type MemberRef, type Task } from "../lib";
+import { mentionQuery } from "../quickadd";
+import { useMe } from "../main";
+import { Markdown } from "./markdown";
+import { Avatar, Who } from "./app";
+import { MicButton } from "./dictation";
+import { useDictation } from "@/hooks/use-dictation";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+// A task's chat is its conversation with the team and its agents. It lives in the assistant panel
+// ("This task"), beside the task it's about; the task itself shows a preview that opens it.
+
+export type Here = { member: MemberRef; typing?: boolean };
+export type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] };
+
+export const names = (h: Here[]) => (h.length <= 2 ? h.map((x) => x.member.name).join(" and ") : `${h[0].member.name} and ${h.length - 1} others`);
+
+export const taskQuery = (id: string) => ({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }) });
+
+// TaskChat is the thread and its composer, filling the panel it's in.
+export function TaskChat({ id, focus, drawer }: { id: string; focus?: number; drawer?: boolean }) {
+  const qc = useQueryClient();
+  const q = useQuery({ ...taskQuery(id), refetchInterval: 10000 });
+  const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
+  const meId = useMe().data?.member?.id;
+  const [comment, setComment] = useState("");
+  const [caret, setCaret] = useState(0);
+  const [pick, setPick] = useState(0);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const lastTyping = useRef(0);
+  const typing = () => {
+    if (Date.now() - lastTyping.current < 3000) return;
+    lastTyping.current = Date.now();
+    api.tool("watch_task", { id, typing: true }).catch(() => {});
+  };
+  const dictation = useDictation((text) => { setComment(text); setCaret(text.length); typing(); });
+  // Switching tasks drops the draft and dictation that belonged to the old one.
+  const { cancel: cancelDictation } = dictation;
+  useEffect(() => () => { cancelDictation(); setComment(""); setCaret(0); }, [id, cancelDictation]);
+  useEffect(() => { if (focus || !drawer) ref.current?.focus(); }, [focus, id, drawer]);
+  const count = q.data?.comments.length ?? 0;
+  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
+  const send = useMutation({
+    mutationFn: () => api.tool("comment", { id, body: comment }),
+    onSuccess: () => { setComment(""); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
+
+  const people = members.data?.members.filter((m) => m.status !== "removed") ?? [];
+  const memberNames = people.map((m) => m.name);
+  const mq = mentionQuery(comment, caret);
+  const suggestions = mq ? people.filter((m) => m.name.toLowerCase().includes(mq.query.toLowerCase())).slice(0, 5) : [];
+  const picked = suggestions.length ? pick % suggestions.length : 0;
+  const insertMention = (name: string) => {
+    if (!mq) return;
+    const pos = mq.start + name.length + 2;
+    setComment(comment.slice(0, mq.start) + "@" + name + " " + comment.slice(caret));
+    setCaret(pos);
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.setSelectionRange(pos, pos);
+    });
+  };
+  const t = q.data?.task;
+  const comments = q.data?.comments ?? [];
+  const typers = (q.data?.here ?? []).filter((h) => h.typing);
+  const locked = !!t?.deleted_at;
+
+  return (
+    <>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
+        {q.data && comments.length === 0 && (
+          <div className="mt-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+            <MessageSquare className="size-5 opacity-60" />
+            <p>No messages yet.</p>
+            <p className="max-w-60 text-xs">{t?.assignee?.kind === "agent" ? `Ask ${t.assignee.name} anything about this task, or type @ to bring someone in.` : "Talk about this task here. Type @ to mention someone or an agent."}</p>
+          </div>
+        )}
+        <section className="flex flex-col gap-3" aria-label="Comments">
+          {comments.map((c) => <Bubble key={c.id} c={c} mine={c.author?.id === meId} mentions={memberNames} locked={locked} />)}
+        </section>
+        <div ref={endRef} />
+      </div>
+      {!locked && (
+        <form
+          className={cn("relative mx-3 mt-1 flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-sm focus-within:ring-2 focus-within:ring-input", drawer ? "mb-[calc(0.75rem+env(safe-area-inset-bottom))]" : "mb-3")}
+          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim() && !send.isPending) send.mutate(); }}
+        >
+          {suggestions.length > 0 && (
+            <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg">
+              {suggestions.map((m, i) => (
+                <li key={m.id} role="option" aria-selected={i === picked}>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); insertMention(m.name); }} className={cn("flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted", i === picked && "bg-accent")}>
+                    <Avatar m={{ id: m.id, name: m.name, kind: m.kind }} />
+                    <span className="truncate">{m.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {typers.length > 0 && <span aria-live="polite" className="absolute -top-6 left-3 animate-pulse text-xs text-muted-foreground">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</span>}
+          <textarea
+            rows={1}
+            ref={ref}
+            placeholder={t?.assignee?.kind === "agent" ? `Message ${t.assignee.name}…` : "Message… type @ to mention"}
+            value={comment}
+            onChange={(e) => { dictation.cancel(); setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+            onKeyDown={(e) => {
+              if (suggestions.length) {
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); setPick(picked + (e.key === "ArrowDown" ? 1 : suggestions.length - 1)); return; }
+                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insertMention(suggestions[picked].name); return; }
+                if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setCaret(0); return; }
+              }
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
+            }}
+            aria-label="Comment"
+            className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-muted-foreground/70 sm:text-sm"
+          />
+          {dictation.supported && <MicButton listening={dictation.listening} onToggle={() => dictation.toggle(comment)} wave={dictation} />}
+          <button disabled={!comment.trim() || send.isPending} aria-label="Send comment" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:bg-foreground/10 disabled:text-muted-foreground/70">
+            <ArrowUp className="size-4" />
+          </button>
+        </form>
+      )}
+    </>
+  );
+}
+
+function Bubble({ c, mine, mentions, locked }: { c: Comment; mine: boolean; mentions: string[]; locked: boolean }) {
+  return (
+    <div className={cn("flex gap-2.5", mine && "flex-row-reverse")}>
+      {!mine && <Avatar m={c.author} className="mt-0.5" />}
+      <div className={cn("min-w-0 max-w-[88%] rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
+        {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
+        {c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
+        <Markdown text={c.body} mentions={mentions} />
+        <Reactions c={c} disabled={locked} />
+        {mine && <div className="mt-0.5 text-right text-[11px] text-muted-foreground/70">{ago(c.created_at)}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ChatPreview sits at the bottom of a task: the latest message and a way into the chat.
+export function ChatPreview({ comments, agent, typing, onOpen }: { comments: Comment[]; agent?: MemberRef; typing?: string; onOpen: () => void }) {
+  const last = comments.at(-1);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`Open chat${comments.length ? `, ${comments.length} messages` : ""}`}
+      className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 mt-auto flex w-full items-center gap-2.5 rounded-2xl border border-border bg-card p-1.5 pl-3 text-left shadow-lg transition-colors hover:bg-accent/60 md:bottom-4"
+    >
+      <MessageSquare className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 py-1.5 text-sm">
+        {typing ? (
+          <span className="animate-pulse text-muted-foreground">{typing}</span>
+        ) : last ? (
+          <span className="flex min-w-0 gap-1"><span className="shrink-0 font-medium">{last.author?.name ?? "Someone"}:</span><span className="truncate text-foreground/70">{plain(last.body)}</span></span>
+        ) : (
+          <span className="text-muted-foreground/70">{agent ? `Message ${agent.name}…` : "Message… type @ to mention"}</span>
+        )}
+      </span>
+      {comments.length > 0 && <span className="shrink-0 rounded-full bg-accent px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{comments.length}</span>}
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"><ArrowUp className="size-4" /></span>
+    </button>
+  );
+}
+
+// plain flattens a message to one line of text for the preview.
+const plain = (md: string) => md.replace(/[#*_`>[\]]|\(https?:[^)]*\)/g, "").replace(/\s+/g, " ").trim();
+
+const quickReactions = ["👍", "✅", "👀", "🎉", "❤️", "🙏", "😄", "🚀"];
+
+// LookedUp shows what the agent checked in connected services before answering: the services at a
+// glance, each call when opened.
+function LookedUp({ lookups }: { lookups: Lookup[] }) {
+  const sources = [...new Set(lookups.map((l) => l.source))];
+  return (
+    <details className="group mb-1 text-xs text-muted-foreground">
+      <summary className="flex cursor-pointer list-none items-center gap-1 hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <Search className="size-3" />Looked up {sources.join(", ")}
+        <ChevronDown className="size-3 transition-transform group-open:rotate-180" />
+      </summary>
+      <ul className="mt-1 flex flex-col gap-0.5 border-l border-border pl-2">
+        {lookups.map((l, i) => (
+          <li key={i} className={cn("truncate", l.failed && "line-through opacity-70")} title={l.failed ? "This lookup failed" : undefined}>
+            <span className="text-foreground/70">{l.source}</span> · {l.query ? `“${l.query}”` : l.tool}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+// Reactions are the light way to answer in a thread: ✅ "done", 👀 "looking", 👍 "agreed". Agents use them too.
+function Reactions({ c, disabled }: { c: Comment; disabled: boolean }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const react = useMutation({
+    mutationFn: (emoji: string) => api.tool("react", { comment: c.id, emoji }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["task"] }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
+  const reactions = c.reactions ?? [];
+  if (disabled && !reactions.length) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+      {reactions.map((r) => (
+        <button
+          key={r.emoji}
+          type="button"
+          disabled={disabled || react.isPending}
+          title={r.by.join(", ")}
+          aria-pressed={!!r.mine}
+          aria-label={`${r.emoji} ${r.count}, ${r.mine ? "remove yours" : "react"}`}
+          onClick={() => react.mutate(r.emoji)}
+          className={cn("flex h-6 items-center gap-1 rounded-full border px-1.5 text-xs tabular-nums transition-colors", r.mine ? "border-ring bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-muted")}
+        >
+          <span className="text-sm leading-none">{r.emoji}</span>{r.count}
+        </button>
+      ))}
+      {!disabled && (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button type="button" aria-label="Add reaction" className="flex size-6 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground">
+              <SmilePlus className="size-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="flex w-auto gap-0.5 rounded-full p-1">
+            {quickReactions.map((e) => (
+              <button key={e} type="button" disabled={react.isPending} aria-label={`React ${e}`} onClick={() => { setOpen(false); react.mutate(e); }} className="flex size-8 items-center justify-center rounded-full text-lg transition-transform hover:scale-110 hover:bg-muted">
+                {e}
+              </button>
+            ))}
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  );
+}
