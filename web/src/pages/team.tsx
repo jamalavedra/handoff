@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { undoable } from "../components/feedback";
+import { toast } from "sonner";
 import { api, cn, type Member, type Task } from "../lib";
 import { Avatar, Card, Empty, ErrorText, PageHeader } from "../components/app";
 import { TaskRow, useInvalidate } from "./tasks";
@@ -31,7 +32,9 @@ export function TeamPage() {
     },
     onSuccess: (_r, v) => {
       const to = members.data?.members.find((m) => m.id === v.to)?.name ?? "Unassigned";
-      undoable(qc, `Handed “${v.t.title}” to ${to}`, () => api.tool("update_task", { id: v.t.id, assignee: v.t.assignee?.id ?? "" }));
+      // A released claim can't be given back (claims are taken by the worker), so only plain moves offer Undo.
+      if (v.t.claimed_by && v.t.claimed_by.id !== v.to) toast(`Handed “${v.t.title}” to ${to}`, { description: `${v.t.claimed_by.name} stopped working on it.` });
+      else undoable(qc, `Handed “${v.t.title}” to ${to}`, () => api.tool("update_task", { id: v.t.id, assignee: v.t.assignee?.id ?? "" }));
     },
     onSettled: invalidate });
   const open = tasks.data?.filter((t) => t.status !== "done" && t.status !== "cancelled");

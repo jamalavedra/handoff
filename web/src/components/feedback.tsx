@@ -17,12 +17,15 @@ export function changedHere(id: string) {
   return at !== undefined && Date.now() - at < 5000;
 }
 
-// patchTask applies a change to every cached task list and detail at once, returning a rollback.
+// patchTask applies a change to every cached task list at once, returning a rollback.
+// Lists are cached either as { tasks: Task[] } or, on the Team board, as a bare Task[].
 export function patchTask(qc: QueryClient, id: string, patch: Partial<Task>) {
   markLocal(id);
-  const lists = qc.getQueriesData<{ tasks: Task[] }>({ queryKey: ["tasks"] });
+  const lists = qc.getQueriesData<{ tasks: Task[] } | Task[]>({ queryKey: ["tasks"] });
+  const apply = (ts: Task[]) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t));
   for (const [key, data] of lists) {
-    if (data?.tasks) qc.setQueryData(key, { ...data, tasks: data.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
+    if (Array.isArray(data)) qc.setQueryData(key, apply(data));
+    else if (data?.tasks) qc.setQueryData(key, { ...data, tasks: apply(data.tasks) });
   }
   return () => lists.forEach(([key, data]) => qc.setQueryData(key, data));
 }
@@ -81,7 +84,8 @@ export function useChangeFlash(id: string, updatedAt: string) {
   useEffect(() => {
     if (prev.current === updatedAt) return;
     prev.current = updatedAt;
-    if (changedHere(id)) return;
+    // Our own edit: no flash, and end any flash still running (its timer was just cleared).
+    if (changedHere(id)) return setFlash(false);
     setFlash(true);
     const t = setTimeout(() => setFlash(false), 1900);
     return () => clearTimeout(t);
