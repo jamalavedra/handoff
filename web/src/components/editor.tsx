@@ -2,6 +2,7 @@ import { lazy, Suspense, useRef, useState } from "react";
 import { toast } from "sonner";
 import { cn, type Task } from "../lib";
 import { Markdown } from "./markdown";
+import { toggleItem } from "../checklist";
 import type { Caret } from "./rich-editor";
 
 // The editor (Tiptap/ProseMirror) is a sizeable chunk; load it when someone heads for the details.
@@ -33,6 +34,12 @@ export function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: st
   const empty = t.assignee?.kind === "agent" ? `${t.assignee.name}'s work on this will show up here. Add details…` : "Add details…";
 
   const edit = (caret: Caret) => { if (!disabled) setEditing({ caret, base: shown }); };
+  // Ticking a checklist item saves at once, shown ticked while the save goes through.
+  const tick = (index: number) => {
+    const next = toggleItem(shown, index);
+    setSaved({ text: next, over: body });
+    onSave(next).catch(() => setSaved(null));
+  };
 
   if (editing) {
     const fallback = <div className={cn("-mx-2 rounded-lg px-2 py-1", readStyle)}><Markdown text={editing.base} /></div>;
@@ -74,14 +81,14 @@ export function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: st
       onFocus={disabled ? undefined : loadEditor}
       onClick={(e) => {
         // Selecting text to copy it, or following a link, isn't editing.
-        if (window.getSelection()?.toString() || (e.target as HTMLElement).closest("a")) return;
+        if (window.getSelection()?.toString() || (e.target as HTMLElement).closest("a, input")) return;
         const r = view.current!.getBoundingClientRect();
         edit(e.detail ? { x: e.clientX - r.left - 8, y: e.clientY - r.top - 4 } : "end");
       }}
       onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); edit("end"); } }}
       className={cn("-mx-2 rounded-lg px-2 py-1", readStyle, !disabled && "cursor-text hover:bg-muted")}
     >
-      <Markdown text={shown} />
+      <Markdown text={shown} onToggle={disabled ? undefined : tick} />
     </div></>
   );
 }

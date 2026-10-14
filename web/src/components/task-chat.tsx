@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ChevronDown, MessageSquare, Search, SmilePlus } from "lucide-react";
+import { ArrowUp, ChevronDown, Globe, MessageSquare, Search, SmilePlus } from "lucide-react";
+import { sources } from "../checklist";
 import { toast } from "sonner";
 import { ago, api, cn, type Comment, type Event, type Lookup, type Member, type MemberRef, type Task } from "../lib";
 import { mentionQuery } from "../quickadd";
@@ -50,7 +51,7 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   const count = q.data?.comments.length ?? 0;
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
   const send = useMutation({
-    mutationFn: () => api.tool("comment", { id, body: comment }),
+    mutationFn: (body: string) => api.tool("comment", { id, body }),
     onSuccess: () => { setComment(""); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
@@ -88,7 +89,14 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
           </div>
         )}
         <section className="flex flex-col gap-3" aria-label="Comments">
-          {comments.map((c) => <Bubble key={c.id} c={c} mine={c.author?.id === meId} mentions={memberNames} locked={locked} />)}
+          {comments.map((c, i) => (
+            <Bubble
+              key={c.id} c={c} mine={c.author?.id === meId} mentions={memberNames} locked={locked}
+              // The agent's question, while the task waits on me: its answers are a tap away.
+              answers={i === comments.length - 1 && t?.waiting_on?.id === meId && !send.isPending ? c.options : undefined}
+              onAnswer={(a) => send.mutate(a)}
+            />
+          ))}
         </section>
         <LiveTrail task={id} />
         <div ref={endRef} />
@@ -96,7 +104,7 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
       {!locked && (
         <form
           className={cn("relative mx-3 mt-1 flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-sm focus-within:ring-2 focus-within:ring-input", drawer ? "mb-[calc(0.75rem+env(safe-area-inset-bottom))]" : "mb-3")}
-          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim() && !send.isPending) send.mutate(); }}
+          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim() && !send.isPending) send.mutate(comment); }}
         >
           {suggestions.length > 0 && (
             <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg">
@@ -140,7 +148,8 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
 }
 
 // Bubble is one message; an agent's carries the trace of what it did underneath.
-function Bubble({ c, mine, mentions, locked }: { c: Comment; mine: boolean; mentions: string[]; locked: boolean }) {
+function Bubble({ c, mine, mentions, locked, answers, onAnswer }: { c: Comment; mine: boolean; mentions: string[]; locked: boolean; answers?: string[]; onAnswer: (a: string) => void }) {
+  const cited = c.author?.kind === "agent" ? sources(c.body) : [];
   return (
     <div className={cn("flex gap-2.5", mine && "flex-row-reverse")}>
       {!mine && <Avatar m={c.author} className="mt-0.5" />}
@@ -149,10 +158,29 @@ function Bubble({ c, mine, mentions, locked }: { c: Comment; mine: boolean; ment
           {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
           {!c.activity?.length && c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
           <Markdown text={c.body} mentions={mentions} />
+          {cited.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+              Sources
+              {cited.map((s) => (
+                <a key={s.host} href={s.url} target="_blank" rel="noreferrer noopener" className="flex max-w-44 items-center gap-1 rounded-full border border-border px-2 py-0.5 hover:bg-muted hover:text-foreground">
+                  <Globe className="size-3 shrink-0" /><span className="truncate">{s.host}</span>
+                </a>
+              ))}
+            </div>
+          )}
           <Reactions c={c} disabled={locked} />
           {mine && <div className="mt-0.5 text-right text-[11px] text-muted-foreground/70">{ago(c.created_at)}</div>}
         </div>
         {c.activity?.length ? <ActivityTrail steps={c.activity} className="px-1" /> : null}
+        {answers && answers.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Quick answers">
+            {answers.map((a) => (
+              <button key={a} type="button" onClick={() => onAnswer(a)} className="rounded-full border border-border bg-card px-3 py-1 text-sm hover:bg-[linear-gradient(var(--accent),var(--accent))]">
+                {a}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
