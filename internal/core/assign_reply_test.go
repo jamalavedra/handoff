@@ -120,3 +120,69 @@ func TestChatReplyPerRequest(t *testing.T) {
 	ask(1)
 	ask(2)
 }
+
+func TestTriageQuestionsGoToChat(t *testing.T) {
+	srv := fakeModel(t, http.StatusOK, map[string]any{
+		"title": "Find restaurants above $30 in SF", "work": "## Italian\n- Delfina",
+		"questions": []string{"Any neighbourhood?", "Lunch or dinner?"},
+	}, new(atomic.Value))
+	e := triageEnv(t, srv)
+	admin := e.org(t, "triq")
+	e.agent(t, admin, "Acme Bot", nil)
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	task := e.create(t, admin, core.NewTask{Title: "find restaurants above 30 in sf"})[0]
+	d := waitTriage(t, e, admin, task.ID)
+	if strings.Contains(d.Task.Body, "?") || d.Task.Body != "## Italian\n- Delfina" {
+		t.Fatalf("questions leaked into the details: %q", d.Task.Body)
+	}
+	if len(d.Comments) != 1 || !strings.Contains(d.Comments[0].Body, "- Any neighbourhood?\n- Lunch or dinner?") {
+		t.Fatalf("questions not in the chat: %+v", d.Comments)
+	}
+}
+
+func TestHandingATaskToTheAgent(t *testing.T) {
+	// The "model" answers every call the same way; for a take-on that's a plain reply with no tool calls,
+	// so the check is that the agent answers in the chat after being handed the task.
+	srv := fakeModel(t, http.StatusOK, map[string]any{"title": "Draft the newsletter"}, new(atomic.Value))
+	e := triageEnv(t, srv)
+	admin := e.org(t, "takeon")
+	bot := e.agent(t, admin, "Acme Bot", nil)
+	other := e.agent(t, admin, "Other bot", nil)
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	task := e.create(t, admin, core.NewTask{Title: "draft the newsletter"})[0]
+	waitTriage(t, e, admin, task.ID)
+	count := func() int {
+		d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		return len(d.Comments)
+	}
+	before := count()
+	// Handing it to an agent that isn't the workspace's own does nothing more.
+	to := "Other bot"
+	if _, err := e.s.UpdateTask(e.ctx, admin, core.UpdateTaskIn{ID: task.ID, Assignee: &to}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	if count() != before {
+		t.Fatal("a different agent was made to take it on")
+	}
+	_ = other
+	to = "Acme Bot"
+	if _, err := e.s.UpdateTask(e.ctx, admin, core.UpdateTaskIn{ID: task.ID, Assignee: &to}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 200 && count() == before; i++ {
+		time.Sleep(25 * time.Millisecond)
+	}
+	d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+	if len(d.Comments) != before+1 || d.Comments[len(d.Comments)-1].Author.ID != bot.Member.ID {
+		t.Fatalf("the agent didn't take it on: %+v", d.Comments)
+	}
+	// It let go of the task when it finished.
+	if d.Task.ClaimedBy != nil {
+		t.Fatalf("still claimed: %+v", d.Task.ClaimedBy)
+	}
+}

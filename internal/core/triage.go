@@ -543,19 +543,20 @@ func (s *Service) failTriage(ctx context.Context, cl *triageClaim, agentID, reas
 // ---- the model ----
 
 type triageSuggestion struct {
-	Title    string   `json:"title"`
-	Due      string   `json:"due"`
-	Priority *int     `json:"priority"`
-	Project  string   `json:"project"`
-	Labels   []string `json:"labels"`
-	Assignee string   `json:"assignee"`
-	Plan     string   `json:"plan"`
-	Work     string   `json:"work"`
+	Title     string   `json:"title"`
+	Due       string   `json:"due"`
+	Priority  *int     `json:"priority"`
+	Project   string   `json:"project"`
+	Labels    []string `json:"labels"`
+	Assignee  string   `json:"assignee"`
+	Plan      string   `json:"plan"`
+	Work      string   `json:"work"`
+	Questions []string `json:"questions"`
 }
 
 const triagePrompt = `You triage new tasks in a shared task list used by a team of people and AI agents, and you do the work yourself when you can.
 Read the task and reply with one JSON object and nothing else:
-{"title": string, "due": "YYYY-MM-DD" or null, "priority": 0-4 or null, "project": string or null, "labels": [string], "assignee": string or null, "work": string, "plan": string}
+{"title": string, "due": "YYYY-MM-DD" or null, "priority": 0-4 or null, "project": string or null, "labels": [string], "assignee": string or null, "work": string, "plan": string, "questions": [string]}
 
 - title: the task as a short imperative (at most 80 characters), in the same language, keeping every specific detail (names, products, amounts, places). Drop greetings and filler like "hey", "hi", "pls", "can you", "I need to", and words that only state the due date. Example: "hey can u compare pixel 8 vs pixel 9" -> "Compare Pixel 8 and Pixel 9".
 - due: only if the text implies a date or deadline. Resolve relative dates ("friday", "tomorrow", "end of month") against today's date.
@@ -563,8 +564,9 @@ Read the task and reply with one JSON object and nothing else:
 - project: only if one of the listed projects clearly fits; use its exact name. Otherwise null.
 - labels: up to 3 short lowercase labels, preferring ones already used. Empty if none fit.
 - assignee: only if the text explicitly names one of the listed members as the person to do it; use the exact name. Never infer an assignee from greetings or other words. Otherwise null.
-- work: if you can complete the task yourself right now from your own knowledge (research, a comparison, an explanation, a summary, a draft, a list of options, a checklist), do it and put the finished result here as markdown: a short intro line, then the substance (use a table for comparisons, headings and lists otherwise), then a one-line recommendation or next step if it helps. Be specific and accurate; say when a fact may be out of date. At most 5000 characters. If the task needs things you can't do (book, buy, call, attend, access private systems or recent data you don't have), leave work empty.
-- plan: only when work is empty: markdown, at most 600 characters: one line starting "Done when", then 2-5 short steps, then any open questions. Empty when you did the work.
+- work: do the task yourself whenever you can from your own knowledge: research, a list of options or recommendations (places, products, tools), a comparison, an explanation, a summary, a draft, a checklist. If the request is broad, make sensible assumptions, do it anyway and say the assumptions in one line. Write the finished result as markdown: one short intro line, then the substance (a table for comparisons; headings and lists otherwise), then a one-line recommendation if it helps. Be specific; mark facts that may be out of date. At most 5000 characters. If the task has details already, the work is the complete document: keep what the creator wrote that still matters. Leave work empty only when the task truly needs things you can't do (book, buy, call, attend, access private systems).
+- plan: only when work is empty: markdown, at most 500 characters: one line starting "Done when", then 2-5 short steps. No questions here.
+- questions: 0-3 short questions whose answers would make the result better (e.g. preferred neighbourhood or budget). They go to the chat, not into the task. Empty if none.
 Never invent facts that are not in the task or that you don't know.`
 
 func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string, org *Org, t triageTask, projects []ProjectOut, members []MemberOut) (triageSuggestion, error) {
@@ -746,10 +748,8 @@ func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageC
 			if len(work) > 8000 {
 				work = work[:8000]
 			}
-			if strings.TrimSpace(r.Body) != "" {
-				work = "---\n\n" + work
-			}
-			upd.Body, changed = &work, append(changed, "work")
+			// The work is the task's document (it folds in what the creator wrote); the previous text stays in history.
+			upd.Body, upd.BodyMode, upd.Confirm, changed = &work, "replace", true, append(changed, "work")
 		} else if plan := strings.TrimSpace(sugg.Plan); plan != "" {
 			if len(plan) > 2000 {
 				plan = plan[:2000]
@@ -763,7 +763,12 @@ func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageC
 			if _, err := c.updateTask(upd); err != nil {
 				return err
 			}
-			if err := c.addComment(r.ID, triageNote(changed, upd, c)); err != nil {
+			note := triageNote(changed, upd, c)
+			// Questions belong in the conversation, never in the task's document.
+			if qs := cleanQuestions(sugg.Questions); len(qs) > 0 {
+				note += "\n\nA few questions to make it better:\n- " + strings.Join(qs, "\n- ")
+			}
+			if err := c.addComment(r.ID, note); err != nil {
 				return err
 			}
 		}
@@ -817,4 +822,14 @@ func triageNote(changed []string, upd UpdateTaskIn, c *call) string {
 		note += " Mention me here if you want changes."
 	}
 	return note
+}
+
+func cleanQuestions(in []string) []string {
+	var out []string
+	for _, q := range in {
+		if q = strings.TrimSpace(q); q != "" && len(out) < 3 {
+			out = append(out, clip(q, 200))
+		}
+	}
+	return out
 }
