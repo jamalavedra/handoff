@@ -297,25 +297,27 @@ func TestChatReplyLooksUpAndReacts(t *testing.T) {
 	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot how much ram?"}); err != nil {
 		t.Fatal(err)
 	}
-	var d core.TaskDetailOut
+	// The reply carries its lookup, and the question it answered ends with the agent's ✅, the 👀 gone
+	// (swapped just after the reply is posted).
+	var reply, asked core.CommentOut
+	var emojis []string
 	for range 200 {
-		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
-		if n := len(d.Comments); n > 0 && d.Comments[n-1].Author.ID == bot.Member.ID && len(d.Comments[n-1].Lookups) > 0 {
-			break
+		d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if n := len(d.Comments); n >= 2 && d.Comments[n-1].Author.ID == bot.Member.ID {
+			reply, asked, emojis = d.Comments[n-1], d.Comments[n-2], nil
+			for _, r := range asked.Reactions {
+				if slices.Contains(r.By, "Acme Bot") {
+					emojis = append(emojis, r.Emoji)
+				}
+			}
+			if slices.Equal(emojis, []string{"✅"}) {
+				break
+			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	n := len(d.Comments)
-	reply, asked := d.Comments[n-1], d.Comments[n-2]
 	if len(reply.Lookups) != 1 || reply.Lookups[0] != (core.Lookup{Source: "Web search", Tool: "web_search", Query: "pixel 9 ram"}) {
 		t.Fatalf("lookups on the reply: %+v", reply)
-	}
-	// The question it answered ends with its ✅, the 👀 gone.
-	var emojis []string
-	for _, r := range asked.Reactions {
-		if slices.Contains(r.By, "Acme Bot") {
-			emojis = append(emojis, r.Emoji)
-		}
 	}
 	if !slices.Equal(emojis, []string{"✅"}) {
 		t.Fatalf("agent reactions on the question: %+v", asked.Reactions)
@@ -338,11 +340,19 @@ func TestChatReplyFailureClearsLooking(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	time.Sleep(200 * time.Millisecond)
-	d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
-	for _, c := range d.Comments {
-		if strings.HasPrefix(c.Body, "@Acme Bot") && len(c.Reactions) > 0 {
-			t.Fatalf("a failed answer left reactions: %+v", c.Reactions)
+	var left []core.ReactionOut
+	for range 100 { // the 👀 is cleared just after the reply is posted
+		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		left = nil
+		for _, c := range d.Comments {
+			if strings.HasPrefix(c.Body, "@Acme Bot") {
+				left = c.Reactions
+			}
 		}
+		if len(left) == 0 {
+			return
+		}
+		time.Sleep(30 * time.Millisecond)
 	}
+	t.Fatalf("a failed answer left reactions: %+v", left)
 }
