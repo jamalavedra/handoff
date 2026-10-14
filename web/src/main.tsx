@@ -134,6 +134,8 @@ function Layout({ me }: { me: Me }) {
   const { projects, pending, unread } = useLayoutData();
   const logout = useLogout();
   const [help, setHelp] = useState(false);
+  // On phones a task page is a pushed screen: its own back bar, no app bar or tabs.
+  const onTask = useRouterState({ select: (st) => st.location.pathname.startsWith("/tasks/") });
   const showHelp = useCallback(() => setHelp(true), []);
   useShortcuts(showHelp);
   return (
@@ -175,15 +177,15 @@ function Layout({ me }: { me: Me }) {
           </div>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
-          <MobileTopBar me={me} unread={unread} />
-          <main className="min-w-0 flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-8 md:pt-8 lg:px-16">
+          {!onTask && <MobileTopBar me={me} unread={unread} />}
+          <main className={cn("min-w-0 flex-1 px-4 md:px-8 md:pt-8 md:pb-6 lg:px-16", onTask ? "pt-[calc(0.5rem+env(safe-area-inset-top))] pb-[env(safe-area-inset-bottom)]" : "pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))]")}>
             <div className="mx-auto max-w-[800px]">
               <Outlet />
             </div>
           </main>
         </div>
         <TaskPanel />
-        <MobileTabBar pending={pending} unread={unread} />
+        {!onTask && <MobileTabBar pending={pending} unread={unread} />}
         <Toaster />
       </div>
       </CommandPaletteProvider>

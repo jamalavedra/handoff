@@ -30,7 +30,7 @@ const priorityText = ["Urgent", "High", "Normal", "Low", "Someday"];
 
 function Pill({ icon: Icon, children, className, label, select }: { icon?: typeof Flag; children: React.ReactNode; className?: string; label: string; select?: React.ReactNode }) {
   return (
-    <span className={cn("relative inline-flex h-8 max-w-full items-center gap-1.5 rounded-full bg-accent px-3 text-sm font-medium text-foreground/80 focus-within:ring-2 focus-within:ring-foreground/40 hover:bg-foreground/10", className)}>
+    <span className={cn("relative inline-flex h-8 max-w-full shrink-0 items-center gap-1.5 rounded-full bg-accent px-3 text-sm font-medium text-foreground/80 focus-within:ring-2 focus-within:ring-foreground/40 hover:bg-foreground/10", className)}>
       {Icon && <Icon className="size-3.5 shrink-0" />}
       <span className="truncate">{children}</span>
       {select && <ChevronDown className="size-3.5 shrink-0 opacity-50" />}
@@ -216,7 +216,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const typers = here.filter((h) => h.typing);
 
   return (
-    <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-13rem-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)]")}>
+    <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:animate-none")}>
       <div className="mb-3 flex items-center gap-1">
         {panel ? (
           <button onClick={closePanel} className="-ml-2 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)">
@@ -253,7 +253,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </Menu>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-2">
+      {/* One scrollable row on phones so the title stays near the top; wrapped on wider screens and in the panel. */}
+      <div className={cn("mb-4 flex gap-2", panel ? "flex-wrap" : "-mx-4 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0")}>
         <Pill label="Status" className={statusTone[t.status]} select={!locked && (
           <select className={overlay} value={t.status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
             {(["open", "in_progress", "blocked", "done", "cancelled"] as const).map((s) => <option key={s} value={s}>{statusLabel[s]}</option>)}
@@ -351,7 +352,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
 
       {!locked && (
         <form
-          className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-lg md:bottom-4"
+          className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-lg md:bottom-4"
           onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(); }}
         >
           {suggestions.length > 0 && (
