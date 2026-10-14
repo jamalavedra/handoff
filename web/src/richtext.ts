@@ -134,8 +134,19 @@ export function richExtensions(placeholder = ""): Extensions {
   ];
 }
 
-// toMarkdown reads the editor back as the markdown we store.
+// toMarkdown reads the editor back as the markdown we store. Runs of blank lines between blocks
+// collapse to one; inside a code fence they're content and stay as they are.
 export function toMarkdown(editor: Editor): string {
   const md = (editor.storage as { markdown: { getMarkdown: () => string } }).markdown.getMarkdown();
-  return md.replace(/\n{3,}/g, "\n\n").trim();
+  const out: string[] = [];
+  let fence = "";
+  for (const line of md.split("\n")) {
+    const m = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length && !m[2].trim()) fence = "";
+    } else if (m) fence = m[1];
+    else if (line === "" && out.at(-1) === "" && out.at(-2) === "") continue;
+    out.push(line);
+  }
+  return out.join("\n").trim();
 }

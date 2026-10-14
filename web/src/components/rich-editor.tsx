@@ -14,13 +14,16 @@ export type Caret = { x: number; y: number } | "end";
 // RichEditor edits a task body in place, formatted as it reads, and hands back markdown.
 // ⌘/Ctrl+Enter saves, Esc cancels, and leaving the editor (a click elsewhere, Tab away) saves if
 // anything changed. Switching windows doesn't count as leaving. It's loaded on demand by BodyEditor.
-export default function RichEditor({ body, changed, placeholder, caret, onSave, onClose }: {
+export default function RichEditor({ body, draft, changed, placeholder, caret, onSave, onSaved, onLost, onClose }: {
   body: string;
+  draft?: string; // start from this unsaved text instead of the body
   changed: boolean; // someone else saved the body since editing began
   placeholder: string;
   caret: Caret;
   onSave: (body: string) => Promise<unknown>;
-  onClose: (saved?: string) => void;
+  onSaved: (body: string) => void;
+  onLost: (draft: string) => void; // the save on leaving failed, with no editor left to keep the draft
+  onClose: () => void;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const linkInput = useRef<HTMLInputElement>(null);
@@ -37,7 +40,7 @@ export default function RichEditor({ body, changed, placeholder, caret, onSave, 
     immediatelyRender: true,
     shouldRerenderOnTransaction: false,
     extensions: richExtensions(placeholder),
-    content: body,
+    content: draft ?? body,
     editorProps: {
       attributes: { class: "md min-h-24 outline-none", role: "textbox", "aria-multiline": "true", "aria-label": "Details" },
       // These keys are the editor's alone: the window-level ones (⌘K menu, Esc closing the panel) stand down.
@@ -53,8 +56,8 @@ export default function RichEditor({ body, changed, placeholder, caret, onSave, 
   }));
   const editor = useEditor({ ...options, immediatelyRender: true });
   // What "unchanged" means: the body as the editor writes it, so opening and closing never rewrites
-  // an agent's markdown.
-  if (base.current === null) base.current = toMarkdown(editor);
+  // an agent's markdown. A restored draft is a change.
+  if (base.current === null) base.current = draft === undefined ? toMarkdown(editor) : body;
 
   const save = async () => {
     if (done.current || saving) return;
@@ -63,12 +66,17 @@ export default function RichEditor({ body, changed, placeholder, caret, onSave, 
     setSaving(true);
     try {
       await onSave(md);
-      close(md);
     } catch {
-      setSaving(false); // the page shows the error; keep the draft
+      return setSaving(false); // the page shows the error; keep the draft
     }
+    base.current = md;
+    onSaved(md);
+    setSaving(false);
+    if (done.current || editor.isDestroyed) return;
+    // Typed on while it saved: stay open, those edits are the next save.
+    if (toMarkdown(editor) === md) close();
   };
-  const close = (saved?: string) => { done.current = true; onClose(saved); };
+  const close = () => { done.current = true; onClose(); };
   const openLink = () => setLink(editor.getAttributes("link").href ?? "");
   act.current = { save, cancel: () => close(), link: openLink, leave: () => leave() };
 
@@ -88,13 +96,15 @@ export default function RichEditor({ body, changed, placeholder, caret, onSave, 
     return () => cancelAnimationFrame(frame);
   }, [editor]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Leaving with unsaved changes (say the panel switches tasks) still saves them.
+  // Leaving with unsaved changes (say the panel switches tasks) still saves them, and if that fails
+  // the draft goes to onLost.
   useEffect(() => () => {
     if (done.current) return;
+    let md: string;
     try {
-      const md = toMarkdown(editor);
-      if (md !== base.current) onSave(md).catch(() => {});
-    } catch { /* editor already gone */ }
+      md = toMarkdown(editor);
+    } catch { return; /* editor already gone */ }
+    if (md !== base.current) onSave(md).catch(() => onLost(md));
   }, [editor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (link !== null) linkInput.current?.focus(); }, [link !== null]); // eslint-disable-line react-hooks/exhaustive-deps

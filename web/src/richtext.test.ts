@@ -92,3 +92,12 @@ test("a list mixing tasks and plain items becomes separate lists", () => {
 test("empty body stays empty", () => {
   assert.equal(roundTrip(""), "");
 });
+
+test("blank lines inside a code fence are kept", () => {
+  const doc = "Intro\n\n```\na\n\n\n\nb\n```\n\n- item\n\n  ```js\n  x\n  \n  \n  y\n  ```";
+  assert.equal(roundTrip(doc), doc);
+  const e = load(doc);
+  e.commands.setTextSelection(6); // after "Intro"
+  e.commands.insertContent("!");
+  assert.equal(toMarkdown(e), doc.replace("Intro", "Intro!"));
+});

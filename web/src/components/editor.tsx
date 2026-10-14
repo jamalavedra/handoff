@@ -1,4 +1,5 @@
 import { lazy, Suspense, useRef, useState } from "react";
+import { toast } from "sonner";
 import { cn, type Task } from "../lib";
 import { Markdown } from "./markdown";
 import type { Caret } from "./rich-editor";
@@ -9,11 +10,22 @@ const RichEditor = lazy(loadEditor);
 
 const readStyle = "text-[15px] leading-relaxed text-foreground/80 sm:text-sm";
 
+// A draft whose save failed after its editor was gone waits here, per task, until it's restored and
+// saved or discarded.
+const draftKey = (id: string) => `handoff-draft:${id}`;
+const drafts = {
+  get: (id: string) => { try { return localStorage.getItem(draftKey(id)); } catch { return null; } },
+  set: (id: string, md: string) => { try { localStorage.setItem(draftKey(id), md); } catch { /* private mode */ } },
+  drop: (id: string) => { try { localStorage.removeItem(draftKey(id)); } catch { /* private mode */ } },
+};
+
 // BodyEditor shows a task's details (its document: agents write results here) and edits them in
 // place: click into the text and it becomes a rich editor at that spot, saved back as markdown.
+// Key it by task: a draft stays with the task it was written for.
 export function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) => Promise<unknown>; disabled: boolean }) {
   const body = t.body ?? "";
-  const [editing, setEditing] = useState<{ caret: Caret; base: string } | null>(null);
+  const [editing, setEditing] = useState<{ caret: Caret; base: string; draft?: string } | null>(null);
+  const [lost, setLost] = useState(() => drafts.get(t.id));
   // Just-saved text, shown until the refetched task catches up.
   const [saved, setSaved] = useState<{ text: string; over: string } | null>(null);
   const view = useRef<HTMLDivElement>(null);
@@ -28,22 +40,32 @@ export function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: st
       <Suspense fallback={fallback}>
         <RichEditor
           body={editing.base}
+          draft={editing.draft}
           changed={body !== editing.base && !(saved && saved.over === body)}
           placeholder="Write, or type ## for a heading, - for a list, [] for a checklist…"
           caret={editing.caret}
-          onSave={onSave}
-          onClose={(text) => { if (text !== undefined) setSaved({ text, over: body }); setEditing(null); }}
+          onSave={(md) => onSave(md).then(() => { drafts.drop(t.id); setLost(null); })}
+          onSaved={(text) => { setSaved({ text, over: body }); setEditing((e) => e && { ...e, base: text, draft: undefined }); }}
+          onLost={(md) => { drafts.set(t.id, md); toast.error(`Couldn't save your edits to “${t.title}”. Open it again to restore them.`); }}
+          onClose={() => setEditing(null)}
         />
       </Suspense>
     );
   }
+  const recover = lost !== null && !disabled && (
+    <div className="mb-2 flex items-center gap-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      <span className="min-w-0 flex-1">Your last edits here didn't save.</span>
+      <button className="text-xs font-medium hover:underline" onClick={() => setEditing({ caret: "end", base: shown, draft: lost })}>Restore</button>
+      <button className="text-xs text-amber-700/70 hover:text-red-600" onClick={() => { drafts.drop(t.id); setLost(null); }}>Discard</button>
+    </div>
+  );
   if (!shown) return disabled ? null : (
-    <button className="text-left text-sm text-muted-foreground/70 hover:text-foreground/80" onPointerEnter={loadEditor} onFocus={loadEditor} onClick={() => edit("end")}>
+    <>{recover}<button className="text-left text-sm text-muted-foreground/70 hover:text-foreground/80" onPointerEnter={loadEditor} onFocus={loadEditor} onClick={() => edit("end")}>
       {empty}
-    </button>
+    </button></>
   );
   return (
-    <div
+    <>{recover}<div
       ref={view}
       role={disabled ? undefined : "button"}
       tabIndex={disabled ? undefined : 0}
@@ -60,6 +82,6 @@ export function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: st
       className={cn("-mx-2 rounded-lg px-2 py-1", readStyle, !disabled && "cursor-text hover:bg-muted")}
     >
       <Markdown text={shown} />
-    </div>
+    </div></>
   );
 }

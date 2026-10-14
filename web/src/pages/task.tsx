@@ -137,7 +137,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const [activityOpen, setActivityOpen] = useState(false);
   const meId = useMe().data?.member?.id;
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
-  const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => { markLocal(id); return api.tool("update_task", { id, ...patch }); }, onSuccess: invalidate });
+  // A patch can name its task: a body draft saved as the view switches tasks still belongs to the old one.
+  const update = useMutation({ mutationFn: ({ id: on = id, ...patch }: { id?: string } & Record<string, unknown>) => { markLocal(on); return api.tool("update_task", { id: on, ...patch }); }, onSuccess: invalidate });
   const close = useMutation({
     mutationFn: (status: string) => { markLocal(id); return api.tool<{ next?: Task }>("close_task", { id, status }); },
     onSuccess: (r, status) => { invalidate(); undoable(qc, completedText(status === "done" ? "Task completed" : "Task cancelled", r.next), () => undoClose(id, r.next)); },
@@ -300,7 +301,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 
-      <div className="mb-6"><BodyEditor t={t} disabled={locked} onSave={(body) => update.mutateAsync({ body, body_mode: "replace", confirm: true })} /></div>
+      <div className="mb-6"><BodyEditor key={t.id} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
 
       {/* Dependencies are usually set by agents over the API; people see them and can drop them. */}
       {(t.blocked_by.length > 0 || t.blocks.length > 0) && (
