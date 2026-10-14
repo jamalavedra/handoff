@@ -6,6 +6,7 @@ import { TaskLink } from "../components/tasklink";
 import { useTabs } from "../components/tabs";
 import { taskHref } from "../tabs";
 import { Markdown } from "../components/markdown";
+import { BodyEditor } from "../components/editor";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useMe } from "../main";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -13,7 +14,6 @@ import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, ty
 import { dueLabel, mentionQuery, repeatLabel } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck, Who } from "../components/app";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
 import { completedText, markLocal, undoable, undoClose } from "../components/feedback";
 import { toast } from "sonner";
@@ -97,39 +97,6 @@ function TitleEditor({ t, onSave, disabled }: { t: Task; onSave: (title: string)
       }}
       className={cn("-mx-1 min-w-0 flex-1 resize-none rounded-md bg-transparent px-1 text-2xl leading-tight font-semibold outline-none [field-sizing:content] focus:bg-card focus:ring-2 focus:ring-input", (t.status === "done" || t.status === "cancelled") && "text-muted-foreground/70", t.triage === "pending" && "agent-shimmer")}
     />
-  );
-}
-
-function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) => Promise<unknown>; disabled: boolean }) {
-  const [editing, setEditing] = useState(false);
-  const [v, setV] = useState(t.body ?? "");
-  if (editing)
-    return (
-      <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); onSave(v).then(() => setEditing(false), () => {}); }}>
-        <Textarea autoFocus rows={8} value={v} onChange={(e) => setV(e.target.value)} aria-label="Details" placeholder="Markdown works: **bold**, lists, - [ ] checklists, links" className="font-mono text-[13px]" />
-        <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
-          <Button size="sm">Save</Button>
-        </div>
-      </form>
-    );
-  if (!t.body) return disabled ? null : (
-    <button className="text-left text-sm text-muted-foreground/70 hover:text-foreground/80" onClick={() => { setV(""); setEditing(true); }}>
-      {t.assignee?.kind === "agent" ? `${t.assignee.name}'s work on this will show up here. Add details…` : "Add details…"}
-    </button>
-  );
-  const edit = () => { if (!disabled && !window.getSelection()?.toString()) { setV(t.body ?? ""); setEditing(true); } };
-  return (
-    <div
-      role={disabled ? undefined : "button"}
-      tabIndex={disabled ? undefined : 0}
-      aria-label={disabled ? undefined : "Edit details"}
-      onClick={edit}
-      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); edit(); } }}
-      className={cn("-mx-2 rounded-lg px-2 py-1 text-[15px] leading-relaxed text-foreground/80 sm:text-sm", !disabled && "cursor-text hover:bg-muted")}
-    >
-      <Markdown text={t.body} />
-    </div>
   );
 }
 
@@ -333,7 +300,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 
-      <div className="mb-6"><BodyEditor key={t.body ?? ""} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ body, body_mode: "replace", confirm: true })} /></div>
+      <div className="mb-6"><BodyEditor t={t} disabled={locked} onSave={(body) => update.mutateAsync({ body, body_mode: "replace", confirm: true })} /></div>
 
       {/* Dependencies are usually set by agents over the API; people see them and can drop them. */}
       {(t.blocked_by.length > 0 || t.blocks.length > 0) && (
