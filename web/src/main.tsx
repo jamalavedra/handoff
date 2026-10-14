@@ -16,6 +16,7 @@ import { usePanelTask, useWide } from "./components/tasklink";
 import { AgentsPage } from "./pages/agents";
 import { AutomationsPage } from "./pages/automations";
 import { AdminPage } from "./pages/admin";
+import { ConnectionsPage } from "./pages/connections";
 import { QuickAddProvider, useQuickAdd } from "./components/quickadd";
 import { PageHeader } from "./components/app";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
@@ -495,6 +496,7 @@ const router = createRouter({
     r("/trash", TrashPage),
     r("/settings", AdminPage),
     r("/settings/agents", AgentsPage),
+    r("/settings/connections", ConnectionsPage),
     r("/settings/activity", ActivityPage),
     // Agents, Activity and Admin moved into Settings; old links still land there.
     r("/admin", () => <Navigate to="/settings" replace />),

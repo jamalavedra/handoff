@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	org.HandleFunc("GET /.well-known/oauth-authorization-server", s.authServerMetadata)
 	org.HandleFunc("POST /oauth/register", s.register)
 	org.HandleFunc("GET /oauth/authorize", s.authorize)
+	org.HandleFunc("GET /oauth/mcp/callback", s.connectionCallback)
 	org.HandleFunc("POST /oauth/token", s.token)
 	org.HandleFunc("POST /oauth/revoke", s.revoke)
 	org.Handle("/mcp", s.mcp())
@@ -102,6 +103,12 @@ func (s *Server) Handler() http.Handler {
 		if r.URL.Path == "/internal/tls-ask" {
 			s.tlsAsk(w, r)
 			return
+		}
+		if r.URL.Path == "/oauth/mcp/callback" && strings.HasPrefix(r.Host, "localhost") {
+			if to, ok := s.Svc.LoopbackCallback(r.Host, r.URL.Query()); ok {
+				http.Redirect(w, r, to, http.StatusFound)
+				return
+			}
 		}
 		o, err := s.Svc.OrgForHost(r.Context(), r.Host)
 		switch {
