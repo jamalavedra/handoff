@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
+import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sun, Trash2, Users } from "lucide-react";
 import { api, projectName, type Me, type Project, type Task } from "../lib";
 import { setTheme } from "../theme";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
@@ -72,7 +72,6 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
   const pages: Item[] = [
     { id: "/", label: "My tasks", icon: CheckSquare, keys: "G T", run: to("/") },
     { id: "/notifications", label: "Notifications", icon: Bell, keys: "G N", run: to("/notifications") },
-    { id: "/ready", label: "Ready", icon: Zap, keys: "G R", run: to("/ready") },
     { id: "/team", label: "Team", icon: Users, run: to("/team") },
     { id: "/projects", label: "Projects", icon: FolderKanban, keys: "G P", run: to("/projects") },
     { id: "/activity", label: "Activity", icon: Activity, run: to("/activity") },

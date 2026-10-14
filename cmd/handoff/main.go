@@ -89,6 +89,7 @@ func serve() error {
 	if err != nil {
 		return err
 	}
+	go svc.RunTriage(ctx)
 	srv := server.New(cfg, svc, &mail.Mailer{URL: cfg.SMTPURL, From: cfg.MailFrom}, static, version)
 	hs := &http.Server{Addr: cfg.Addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {

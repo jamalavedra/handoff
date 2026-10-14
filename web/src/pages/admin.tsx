@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Sparkles } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, type Member } from "../lib";
 import { Badge, Card, ErrorText, PageHeader } from "../components/app";
@@ -47,6 +48,7 @@ export function AdminPage() {
         ))}
         <div className="px-4"><ErrorText error={change.error} /></div>
       </Card>
+      <TriageSettings agents={members.data?.members.filter((m) => m.kind === "agent" && m.status === "active") ?? []} />
       <h2 className="mb-2 text-sm font-medium text-muted-foreground">Workspace</h2>
       <Card className="p-4">
         <form className="flex max-w-md flex-col gap-3 text-sm" onSubmit={(e) => { e.preventDefault(); saveOrg.mutate(); }}>
@@ -64,6 +66,71 @@ export function AdminPage() {
           <p className="mb-2 text-foreground/70">Export every task as a beads <code>issues.jsonl</code>, or import one with <code>handoff bd import</code> / <code>POST /api/beads/import</code>.</p>
           <a className="underline" href="/api/beads/export">Download issues.jsonl</a>
         </div>
+      </Card>
+    </>
+  );
+}
+
+type Triage = { enabled: boolean; agent?: { id: string; name: string }; base_url?: string; model?: string; has_credential: boolean };
+
+// Any OpenAI-compatible endpoint works; these are shortcuts for the common ones.
+const providers = [
+  { name: "Anthropic", url: "https://api.anthropic.com/v1", model: "claude-haiku-5-5" },
+  { name: "OpenAI", url: "https://api.openai.com/v1", model: "" },
+  { name: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "" },
+  { name: "Vercel AI Gateway", url: "https://ai-gateway.vercel.sh/v1", model: "" },
+];
+
+function TriageSettings({ agents }: { agents: Member[] }) {
+  const invalidate = useInvalidate();
+  const q = useQuery({ queryKey: ["triage"], queryFn: () => api.tool<Triage>("get_triage") });
+  const [f, setF] = useState({ agent: "", base_url: providers[0].url, model: providers[0].model, credential: "" });
+  useEffect(() => {
+    const t = q.data;
+    if (t?.enabled) setF({ agent: t.agent?.id ?? "", base_url: t.base_url ?? "", model: t.model ?? "", credential: "" });
+  }, [q.data]);
+  const save = useMutation({ mutationFn: () => api.tool<Triage>("set_triage", f), onSuccess: () => { setF((x) => ({ ...x, credential: "" })); invalidate(); } });
+  const off = useMutation({ mutationFn: () => api.tool("disable_triage"), onSuccess: invalidate });
+  const preset = providers.find((p) => p.url === f.base_url)?.name ?? "custom";
+  const t = q.data;
+  return (
+    <>
+      <h2 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-muted-foreground"><Sparkles className="size-3.5" />Triage</h2>
+      <Card className="mb-8 p-4">
+        <p className="mb-3 max-w-xl text-sm text-foreground/70">
+          When someone creates a task, this agent reads it, tidies the title, fills in the due date, priority, project and labels the text implies, suggests an owner if nobody was picked, and adds a short plan as a comment. Use the same agent your team already talks to. Without one, new tasks are left as written.
+        </p>
+        {t?.enabled && <p className="mb-3 text-sm"><span className="font-medium">On</span> · {t.agent?.name} · {t.model}</p>}
+        {agents.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Connect or add an agent on the Agents page first.</p>
+        ) : (
+          <form className="flex max-w-md flex-col gap-3 text-sm" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+            <label className="font-medium">Agent
+              <NativeSelect required value={f.agent} onChange={(e) => setF({ ...f, agent: e.target.value })} aria-label="Triage agent">
+                <option value="" disabled>Choose an agent</option>
+                {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </NativeSelect>
+            </label>
+            <label className="font-medium">Model provider
+              <NativeSelect value={preset} onChange={(e) => { const p = providers.find((x) => x.name === e.target.value); setF({ ...f, base_url: p?.url ?? "", model: p?.model || f.model }); }} aria-label="Model provider">
+                {providers.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+                <option value="custom">Other (OpenAI-compatible)</option>
+              </NativeSelect>
+            </label>
+            {preset === "custom" && <label className="font-medium">Base URL<Input required placeholder="https://…/v1" value={f.base_url} onChange={(e) => setF({ ...f, base_url: e.target.value })} /></label>}
+            <label className="font-medium">Model<Input required placeholder="model id as the provider names it" value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} /></label>
+            <label className="font-medium">API key or OAuth token
+              <Input type="password" autoComplete="off" required={!t?.has_credential} placeholder={t?.has_credential ? "Saved · leave empty to keep it" : "sk-…"} value={f.credential} onChange={(e) => setF({ ...f, credential: e.target.value })} />
+              <span className="text-xs font-normal text-muted-foreground">Sent as a bearer token. Stored encrypted and never shown again.</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <Button type="submit" disabled={save.isPending}>{t?.enabled ? "Save" : "Turn on triage"}</Button>
+              {t?.enabled && <Button type="button" variant="ghost" onClick={() => off.mutate()} disabled={off.isPending}>Turn off</Button>}
+              {save.isSuccess && <span className="text-xs text-green-700">Saved.</span>}
+            </div>
+            <ErrorText error={save.error || off.error || q.error} />
+          </form>
+        )}
       </Card>
     </>
   );
