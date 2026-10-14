@@ -104,6 +104,18 @@ func TestRunAutomation(t *testing.T) {
 		t.Fatalf("second run: %d deliveries", n)
 	}
 
+	// Run now is the upcoming occurrence done early: finishing it schedules the next one interval after
+	// its original due date, not after today.
+	soon := time.Now().UTC().AddDate(0, 0, 3)
+	weekly := e.create(t, admin, core.NewTask{Title: "Weekly sync notes", Assignee: "Report bot", Repeat: "weekly", Due: soon.Format("2006-01-02")})[0]
+	if _, err := run(admin, weekly.ID); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := s.CloseTask(e.ctx, admin, core.CloseTaskIn{ID: weekly.ID})
+	if err != nil || closed.Next == nil || closed.Next.Due != soon.AddDate(0, 0, 7).Format("2006-01-02") {
+		t.Fatalf("next after an early run: %+v %v", closed.Next, err)
+	}
+
 	// Activity shows who ran what.
 	act, err := s.Activity(e.ctx, admin, core.ActivityIn{})
 	if err != nil {

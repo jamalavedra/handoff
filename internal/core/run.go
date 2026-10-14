@@ -8,8 +8,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Run now: an automation (a repeating task) assigned to an agent runs at once instead of waiting for
-// its due date. The workspace's own agent takes the task on, as when it's handed one; another agent
+// Run now: the upcoming occurrence of an automation (a repeating task) assigned to an agent runs at
+// once instead of waiting for its due date. It's that occurrence done early: finishing it schedules
+// the next one interval after its original due date, as usual. The workspace's own agent takes the task on, as when it's handed one; another agent
 // with a webhook gets the "due" notification early (task.due), so its webhook fires within seconds.
 
 type RunAutomationOut struct {
@@ -85,9 +86,11 @@ func (s *Service) RunAutomation(ctx context.Context, p *Principal, in TaskIDIn) 
 				return errf(ErrConflict, "%s's webhook is already being called for this", agent.Name)
 			}
 			// The same notification as when it comes due, early; the excerpt keeps it apart from the
-			// scheduled one (one per due date) and isn't part of the payload.
-			if _, err := c.tx.Exec(c.ctx, `INSERT INTO notifications (org_id, member_id, kind, task_id, actor_id, excerpt)
-				VALUES ($1, $2, 'due', $3, $4, 'run now ' || to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))`,
+			// scheduled one (one per due date) and isn't part of the payload. Stamped with the clock, not
+			// the transaction's start: a webhook set while this ran has a later since, and only
+			// notifications from since on are delivered.
+			if _, err := c.tx.Exec(c.ctx, `INSERT INTO notifications (org_id, member_id, kind, task_id, actor_id, excerpt, created_at)
+				VALUES ($1, $2, 'due', $3, $4, 'run now ' || to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), clock_timestamp())`,
 				p.Org.ID, agent.ID, r.ID, p.Member.ID); err != nil {
 				return err
 			}

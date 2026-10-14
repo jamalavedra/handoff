@@ -105,7 +105,7 @@ function AutomationRow({ t, agent }: { t: Task; agent?: Member }) {
       <div className="flex shrink-0 items-center gap-2">
         {t.due && <span className="flex items-center gap-1.5"><span className="hidden text-xs text-muted-foreground @lg:inline">Next</span><DuePill due={t.due} /></span>}
         {t.assignee?.kind === "agent" && (
-          <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={run.isPending} onClick={() => run.mutate()} aria-label={`Run ${t.title} now`} title={`Have ${t.assignee.name} do it now; the schedule stays the same`}>
+          <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={run.isPending} onClick={() => run.mutate()} aria-label={`Run ${t.title} now`} title={`Run the upcoming occurrence now (${t.assignee.name}); the next one stays on schedule`}>
             <Play className="size-3.5" /><span className="hidden @lg:inline">Run now</span>
           </Button>
         )}
