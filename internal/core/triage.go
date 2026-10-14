@@ -725,23 +725,66 @@ func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageC
 				}
 			}
 		}
-		if len(changed) > 0 {
-			if _, err := c.updateTask(upd); err != nil {
-				return err
-			}
-		}
+		// The plan is part of the task's document; the chat gets a short note of what changed.
 		if plan := strings.TrimSpace(sugg.Plan); plan != "" {
 			if len(plan) > 2000 {
 				plan = plan[:2000]
 			}
-			if err := c.addComment(r.ID, plan); err != nil {
+			if strings.TrimSpace(r.Body) != "" {
+				plan = "## Plan\n\n" + plan
+			}
+			upd.Body, changed = &plan, append(changed, "plan")
+		}
+		if len(changed) > 0 {
+			if _, err := c.updateTask(upd); err != nil {
 				return err
 			}
-			changed = append(changed, "plan")
+			if err := c.addComment(r.ID, triageNote(changed, upd, c)); err != nil {
+				return err
+			}
 		}
 		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET triage = 'done', triage_error = '', triage_claim = NULL, triage_claim_until = NULL WHERE id = $1`, r.ID); err != nil {
 			return err
 		}
 		return c.event(r.ID, "triaged", map[string]any{"changed": changed})
 	})
+}
+
+var priorityWord = []string{"urgent", "high priority", "normal", "low priority", "someday"}
+
+// triageNote says in one line what triage changed, for the task's chat.
+func triageNote(changed []string, upd UpdateTaskIn, c *call) string {
+	var parts []string
+	for _, f := range changed {
+		switch f {
+		case "title":
+			parts = append(parts, "tidied the title")
+		case "due":
+			if d, err := time.Parse("2006-01-02", *upd.Due); err == nil {
+				parts = append(parts, "set it due "+d.Format("Mon, Jan 2"))
+			}
+		case "priority":
+			parts = append(parts, "marked it "+priorityWord[*upd.Priority])
+		case "project":
+			if p := c.projects[upd.Project]; p != nil {
+				parts = append(parts, "moved it to "+p.Name)
+			}
+		case "labels":
+			parts = append(parts, "labelled it “"+strings.Join(upd.Labels, "”, “")+"”")
+		case "assignee":
+			if m := c.members[*upd.Assignee]; m != nil {
+				parts = append(parts, "assigned it to "+m.Name)
+			}
+		case "plan":
+			parts = append(parts, "wrote a plan in the details")
+		}
+	}
+	if len(parts) == 0 {
+		return "I looked it over; nothing to change."
+	}
+	if len(parts) > 1 {
+		parts[len(parts)-2] += " and " + parts[len(parts)-1]
+		parts = parts[:len(parts)-1]
+	}
+	return "I " + strings.Join(parts, ", ") + "."
 }

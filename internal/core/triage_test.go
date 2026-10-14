@@ -115,10 +115,15 @@ func TestTriage(t *testing.T) {
 		got.Project != "Podcast" || !slices.Equal(got.Labels, []string{"audio"}) || got.Assignee == nil || got.Assignee.ID != bot.Member.ID {
 		t.Fatalf("triaged task: %+v (error %q)", got, got.TriageError)
 	}
-	if len(d.Comments) != 1 || d.Comments[0].Author.ID != bot.Member.ID || !strings.HasPrefix(d.Comments[0].Body, "Done when") {
-		t.Fatalf("plan comment: %+v", d.Comments)
+	// The plan is the task's document; the chat gets a one-line note.
+	if !strings.HasPrefix(got.Body, "Done when the intro") {
+		t.Fatalf("plan not in the body: %q", got.Body)
 	}
-	if !strings.HasPrefix(got.AgentNote, "Done when the intro") {
+	if len(d.Comments) != 1 || d.Comments[0].Author.ID != bot.Member.ID ||
+		d.Comments[0].Body != "I tidied the title, set it due Fri, Oct 16, moved it to Podcast, labelled it “audio”, assigned it to Acme Bot and wrote a plan in the details." {
+		t.Fatalf("triage note: %+v", d.Comments)
+	}
+	if !strings.HasPrefix(got.AgentNote, "I tidied the title") {
 		t.Fatalf("agent note = %q", got.AgentNote)
 	}
 	if !slices.ContainsFunc(d.Events, func(ev core.EventOut) bool { return ev.Kind == "triaged" && ev.Actor.ID == bot.Member.ID }) {

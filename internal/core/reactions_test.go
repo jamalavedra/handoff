@@ -84,3 +84,42 @@ func TestReactionTogglesAtOnce(t *testing.T) {
 		t.Fatalf("after 8 toggles: %+v", d.Comments[0].Reactions)
 	}
 }
+
+func TestChatReachesAssignedAgent(t *testing.T) {
+	e := setup(t)
+	admin := e.org(t, "chatagent")
+	bot := e.agent(t, admin, "Draft bot", nil)
+	task := e.create(t, admin, core.NewTask{Title: "Draft the post", Assignee: "Draft bot"})[0]
+	// Counted read or unread: the agent opening the task (as Comment does) marks them read.
+	mentions := func() int {
+		t.Helper()
+		in, err := e.s.Inbox(e.ctx, bot, core.InboxIn{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, x := range in.Notifications {
+			if x.Kind == "mention" {
+				n++
+			}
+		}
+		return n
+	}
+	// A plain message in the task's chat reaches the agent that owns it; mentioning it too doesn't double it.
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "Please revise the conclusion"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Draft bot and shorten the intro"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := mentions(); n != 2 {
+		t.Fatalf("agent mentions = %d, want 2", n)
+	}
+	// Its own messages don't notify itself.
+	if _, err := e.s.Comment(e.ctx, bot, core.CommentIn{ID: task.ID, Body: "Done, updated the draft."}); err != nil {
+		t.Fatal(err)
+	}
+	if n := mentions(); n != 2 {
+		t.Fatalf("after the agent's own message = %d", n)
+	}
+}

@@ -231,6 +231,7 @@ const Guidelines = `Handoff is the shared task list for this company's people an
 - Start with list_ready, then claim_task before working so nobody else picks it up; close_task when finished.
 - Ask the user before creating more than a few tasks at once. Use external_id so a retried create_tasks never duplicates.
 - Call what_changed to catch up on what others changed since your last call. Tasks marked unseen changed since you last opened them.
+- The task body is the task's document: put the output of your work there (research, findings, drafts, plans, decisions) with update_task. Comments are the task's chat: use them to talk with people about the work (a short status, a question, an answer), not for the work itself.
 - Mention someone with @Name in a comment. Check inbox for mentions, assignments and approval requests, and mark_read once handled.
 - update_task appends to the body by default. Replacing the whole body needs confirm=true; only do it when the user asked.
 - trash moves a task to a 30-day trash (restore brings it back). Some agents need a human to approve deletes.
@@ -1173,8 +1174,20 @@ func (c *call) addComment(taskID, body string) error {
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, taskID); err != nil {
 		return err
 	}
-	for _, m := range c.mentioned(body) {
+	mentioned := c.mentioned(body)
+	for _, m := range mentioned {
 		if err := c.notify(m, "mention", taskID, body); err != nil {
+			return err
+		}
+	}
+	// The task's chat is a conversation with the agent that owns it: a message there reaches the agent
+	// (its inbox and webhook) without an @mention. People are only notified when mentioned.
+	var assignee string
+	if err := c.tx.QueryRow(c.ctx, `SELECT coalesce(assignee_id::text, '') FROM tasks WHERE id = $1`, taskID).Scan(&assignee); err != nil {
+		return err
+	}
+	if a := c.members[assignee]; a != nil && a.IsAgent() && !slices.Contains(mentioned, a) {
+		if err := c.notify(a, "mention", taskID, body); err != nil {
 			return err
 		}
 	}
