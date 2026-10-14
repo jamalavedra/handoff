@@ -12,6 +12,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useDictation } from "@/hooks/use-dictation";
+import { MicButton, Waveform, privacyNote } from "./dictation";
 import { inJump, typing } from "./shortcuts";
 
 type Ctx = { open: (project?: string) => void };
@@ -88,6 +90,8 @@ function QuickAddForm({ project, draft, onDraft, onClose }: { project?: string; 
   const setBody = (body: string) => onDraft({ body });
   const setDetails = (details: boolean) => onDraft({ details });
   const setO = (o: Overrides) => onDraft({ o });
+  // Dictation writes into the same title text, so the parser's chips update as the words stream in.
+  const dictation = useDictation(setText);
   const people = members.data?.members.filter((m) => m.status === "active" || m.status === "invited") ?? [];
   const parsed = parseQuickAdd(text, { members: people, projects: projects.data?.projects ?? [] });
   const final = {
@@ -109,16 +113,32 @@ function QuickAddForm({ project, draft, onDraft, onClose }: { project?: string; 
   return (
     <form
       className="pt-3 sm:pt-0"
-      onSubmit={(e) => { e.preventDefault(); if (parsed.title) m.mutate(); }}
+      onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (parsed.title) m.mutate(); }}
     >
-      <input
-        autoFocus
-        aria-label="Title"
-        className="w-full bg-transparent text-lg font-medium outline-none placeholder:text-muted-foreground/70 sm:text-base"
-        placeholder="Send contract to legal tomorrow @Marta #Sales"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
+      <div className="flex items-center gap-2">
+        <input
+          autoFocus
+          aria-label="Title"
+          className="min-w-0 flex-1 bg-transparent text-lg font-medium outline-none placeholder:text-muted-foreground/70 sm:text-base"
+          placeholder="Send contract to legal tomorrow @Marta #Sales"
+          value={text}
+          onChange={(e) => { dictation.cancel(); setText(e.target.value); }}
+        />
+        {dictation.supported && <MicButton listening={dictation.listening} onToggle={() => dictation.toggle(text)} className="-my-1.5" />}
+      </div>
+      {dictation.listening && (
+        <button
+          type="button"
+          onClick={dictation.stop}
+          aria-label="Listening. Tap to stop"
+          className="mt-3 flex w-full items-center gap-2.5 rounded-full bg-red-50 py-1.5 pr-3 pl-2.5 text-sm text-red-700 motion-safe:animate-in motion-safe:fade-in-0"
+        >
+          <span className="size-2 shrink-0 rounded-full bg-red-500 motion-safe:animate-pulse" />
+          <Waveform analyser={dictation.analyser} bars={20} />
+          <span className="font-medium">Listening…</span>
+          <span className="ml-auto text-xs text-red-700/70">Tap to stop</span>
+        </button>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <Chip icon={Folder}>{projectName}</Chip>
         {assignee && <Chip icon={assignee.kind === "agent" ? Bot : User} tone={assignee.kind === "agent" ? "bg-violet-50 text-violet-700" : ""}>{assignee.name}</Chip>}
@@ -126,7 +146,9 @@ function QuickAddForm({ project, draft, onDraft, onClose }: { project?: string; 
         {parsed.repeat && <Chip icon={RepeatIcon}>{repeatLabel[parsed.repeat]}</Chip>}
         {final.priority < 2 && <Chip icon={Flag} tone={final.priority === 0 ? "bg-red-50 text-red-700" : "bg-orange-50 text-orange-700"}>{final.priority === 0 ? "Urgent" : "High"}</Chip>}
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">Type @person, #project, a date like “friday” or “Oct 14”, and !0 or !1 for urgent.</p>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {dictation.listening ? privacyNote : "Type @person, #project, a date like “friday” or “Oct 14”, and !0 or !1 for urgent."}
+      </p>
       {details && (
         <div className="mt-3 flex flex-col gap-2">
           <Textarea rows={3} placeholder="Details (optional)" value={body} onChange={(e) => setBody(e.target.value)} aria-label="Details" />
