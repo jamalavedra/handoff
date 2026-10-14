@@ -82,6 +82,11 @@ const groups: { title: string; keys: [string, string][] }[] = [
   { title: "Anywhere", keys: [["⌘ K  or  /", "Command menu"], ["⌘ J", "Assistant"], ["N", "New task"], ["?", "This list"]] },
   { title: "Lists", keys: [["J / ↓", "Next task"], ["K / ↑", "Previous task"], ["Enter", "Open task"], ["X", "Complete or reopen"], ["Esc", "Close the task panel"]] },
   { title: "Go to", keys: [["G T", "My tasks"], ["G N", "Notifications"], ["G P", "Projects"], ["G A", "Agents"]] },
+  // Browsers keep ⌘W, ⌘T and Ctrl+Tab for their own tabs, so ours sit on ⌥ (Alt elsewhere).
+  {
+    title: "Tabs (desktop)",
+    keys: [["⌘ Click  or  middle-click", "Open in a background tab"], ["⌘ Enter", "Same, from the command menu"], ["⌥ T", "New tab"], ["⌥ W", "Close tab"], ["⌥ 1–9", "Go to tab"]],
+  },
 ];
 
 export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {

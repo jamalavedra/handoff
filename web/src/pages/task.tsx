@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { AppWindow, ArrowUp, Bot, History, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
+import { useTabs } from "../components/tabs";
+import { taskHref } from "../tabs";
 import { Markdown } from "../components/markdown";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { useMe } from "../main";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
 import { dueLabel, mentionQuery, repeatLabel } from "../quickadd";
@@ -13,6 +17,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
 import { completedText, markLocal, undoable, undoClose } from "../components/feedback";
 import { toast } from "sonner";
+import { useDictation } from "@/hooks/use-dictation";
+import { MicButton } from "../components/dictation";
 
 type Here = { member: MemberRef; typing?: boolean };
 type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] };
@@ -107,7 +113,11 @@ function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) =
         </div>
       </form>
     );
-  if (!t.body) return disabled ? null : <button className="text-sm text-muted-foreground/70 hover:text-foreground/80" onClick={() => { setV(""); setEditing(true); }}>Add details…</button>;
+  if (!t.body) return disabled ? null : (
+    <button className="text-left text-sm text-muted-foreground/70 hover:text-foreground/80" onClick={() => { setV(""); setEditing(true); }}>
+      {t.assignee?.kind === "agent" ? `${t.assignee.name}'s work on this will show up here. Add details…` : "Add details…"}
+    </button>
+  );
   const edit = () => { if (!disabled && !window.getSelection()?.toString()) { setV(t.body ?? ""); setEditing(true); } };
   return (
     <div
@@ -133,6 +143,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const navigate = useNavigate();
   const router = useRouter();
   const canGoBack = useCanGoBack();
+  const tabs = useTabs();
   const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
   const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }), refetchInterval: 10000 });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
@@ -156,6 +167,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     return () => document.removeEventListener("visibilitychange", read);
   }, [id, loaded, commentCount, qc]);
   const dueRef = useRef<HTMLInputElement>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const meId = useMe().data?.member?.id;
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
   const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => { markLocal(id); return api.tool("update_task", { id, ...patch }); }, onSuccess: invalidate });
   const close = useMutation({
@@ -179,6 +192,10 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     const beat = setInterval(watch, 15000);
     return () => { clearInterval(beat); watch({ leave: true }); };
   }, [id]);
+  const dictation = useDictation((text) => { setComment(text); setCaret(text.length); typing(); });
+  // The view is reused when the panel or route switches tasks: drop the dictation and draft with the old one.
+  const { cancel: cancelDictation } = dictation;
+  useEffect(() => () => { cancelDictation(); setComment(""); setCaret(0); }, [id, cancelDictation]);
   const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); lastTyping.current = 0; watch(); invalidate(); } });
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: invalidate });
 
@@ -255,6 +272,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <Menu>
           {(done) => (
             <>
+              {panel && tabs && <MenuItem icon={AppWindow} onClick={() => { tabs.openInTab(taskHref(t.id)); done(); }}>Open in new tab</MenuItem>}
+              <MenuItem icon={History} onClick={() => { setActivityOpen(true); done(); }}>Activity <span className="ml-auto text-xs text-muted-foreground/70 tabular-nums">{activity.length}</span></MenuItem>
               <MenuItem icon={Copy} onClick={() => { navigator.clipboard?.writeText(t.id); done(); }}>Copy ID <span className="ml-auto font-mono text-xs text-muted-foreground/70">{t.id}</span></MenuItem>
               {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
@@ -335,35 +354,39 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       </section>
       )}
 
+      {/* The task's chat: talking with the team and its agents about the work above. */}
       {comments.length > 0 && (
-        <section className="mb-4 flex flex-col gap-2" aria-label="Comments">
-          {comments.map((c) => (
-            <div key={c.id} className="flex gap-2.5">
-              <Avatar m={c.author} className="mt-0.5" />
-              <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md bg-card px-3 py-2 text-[15px] shadow-[0_0_0_1px_rgba(0,0,0,0.06)] sm:text-sm">
-                <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>
+        <section className="mb-4 flex flex-col gap-3" aria-label="Comments">
+          <h2 className="text-[13px] font-medium text-muted-foreground">Chat</h2>
+          {comments.map((c) => {
+            const mine = c.author?.id === meId;
+            return (
+            <div key={c.id} className={cn("flex gap-2.5", mine && "flex-row-reverse")}>
+              {!mine && <Avatar m={c.author} className="mt-0.5" />}
+              <div className={cn("min-w-0 max-w-[88%] rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
+                {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
                 <Markdown text={c.body} mentions={memberNames} />
                 <Reactions c={c} disabled={locked} />
+                {mine && <div className="mt-0.5 text-right text-[11px] text-muted-foreground/70">{ago(c.created_at)}</div>}
               </div>
             </div>
-          ))}
+            );
+          })}
         </section>
       )}
 
-      <details className="group mb-4 rounded-xl border border-border bg-card">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm text-muted-foreground [&::-webkit-details-marker]:hidden">
-          <ChevronDown className="size-4 -rotate-90 transition-transform group-open:rotate-0" />Activity<span className="text-muted-foreground/70">{activity.length}</span>
-          <span className="ml-auto truncate text-xs text-muted-foreground/70">Created by {t.created_by?.name ?? "someone"}{t.on_behalf_of ? ` for ${t.on_behalf_of.name}` : ""} · {ago(t.created_at)}</span>
-        </summary>
-        <div className="border-t border-border px-4 py-2">
-          {activity.map((e) => <EventLine key={e.id} e={e} showTask={false} />)}
-        </div>
-      </details>
+      <Dialog open={activityOpen} onOpenChange={setActivityOpen}>
+        <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-2xl sm:max-w-lg">
+          <DialogTitle>Activity</DialogTitle>
+          <DialogDescription>Created by {t.created_by?.name ?? "someone"}{t.on_behalf_of ? ` for ${t.on_behalf_of.name}` : ""} · {ago(t.created_at)}</DialogDescription>
+          <div>{activity.map((e) => <EventLine key={e.id} e={e} showTask={false} />)}</div>
+        </DialogContent>
+      </Dialog>
 
       {!locked && (
         <form
           className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-lg md:bottom-4"
-          onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(); }}
+          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim()) addComment.mutate(); }}
         >
           {suggestions.length > 0 && (
             <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg">
@@ -381,9 +404,9 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           <textarea
             rows={1}
             ref={commentRef}
-            placeholder="Add a comment… type @ to mention"
+            placeholder={t.assignee?.kind === "agent" ? `Message ${t.assignee.name}…` : "Message… type @ to mention"}
             value={comment}
-            onChange={(e) => { setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
+            onChange={(e) => { dictation.cancel(); setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={(e) => {
               if (suggestions.length) {
@@ -395,6 +418,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             aria-label="Comment"
             className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-muted-foreground/70 sm:text-sm"
           />
+          {dictation.supported && <MicButton listening={dictation.listening} onToggle={() => dictation.toggle(comment)} wave={dictation} />}
           <button disabled={!comment.trim() || addComment.isPending} aria-label="Send comment" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:bg-foreground/10 disabled:text-muted-foreground/70">
             <ArrowUp className="size-4" />
           </button>

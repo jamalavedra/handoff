@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sparkles, Sun, Trash2, Users } from "lucide-react";
@@ -9,12 +9,16 @@ import { useQuickAdd } from "./quickadd";
 import { useWide } from "./tasklink";
 import { typing } from "./shortcuts";
 import { useAssistant } from "./assistant";
+import { useTabs } from "./tabs";
+import { taskHref } from "../tabs";
 
 type Ctx = { open: () => void };
 const PaletteContext = createContext<Ctx>({ open: () => {} });
 export const useCommandPalette = () => useContext(PaletteContext);
 
 type Item = { id: string; label: string; icon: typeof Plus; keys?: string; run: () => void };
+
+const isMod = (e: React.KeyboardEvent | React.PointerEvent) => e.metaKey || e.ctrlKey;
 
 // CommandPaletteProvider owns ⌘K: jump anywhere, run an action, or find a task by title.
 export function CommandPaletteProvider({ me, onShortcuts, children }: { me: Me; onShortcuts: () => void; children: React.ReactNode }) {
@@ -62,8 +66,16 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
     enabled: debounced.length > 1,
     placeholderData: (prev) => prev,
   });
-  const go = (fn: () => void) => () => { close(); fn(); };
-  const to = (path: string) => go(() => navigate({ to: path }));
+  // ⌘/Ctrl+Enter (or ⌘-click) on a task, page or project opens it in a background tab on desktop.
+  // cmdk's onSelect carries no event, so the keydown/pointerdown just before it records the modifier.
+  const tabs = useTabs();
+  const mod = useRef(false);
+  const go = (fn: () => void, href?: string) => () => {
+    close();
+    if (href && tabs && mod.current) tabs.openInTab(href);
+    else fn();
+  };
+  const to = (path: string) => go(() => navigate({ to: path }), path);
   const actions: Item[] = [
     { id: "new", label: "New task", icon: Plus, keys: "N", run: go(() => quick.open(currentProject)) },
     { id: "assistant", label: "Ask the assistant", icon: Sparkles, keys: "⌘J", run: go(() => assistant.setOpen(true)) },
@@ -88,9 +100,13 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
   const shownProjects = (projects.data?.projects ?? []).filter((p) => match(p.name)).slice(0, q ? 6 : 4);
   const found = debounced.length > 1 ? tasks.data?.tasks ?? [] : [];
   // Same rule as TaskLink: the side panel on wide list pages, the full page otherwise (including from a task page).
-  const openTask = (id: string) => go(() => (wide && !path.startsWith("/tasks/") ? navigate({ to: ".", search: (p) => ({ ...p, task: id }) }) : navigate({ to: "/tasks/$id", params: { id } })));
+  const openTask = (id: string) => go(() => (wide && !path.startsWith("/tasks/") ? navigate({ to: ".", search: (p) => ({ ...p, task: id }) }) : navigate({ to: "/tasks/$id", params: { id } })), taskHref(id));
   return (
-    <>
+    <div
+      className="contents"
+      onKeyDownCapture={(e) => { if (e.key === "Enter") mod.current = isMod(e); }}
+      onPointerDownCapture={(e) => { mod.current = isMod(e); }}
+    >
       <CommandInput placeholder="Search tasks, pages and actions…" value={query} onValueChange={setQuery} />
       <CommandList className="max-h-[min(60dvh,26rem)]">
         <CommandEmpty>{tasks.isFetching ? "Searching…" : "No matches."}</CommandEmpty>
@@ -110,7 +126,7 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
         {shownProjects.length > 0 && (
           <CommandGroup heading="Projects">
             {shownProjects.map((p) => (
-              <CommandItem key={p.id} value={`project-${p.id}`} onSelect={go(() => navigate({ to: "/projects/$id", params: { id: p.id } }))}>
+              <CommandItem key={p.id} value={`project-${p.id}`} onSelect={go(() => navigate({ to: "/projects/$id", params: { id: p.id } }), `/projects/${p.id}`)}>
                 <FolderKanban className="text-muted-foreground" />
                 <span className="truncate">{projectName(p)}</span>
                 <span className="ml-auto text-xs text-muted-foreground tabular-nums">{p.open_tasks}</span>
@@ -119,7 +135,7 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
           </CommandGroup>
         )}
       </CommandList>
-    </>
+    </div>
   );
 }
 
