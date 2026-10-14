@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
+import { Markdown } from "../components/markdown";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
-import { dueLabel, mentionQuery, repeatLabel, splitMentions } from "../quickadd";
+import { dueLabel, mentionQuery, repeatLabel } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck, Who } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -98,7 +100,7 @@ function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) =
   if (editing)
     return (
       <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); onSave(v).then(() => setEditing(false), () => {}); }}>
-        <Textarea autoFocus rows={5} value={v} onChange={(e) => setV(e.target.value)} aria-label="Details" />
+        <Textarea autoFocus rows={8} value={v} onChange={(e) => setV(e.target.value)} aria-label="Details" placeholder="Markdown works: **bold**, lists, - [ ] checklists, links" className="font-mono text-[13px]" />
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
           <Button size="sm">Save</Button>
@@ -106,10 +108,18 @@ function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) =
       </form>
     );
   if (!t.body) return disabled ? null : <button className="text-sm text-muted-foreground/70 hover:text-foreground/80" onClick={() => { setV(""); setEditing(true); }}>Add details…</button>;
+  const edit = () => { if (!disabled && !window.getSelection()?.toString()) { setV(t.body ?? ""); setEditing(true); } };
   return (
-    <button disabled={disabled} className="block w-full rounded-lg text-left text-[15px] leading-relaxed whitespace-pre-wrap text-foreground/80 enabled:hover:bg-muted sm:text-sm" onClick={() => { setV(t.body ?? ""); setEditing(true); }}>
-      {t.body}
-    </button>
+    <div
+      role={disabled ? undefined : "button"}
+      tabIndex={disabled ? undefined : 0}
+      aria-label={disabled ? undefined : "Edit details"}
+      onClick={edit}
+      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); edit(); } }}
+      className={cn("-mx-2 rounded-lg px-2 py-1 text-[15px] leading-relaxed text-foreground/80 sm:text-sm", !disabled && "cursor-text hover:bg-muted")}
+    >
+      <Markdown text={t.body} />
+    </div>
   );
 }
 
@@ -155,8 +165,6 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     onSuccess: () => { invalidate(); undoable(qc, "Moved to trash", () => api.tool("restore_task", { id })); },
   });
   const restore = useMutation({ mutationFn: () => { markLocal(id); return api.tool("restore_task", { id }); }, onSuccess: invalidate });
-  const claim = useMutation({ mutationFn: () => api.tool("claim_task", { id }), onSuccess: invalidate });
-  const release = useMutation({ mutationFn: () => api.tool("release_task", { id }), onSuccess: invalidate });
   const lastTyping = useRef(0);
   const watch = (extra?: { typing?: boolean; leave?: boolean }) => api.tool("watch_task", { id, ...extra }).catch(() => {});
   const typing = () => {
@@ -185,7 +193,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const { task: t, comments, events } = q.data;
   const closed = t.status === "done" || t.status === "cancelled";
   const locked = !!t.deleted_at;
-  const err = update.error || close.error || trash.error || restore.error || claim.error || release.error || addComment.error || link.error;
+  const err = update.error || close.error || trash.error || restore.error || addComment.error || link.error;
   const setStatus = (s: string) => (s === "done" || s === "cancelled" ? close.mutate(s) : update.mutate({ status: s }));
   const people = members.data?.members.filter((m) => m.status !== "removed") ?? [];
   const due = t.due ? dueLabel(t.due) : undefined;
@@ -245,12 +253,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </Menu>
       </div>
 
-      <div className="mb-4 flex items-start gap-3">
-        <div className="pt-1.5 pl-1"><TaskCheck t={t} disabled={locked || close.isPending || update.isPending} onToggle={() => (closed ? update.mutate({ status: "open" }) : close.mutate("done"))} /></div>
-        <TitleEditor t={t} disabled={locked} onSave={(title) => update.mutate({ title })} />
-      </div>
-
-      <div className="mb-5 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         <Pill label="Status" className={statusTone[t.status]} select={!locked && (
           <select className={overlay} value={t.status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
             {(["open", "in_progress", "blocked", "done", "cancelled"] as const).map((s) => <option key={s} value={s}>{statusLabel[s]}</option>)}
@@ -284,15 +287,17 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         )}>{t.project}</Pill>
       </div>
 
+      <div className="mb-4 flex items-start gap-3">
+        <div className="pt-1.5 pl-1"><TaskCheck t={t} disabled={locked || close.isPending || update.isPending} onToggle={() => (closed ? update.mutate({ status: "open" }) : close.mutate("done"))} /></div>
+        <TitleEditor t={t} disabled={locked} onSave={(title) => update.mutate({ title })} />
+      </div>
+
+
       {t.claimed_by && !closed && (
         <div className={cn("mb-5 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm", t.claimed_by.kind === "agent" ? "bg-violet-50 text-violet-900" : "bg-amber-50 text-amber-900")}>
           <span className="relative flex size-2"><span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", t.claimed_by.kind === "agent" ? "bg-violet-400" : "bg-amber-400")} /><span className={cn("relative inline-flex size-2 rounded-full", t.claimed_by.kind === "agent" ? "bg-violet-500" : "bg-amber-500")} /></span>
           <span className="min-w-0 flex-1"><b className="font-medium">{t.claimed_by.name}</b> is working on this{t.claim_expires_at && <span className="opacity-60"> · until {new Date(t.claim_expires_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}</span>
-          {!locked && <Button size="sm" variant="outline" onClick={() => release.mutate()}>Release</Button>}
         </div>
-      )}
-      {!t.claimed_by && t.ready && !closed && !locked && (
-        <Button variant="secondary" size="sm" className="mb-5 self-start" onClick={() => claim.mutate()} disabled={claim.isPending}>I'm on it</Button>
       )}
 
       <PendingApprovals id={t.id} />
@@ -326,9 +331,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
               <Avatar m={c.author} className="mt-0.5" />
               <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md bg-card px-3 py-2 text-[15px] shadow-[0_0_0_1px_rgba(0,0,0,0.06)] sm:text-sm">
                 <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>
-                <div className="whitespace-pre-wrap">
-                  {splitMentions(c.body, memberNames).map((part, i) => (part.mention ? <span key={i} className="rounded bg-accent px-0.5 font-medium text-foreground">{part.text}</span> : part.text))}
-                </div>
+                <Markdown text={c.body} mentions={memberNames} />
+                <Reactions c={c} disabled={locked} />
               </div>
             </div>
           ))}
@@ -412,6 +416,55 @@ function PendingApprovals({ id }: { id: string }) {
         </div>
       ))}
       <ErrorText error={decide.error} />
+    </div>
+  );
+}
+
+const quickReactions = ["👍", "✅", "👀", "🎉", "❤️", "🙏", "😄", "🚀"];
+
+// Reactions are the light way to answer in a thread: ✅ "done", 👀 "looking", 👍 "agreed". Agents use them too.
+function Reactions({ c, disabled }: { c: Comment; disabled: boolean }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const react = useMutation({
+    mutationFn: (emoji: string) => api.tool("react", { comment: c.id, emoji }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["task"] }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
+  const reactions = c.reactions ?? [];
+  if (disabled && !reactions.length) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+      {reactions.map((r) => (
+        <button
+          key={r.emoji}
+          type="button"
+          disabled={disabled || react.isPending}
+          title={r.by.join(", ")}
+          aria-pressed={!!r.mine}
+          aria-label={`${r.emoji} ${r.count}, ${r.mine ? "remove yours" : "react"}`}
+          onClick={() => react.mutate(r.emoji)}
+          className={cn("flex h-6 items-center gap-1 rounded-full border px-1.5 text-xs tabular-nums transition-colors", r.mine ? "border-ring bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-muted")}
+        >
+          <span className="text-sm leading-none">{r.emoji}</span>{r.count}
+        </button>
+      ))}
+      {!disabled && (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button type="button" aria-label="Add reaction" className="flex size-6 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground">
+              <SmilePlus className="size-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="flex w-auto gap-0.5 rounded-full p-1">
+            {quickReactions.map((e) => (
+              <button key={e} type="button" disabled={react.isPending} aria-label={`React ${e}`} onClick={() => { setOpen(false); react.mutate(e); }} className="flex size-8 items-center justify-center rounded-full text-lg transition-transform hover:scale-110 hover:bg-muted">
+                {e}
+              </button>
+            ))}
+          </PopoverContent>
+        </Popover>
+      )}
     </div>
   );
 }

@@ -167,7 +167,7 @@ func TestOAuthAndMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tl.Tools) != 20 {
+	if len(tl.Tools) != 21 {
 		t.Fatalf("tools: %d", len(tl.Tools))
 	}
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "create_tasks",

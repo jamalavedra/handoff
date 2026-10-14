@@ -30,3 +30,16 @@ func TestNextDue(t *testing.T) {
 		}
 	}
 }
+
+func TestSingleEmoji(t *testing.T) {
+	for _, ok := range []string{"👍", "✅", "👀", "❤️", "👍🏽", "👩‍💻", "👨‍👩‍👧", "🇪🇸", "1️⃣", "🏳️‍🌈", "©️"} {
+		if !singleEmoji(ok) {
+			t.Errorf("%q should be one emoji", ok)
+		}
+	}
+	for _, bad := range []string{"", "done", "👍👀", "a👍", "🇪", "1", "👍 ", "‍👍", "🇪🇸🇫🇷"} {
+		if singleEmoji(bad) {
+			t.Errorf("%q should be refused", bad)
+		}
+	}
+}
