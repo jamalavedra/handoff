@@ -21,6 +21,7 @@ type MemberOut struct {
 	Status      string       `json:"status"`
 	Owner       *MemberRef   `json:"owner,omitempty"`
 	Permissions *Permissions `json:"permissions,omitempty"`
+	Webhook     *WebhookOut  `json:"webhook,omitempty" jsonschema:"shown to the agent's owner and admins"`
 	CreatedAt   string       `json:"created_at"`
 }
 
@@ -54,7 +55,14 @@ func (s *Service) ListMembers(ctx context.Context, p *Principal, _ struct{}) (Me
 			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 		})
 		for _, m := range ms {
-			out.Members = append(out.Members, c.memberOut(m))
+			o := c.memberOut(m)
+			if m.IsAgent() && !p.Member.IsAgent() && (m.OwnerID == p.Member.ID || p.IsAdmin()) {
+				var err error
+				if o.Webhook, err = c.webhookOut(m.ID); err != nil {
+					return err
+				}
+			}
+			out.Members = append(out.Members, o)
 		}
 		return nil
 	})
@@ -382,6 +390,12 @@ func (s *Service) DecideApproval(ctx context.Context, p *Principal, in DecideIn)
 		}
 		if err := c.event(taskID, "approval_"+decision, map[string]any{"approval_id": in.ID, "action": action, "agent": c.ref(agentID).Name}); err != nil {
 			return err
+		}
+		// The agent that asked hears back (its inbox, and its webhook if it has one).
+		if taskID != "" {
+			if err := c.notify(c.members[agentID], "approval", taskID, decision+": "+action); err != nil {
+				return err
+			}
 		}
 		out = ApprovalOut{ID: in.ID, Agent: c.ref(agentID), Action: action, Status: decision}
 		return nil

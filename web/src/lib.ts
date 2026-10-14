@@ -70,6 +70,8 @@ export type Project = { id: string; name: string; description?: string; emoji?: 
 
 export type Permissions = { projects: string[]; actions: string[]; approval: string[] };
 
+export type Webhook = { url: string; secret?: string; last_at?: string; last_status?: number; last_error?: string };
+
 export type Member = {
   id: string;
   kind: "human" | "agent";
@@ -80,6 +82,7 @@ export type Member = {
   owner?: MemberRef;
   permissions?: Permissions;
   created_at: string;
+  webhook?: Webhook;
 };
 
 export type Event = {

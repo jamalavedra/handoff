@@ -159,7 +159,7 @@ func (s *Service) DisableTriage(ctx context.Context, p *Principal, _ struct{}) (
 
 func triageBaseURL(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
 		return "", errf(ErrInvalid, "base_url must be an http(s) URL such as https://api.openai.com/v1")
 	}
 	u.RawQuery, u.Fragment = "", ""
@@ -512,7 +512,7 @@ func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string,
 	}
 	hr.Header.Set("Content-Type", "application/json")
 	hr.Header.Set("Authorization", "Bearer "+cred)
-	resp, err := s.triageClient().Do(hr)
+	resp, err := s.outbound().Do(hr)
 	if err != nil {
 		return sugg, fmt.Errorf("model endpoint unreachable: %w", err)
 	}
@@ -546,14 +546,15 @@ func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string,
 	return sugg, nil
 }
 
-// triageClient is shared by every model call. It never follows redirects, so the bearer token can't
+// outbound is the client for every call Handoff makes to a URL a workspace chose (triage models,
+// agent webhooks). It never follows redirects, so the bearer token can't
 // be forwarded to another host, and it refuses private, loopback and link-local addresses unless this
 // server is a single workspace or in dev mode, so one workspace's admin can't reach internal services.
-func (s *Service) triageClient() *http.Client {
-	if s.TriageHTTP != nil {
-		return s.TriageHTTP
+func (s *Service) outbound() *http.Client {
+	if s.OutboundHTTP != nil {
+		return s.OutboundHTTP
 	}
-	s.triageHTTPOnce.Do(func() {
+	s.outboundOnce.Do(func() {
 		allowPrivate := s.Cfg.Dev || s.Cfg.SingleOrg != ""
 		d := &net.Dialer{Timeout: 10 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
 			if allowPrivate {
@@ -569,13 +570,13 @@ func (s *Service) triageClient() *http.Client {
 			}
 			return nil
 		}}
-		s.triageHTTP = &http.Client{
+		s.outboundHTTP = &http.Client{
 			Timeout:       90 * time.Second,
 			Transport:     &http.Transport{DialContext: d.DialContext, TLSHandshakeTimeout: 10 * time.Second, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 4},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
 	})
-	return s.triageHTTP
+	return s.outboundHTTP
 }
 
 // applyTriage makes the suggested changes as the triage agent in one transaction, holding the task's
