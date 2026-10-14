@@ -123,11 +123,19 @@ func (s *Service) SetTriage(ctx context.Context, p *Principal, in SetTriageIn) (
 			if sealed, err = s.seal([]byte(cred)); err != nil {
 				return err
 			}
-		} else if err := c.tx.QueryRow(c.ctx, `SELECT credential FROM triage_settings`).Scan(&sealed); err != nil {
+		} else {
+			// A saved key is only kept for the endpoint it was given for; it never follows a new base URL.
+			var savedURL string
+			err := c.tx.QueryRow(c.ctx, `SELECT credential, base_url FROM triage_settings`).Scan(&sealed, &savedURL)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errf(ErrInvalid, "an API key or OAuth token is required")
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			if savedURL != base {
+				return errf(ErrInvalid, "enter the API key or OAuth token for %s", base)
+			}
 		}
 		_, err = c.tx.Exec(c.ctx, `INSERT INTO triage_settings (org_id, agent_id, base_url, model, credential, updated_by, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, now())
@@ -155,6 +163,77 @@ func (s *Service) DisableTriage(ctx context.Context, p *Principal, _ struct{}) (
 		return err
 	})
 	return TriageOut{}, err
+}
+
+type TestTriageIn struct {
+	BaseURL    string `json:"base_url"`
+	Model      string `json:"model"`
+	Credential string `json:"credential,omitempty" jsonschema:"empty uses the saved one"`
+}
+
+type TestTriageOut struct {
+	OK      bool   `json:"ok"`
+	Reply   string `json:"reply,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Seconds string `json:"seconds"`
+}
+
+// TestTriage asks the model one small question, so an admin can check a key and model before saving.
+func (s *Service) TestTriage(ctx context.Context, p *Principal, in TestTriageIn) (TestTriageOut, error) {
+	var st triageSettings
+	err := s.run(ctx, p, func(c *call) error {
+		if err := p.requireAdmin(); err != nil {
+			return err
+		}
+		base, err := triageBaseURL(in.BaseURL)
+		if err != nil {
+			return err
+		}
+		st = triageSettings{BaseURL: base, Model: strings.TrimSpace(in.Model)}
+		if st.Model == "" || len(st.Model) > 200 {
+			return errf(ErrInvalid, "model is required")
+		}
+		if cred := strings.TrimSpace(in.Credential); cred != "" {
+			st.Credential = []byte(cred)
+			return nil
+		}
+		var sealed []byte
+		var savedURL string
+		if err := c.tx.QueryRow(c.ctx, `SELECT credential, base_url FROM triage_settings`).Scan(&sealed, &savedURL); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errf(ErrInvalid, "enter an API key or OAuth token")
+			}
+			return err
+		}
+		// The saved key only goes to the endpoint it was saved for.
+		if savedURL != base {
+			return errf(ErrInvalid, "enter the API key or OAuth token for %s", base)
+		}
+		st.Credential, err = s.unseal(sealed)
+		return err
+	})
+	if err != nil {
+		return TestTriageOut{}, err
+	}
+	start := time.Now()
+	lctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	sugg, err := s.askModel(lctx, &st, string(st.Credential), p.Org, triageTask{Title: "can u pls send the invoices to accounting by friday"}, nil, nil)
+	out := TestTriageOut{Seconds: fmt.Sprintf("%.1f", time.Since(start).Seconds())}
+	if err != nil {
+		out.Error = err.Error()
+		return out, nil
+	}
+	// It has to produce what triage needs, not just valid JSON.
+	if strings.TrimSpace(sugg.Title) == "" {
+		out.Error = "the model answered, but without a task title; try another model"
+		return out, nil
+	}
+	out.OK, out.Reply = true, sugg.Title
+	if sugg.Due != "" {
+		out.Reply += " · due " + sugg.Due
+	}
+	return out, nil
 }
 
 func triageBaseURL(raw string) (string, error) {
@@ -503,7 +582,7 @@ func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string,
 			{"role": "system", "content": triagePrompt},
 			{"role": "user", "content": b.String()},
 		},
-		"max_tokens":      900,
+		"max_tokens":      4000, // thinking models (Gemini, o-series) spend part of this before answering
 		"response_format": map[string]string{"type": "json_object"},
 	})
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, st.BaseURL+"/chat/completions", bytes.NewReader(req))

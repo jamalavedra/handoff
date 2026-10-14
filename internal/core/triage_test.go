@@ -255,3 +255,47 @@ func TestTriageAgentNeedsAccess(t *testing.T) {
 		t.Fatalf("agent limited to some projects accepted: %v", err)
 	}
 }
+
+func TestTriageTestCall(t *testing.T) {
+	var auth atomic.Value
+	srv := fakeModel(t, http.StatusOK, map[string]any{"title": "Send invoices to accounting", "due": "2026-10-16"}, &auth)
+	e := triageEnv(t, srv)
+	admin := e.org(t, "tritest")
+	out, err := e.s.TestTriage(e.ctx, admin, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m", Credential: "typed-key"})
+	if err != nil || !out.OK || out.Reply != "Send invoices to accounting · due 2026-10-16" || auth.Load() != "Bearer typed-key" {
+		t.Fatalf("test call: %+v %v (auth %v)", out, err, auth.Load())
+	}
+	// No key typed and none saved yet.
+	if _, err := e.s.TestTriage(e.ctx, admin, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m"}); !core.IsCode(err, core.ErrInvalid) {
+		t.Fatalf("without a key: %v", err)
+	}
+	// A saved key never goes to a different endpoint, when testing or saving.
+	e.agent(t, admin, "Acme Bot", nil)
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "saved-key"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.TestTriage(e.ctx, admin, core.TestTriageIn{BaseURL: "https://other.example/v1", Model: "m"}); !core.IsCode(err, core.ErrInvalid) {
+		t.Fatalf("saved key offered to another host on test: %v", err)
+	}
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: "https://other.example/v1", Model: "m"}); !core.IsCode(err, core.ErrInvalid) {
+		t.Fatalf("saved key kept for another host on save: %v", err)
+	}
+	if out, err := e.s.TestTriage(e.ctx, admin, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m"}); err != nil || !out.OK || auth.Load() != "Bearer saved-key" {
+		t.Fatalf("saved key on its own endpoint: %+v %v", out, err)
+	}
+	member := e.agent(t, admin, "Helper", nil)
+	if _, err := e.s.TestTriage(e.ctx, member, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); !core.IsCode(err, core.ErrForbidden) {
+		t.Fatalf("non-admin: %v", err)
+	}
+}
+
+func TestTriageTestNeedsATitle(t *testing.T) {
+	var auth atomic.Value
+	srv := fakeModel(t, http.StatusOK, map[string]any{}, &auth)
+	e := triageEnv(t, srv)
+	admin := e.org(t, "triempty")
+	out, err := e.s.TestTriage(e.ctx, admin, core.TestTriageIn{BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"})
+	if err != nil || out.OK || out.Error == "" {
+		t.Fatalf("empty answer passed the test: %+v %v", out, err)
+	}
+}
