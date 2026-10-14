@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { Markdown } from "../components/markdown";
@@ -30,7 +30,7 @@ const priorityText = ["Urgent", "High", "Normal", "Low", "Someday"];
 
 function Pill({ icon: Icon, children, className, label, select }: { icon?: typeof Flag; children: React.ReactNode; className?: string; label: string; select?: React.ReactNode }) {
   return (
-    <span className={cn("relative inline-flex h-8 max-w-full items-center gap-1.5 rounded-full bg-accent px-3 text-sm font-medium text-foreground/80 focus-within:ring-2 focus-within:ring-foreground/40 hover:bg-foreground/10", className)}>
+    <span className={cn("relative inline-flex h-8 max-w-full shrink-0 items-center gap-1.5 rounded-full bg-accent px-3 text-sm font-medium text-foreground/80 focus-within:ring-2 focus-within:ring-foreground/40 hover:bg-foreground/10", className)}>
       {Icon && <Icon className="size-3.5 shrink-0" />}
       <span className="truncate">{children}</span>
       {select && <ChevronDown className="size-3.5 shrink-0 opacity-50" />}
@@ -131,6 +131,8 @@ export function TaskPage() {
 // TaskView is the task page body; with `panel` it renders inside the desktop side panel.
 export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const navigate = useNavigate();
+  const router = useRouter();
+  const canGoBack = useCanGoBack();
   const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
   const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }), refetchInterval: 10000 });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
@@ -180,8 +182,16 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); lastTyping.current = 0; watch(); invalidate(); } });
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: invalidate });
 
+  // Back within the app when there is somewhere to go; a deep link (fresh tab) lands on My tasks.
+  const goBack = () => (canGoBack ? router.history.back() : navigate({ to: "/" }));
+  // On phones the full page has no app bars, so loading and errors keep a way back.
+  const back = (
+    <button onClick={() => goBack()} className="-ml-2 mb-3 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent">
+      <ChevronLeft className="size-5" />Back
+    </button>
+  );
   if (q.error) {
-    if (!panel) return <ErrorText error={q.error} />;
+    if (!panel) return <div>{back}<ErrorText error={q.error} /></div>;
     return (
       <div className="px-5 pt-4">
         <button onClick={closePanel} className="-ml-2 mb-3 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)"><X className="size-5" /></button>
@@ -189,7 +199,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       </div>
     );
   }
-  if (!q.data) return null;
+  if (!q.data) return panel ? null : back;
   const { task: t, comments, events } = q.data;
   const closed = t.status === "done" || t.status === "cancelled";
   const locked = !!t.deleted_at;
@@ -216,14 +226,14 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const typers = here.filter((h) => h.typing);
 
   return (
-    <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-13rem-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)]")}>
+    <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:animate-none")}>
       <div className="mb-3 flex items-center gap-1">
         {panel ? (
           <button onClick={closePanel} className="-ml-2 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)">
             <X className="size-5" />
           </button>
         ) : (
-          <button onClick={() => window.history.length > 1 ? window.history.back() : navigate({ to: "/" })} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent" aria-label="Back">
+          <button onClick={() => goBack()} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent" aria-label="Back">
             <ChevronLeft className="size-5" /><span className="hidden sm:inline">Back</span>
           </button>
         )}
@@ -253,7 +263,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </Menu>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-2">
+      {/* One scrollable row on phones so the title stays near the top; wrapped on wider screens and in the panel. */}
+      <div className={cn("mb-4 flex gap-2", panel ? "flex-wrap" : "-mx-4 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0")}>
         <Pill label="Status" className={statusTone[t.status]} select={!locked && (
           <select className={overlay} value={t.status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
             {(["open", "in_progress", "blocked", "done", "cancelled"] as const).map((s) => <option key={s} value={s}>{statusLabel[s]}</option>)}
@@ -351,7 +362,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
 
       {!locked && (
         <form
-          className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-lg md:bottom-4"
+          className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-lg md:bottom-4"
           onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(); }}
         >
           {suggestions.length > 0 && (
