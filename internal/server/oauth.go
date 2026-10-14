@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/joalavedra/handoff/internal/auth"
+	"github.com/joalavedra/handoff/internal/tools"
 )
 
 // OAuth 2.1 authorization server for MCP clients (Claude, ChatGPT, Cursor...).
@@ -282,4 +283,28 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		_ = s.Auth.Revoke(r.Context(), orgFrom(r).ID, r.PostForm.Get("token"))
 	}
 	w.WriteHeader(200)
+}
+
+// connectionCallback is where a service sends the admin back after approving an MCP connection.
+func (s *Server) connectionCallback(w http.ResponseWriter, r *http.Request) {
+	back := func(q string) { http.Redirect(w, r, "/settings/connections?"+q, http.StatusFound) }
+	q := r.URL.Query()
+	if e := q.Get("error"); e != "" {
+		msg := q.Get("error_description")
+		if msg == "" {
+			msg = e
+		}
+		back("error=" + url.QueryEscape("The service said: "+msg))
+		return
+	}
+	p := s.humanPrincipal(w, r)
+	if p == nil {
+		return
+	}
+	c, err := s.Svc.FinishConnectionOAuth(r.Context(), p, q.Get("state"), q.Get("code"))
+	if err != nil {
+		back("error=" + url.QueryEscape(tools.Public(err).Error()))
+		return
+	}
+	back("connected=" + url.QueryEscape(c.Name))
 }
