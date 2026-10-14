@@ -217,7 +217,7 @@ function Layout({ me }: { me: Me }) {
 function AppToaster() {
   const inset = useAssistantInset();
   const fab = useFab();
-  const bottom = !fab.shown ? undefined : fab.lifted ? "8.5rem" : "5rem";
+  const bottom = fab.shown ? "5rem" : undefined;
   return (
     <Toaster
       offset={inset || bottom ? { right: inset, bottom } : undefined}

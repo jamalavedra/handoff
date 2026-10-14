@@ -125,16 +125,13 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   return <AssistantContext.Provider value={ctx}>{children}</AssistantContext.Provider>;
 }
 
-// useFab says where the floating assistant button sits. Phones: above the tab bar, and gone on a
-// task page (a pushed screen with its own composer). Desktop: bottom-right, lifted above the
-// comment composer while a task is open beside the list or as a page.
+// useFab says whether the floating assistant button shows: not while the panel is open, and not
+// while a task is open (its chat bar opens the panel). Phones: above the tab bar; desktop: the corner.
 export function useFab() {
   const a = useAssistant();
-  const isDesktop = useDesktop();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const panelTask = useSearch({ strict: false }).task;
-  const onTask = path.startsWith("/tasks/");
-  return { shown: !a.open && (isDesktop || !onTask), lifted: isDesktop && (onTask || !!panelTask) };
+  return { shown: !a.open && !path.startsWith("/tasks/") && !panelTask };
 }
 
 // AssistantFab is the round button that opens the assistant from any page.
@@ -151,8 +148,7 @@ export function AssistantFab() {
             aria-label="Assistant"
             aria-keyshortcuts="Meta+J"
             className={cn(
-              "fixed right-4 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] z-30 flex size-12 items-center justify-center rounded-full border border-border bg-card text-violet-600 shadow-lg transition-[transform,bottom] hover:scale-105 hover:bg-accent active:scale-95 md:right-6 md:size-11",
-              fab.lifted ? "md:bottom-20" : "md:bottom-6",
+              "fixed right-4 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] z-30 flex size-12 items-center justify-center rounded-full border border-border bg-card text-violet-600 shadow-lg transition-transform hover:scale-105 hover:bg-[linear-gradient(var(--accent),var(--accent))] active:scale-95 md:right-6 md:bottom-6 md:size-11",
             )}
           >
             <Sparkles className="size-5" />
