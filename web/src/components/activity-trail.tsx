@@ -30,7 +30,7 @@ export function ActivityTrail({ steps, live, onNavigate, className }: { steps: A
   const s = summary(steps);
   return (
     <TraceCollapsible className={className}>
-      <TraceCollapsibleTrigger aria-label={`What ${s.headline.toLowerCase()} took: ${s.label}`}>
+      <TraceCollapsibleTrigger>
         <TraceLine status={s.failed ? "error" : undefined}>
           <TraceIcon><Sparkles /></TraceIcon>
           <TraceTitle>{s.headline}</TraceTitle>
@@ -54,8 +54,8 @@ function Rows({ steps, live, onNavigate }: { steps: ActivityStep[]; live?: boole
         <TraceLine status={s.error ? "error" : undefined} className={cn(s.type === "thought" && "italic")} title={line(s)}>
           <TraceIcon><Icon /></TraceIcon>
           <TraceTitle running={running}>{line(s)}</TraceTitle>
-          {s.error && <TraceDescription className="truncate">{s.error}</TraceDescription>}
         </TraceLine>
+        {s.error && <p className="ml-5 text-xs break-words text-amber-700 dark:text-amber-500">{s.error}</p>}
         {links && (
           <div className="ml-5 flex flex-wrap gap-1" onClickCapture={onNavigate}>
             {s.tasks!.map((t) => (

@@ -930,7 +930,7 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 				text, err := s.callExternal(ctx, sessions, ext[i], args)
 				lk.Failed = err != nil
 				looked = append(looked, lk)
-				a := ActivityStep{Type: "lookup", Text: ext[i].conn + ": " + extSummary(ext[i].tool, args), Tool: ext[i].fn, Source: lk.Source, Query: lk.Query}
+				a := ActivityStep{Type: "lookup", Text: ext[i].conn + ": " + extSummary(ext[i].tool, args), Tool: ext[i].tool, Source: lk.Source, Query: lk.Query}
 				if err != nil {
 					a.Error = err.Error()
 				}

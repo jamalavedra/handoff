@@ -43,11 +43,12 @@ const writeTools = ["create_tasks", "update_task", "close_task", "comment"];
 export function fromSteps(steps: Step[]): ActivityStep[] {
   return steps.map((s) => {
     const type = s.lookup ? "lookup" : s.type ?? (writeTools.includes(s.tool) ? "write" : "tool");
-    return { type, text: s.summary, tool: s.tool || undefined, source: s.lookup?.source, query: s.lookup?.query, tasks: s.tasks, error: s.error };
+    return { type, text: s.summary, tool: s.lookup?.tool || s.tool || undefined, source: s.lookup?.source, query: s.lookup?.query, tasks: s.tasks, error: s.error };
   });
 }
 
-// toolName drops the prefix a connected tool carries for the model (ext_<connection>__).
+// toolName drops the prefix a connected tool carries for the model (ext_<connection>__), for trails
+// saved before steps carried the service's own tool name.
 const toolName = (fn = "") => fn.replace(/^ext_.*?__/, "");
 
 // line is how a step reads in one line: a lookup as "Source · “query”", anything else as its text.
