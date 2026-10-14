@@ -117,7 +117,16 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
             aria-expanded={suggestions.length > 0}
             aria-controls={suggestions.length ? "mention-menu" : undefined}
             aria-activedescendant={suggestions.length ? `mention-${picked}` : undefined}
-            onChange={(e) => { dictation.cancel(); setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); setDismissed(null); typing(); }}
+            onChange={(e) => {
+              dictation.cancel();
+              const at = e.target.selectionStart ?? 0;
+              setComment(e.target.value);
+              setCaret(at);
+              setPick(0);
+              // A dismissed menu stays closed while that same @ is being typed; a new @ reopens it.
+              if (mentionQuery(e.target.value, at)?.start !== dismissed) setDismissed(null);
+              typing();
+            }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={(e) => {
               if (suggestions.length) {

@@ -102,6 +102,7 @@ test("a task in the side panel is held as its full page", () => {
   assert.equal(tabHref("/projects/p1?view=board"), "/projects/p1?view=board");
   assert.equal(tabHref("/tasks/acme-1"), "/tasks/acme-1");
   assert.equal(tabHref("/?task="), "/?task=");
+  assert.equal(tabHref("/tasks/a?task=b"), "/tasks/a?task=b");
   assert.deepEqual(target("/tasks/%E0%A4"), { kind: "task", id: "%E0%A4" });
 
   // Opening a task in the panel turns the active tab into that task; selecting it shows the page.

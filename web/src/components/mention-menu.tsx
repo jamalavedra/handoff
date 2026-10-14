@@ -19,11 +19,12 @@ export function useMentionItems(query: string | null, members: Member[], exclude
     queryKey: ["tasks", "mention", debounced],
     queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { query: debounced, sort: "recent", limit: 6 }),
     enabled: query !== null,
-    placeholderData: (prev) => prev,
     staleTime: 30_000,
   });
   if (query === null) return [];
-  return mentionItems(members, tasks.data?.tasks ?? [], q, exclude);
+  // Tasks only show for the query being typed: none while it's still settling or loading.
+  const found = debounced === q ? tasks.data?.tasks ?? [] : [];
+  return mentionItems(members, found, q, exclude);
 }
 
 // MentionMenu is the popover above the composer: people and agents, then tasks. It never takes

@@ -32,6 +32,8 @@ export const taskHref = (id: string) => `/tasks/${encodeURIComponent(id)}`;
 // tabHref is what a tab holds for a location. Tabs are full pages, so a task open in the side
 // panel (?task=) is held as its own task page, and selecting the tab opens it full size.
 export function tabHref(href: string): string {
+  // On a task page the page itself wins over a stray ?task=.
+  if (target(href).kind === "task") return href;
   const q = href.indexOf("?");
   const id = q < 0 ? null : new URLSearchParams(href.slice(q + 1).split("#")[0]).get("task");
   return id ? taskHref(id) : href;
