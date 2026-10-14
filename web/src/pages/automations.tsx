@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pause, Plus, Repeat as RepeatIcon, Webhook, Zap } from "lucide-react";
+import { Pause, Play, Plus, Repeat as RepeatIcon, Webhook, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { api, cn, projectName, type Member, type MemberRef, type Project, type Task } from "../lib";
 import { isoDate, repeatLabel, scheduleLabel, type Repeat } from "../quickadd";
@@ -16,7 +16,8 @@ import { useMe } from "../main";
 import { useInvalidate } from "./tasks";
 
 // An automation is a repeating task: completing one creates the next, and an agent with a
-// webhook is called when it comes due. This page lists every open one the viewer can see.
+// webhook is called when it comes due; Run now sets the agent off early. This page lists every
+// open one the viewer can see.
 
 const repeats = Object.keys(repeatLabel) as Repeat[];
 
@@ -77,6 +78,13 @@ function AutomationRow({ t, agent }: { t: Task; agent?: Member }) {
     onSuccess: () => undoable(qc, `Paused “${t.title}”`, () => api.tool("update_task", { id: t.id, repeat: was })),
     onSettled: invalidate,
   });
+  // Agents only: the workspace's agent takes it on, another agent's webhook is called.
+  const run = useMutation({
+    mutationFn: () => api.tool<{ message: string }>("run_automation", { id: t.id }),
+    onSuccess: (r) => toast(r.message),
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+    onSettled: invalidate,
+  });
   return (
     // Sized by the row, not the screen: the list narrows when the task panel and assistant are open.
     <div className="@container">
@@ -96,6 +104,11 @@ function AutomationRow({ t, agent }: { t: Task; agent?: Member }) {
       </TaskLink>
       <div className="flex shrink-0 items-center gap-2">
         {t.due && <span className="flex items-center gap-1.5"><span className="hidden text-xs text-muted-foreground @lg:inline">Next</span><DuePill due={t.due} /></span>}
+        {t.assignee?.kind === "agent" && (
+          <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={run.isPending} onClick={() => run.mutate()} aria-label={`Run ${t.title} now`} title={`Run the upcoming occurrence now (${t.assignee.name}); the next one stays on schedule`}>
+            <Play className="size-3.5" /><span className="hidden @lg:inline">Run now</span>
+          </Button>
+        )}
         <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={pause.isPending} onClick={() => pause.mutate()} aria-label={`Pause ${t.title}`} title="Stop repeating; the current task stays open">
           <Pause className="size-3.5" /><span className="hidden @lg:inline">Pause</span>
         </Button>

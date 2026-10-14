@@ -266,13 +266,13 @@ const verbs: Record<string, string> = {
   approval_requested: "asked to delete", approval_approved: "approved deleting", approval_rejected: "rejected deleting",
   agent_added: "added an agent", agent_revoked: "revoked an agent", agent_permissions_changed: "changed an agent's permissions",
   api_key_created: "created an API key", api_key_revoked: "revoked an API key", project_created: "created a project",
-  triaged: "triaged", triage_failed: "couldn't triage", repeat_ended: "ended the repeating series of",
+  triaged: "triaged", triage_failed: "couldn't triage", repeat_ended: "ended the repeating series of", run_now: "ran",
   member_invited: "invited someone", member_changed: "changed a member", org_changed: "changed workspace settings", project_changed: "changed a project",
 };
 
 export function EventLine({ e, showTask = true, onRestore }: { e: Event; showTask?: boolean; onRestore?: (body: string) => void }) {
   const previous = e.kind === "updated" && typeof e.data.previous_body === "string" ? (e.data.previous_body as string) : undefined;
-  const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).filter((k) => k !== "from_project_id" && k !== "previous_body").map((k) => (k === "body" ? "details" : k)).join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "triaged" ? ((e.data.changed as string[] | undefined) ?? []).join(", ") : e.kind === "triage_failed" ? String(e.data.error ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : "";
+  const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).filter((k) => k !== "from_project_id" && k !== "previous_body").map((k) => (k === "body" ? "details" : k)).join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "triaged" ? ((e.data.changed as string[] | undefined) ?? []).join(", ") : e.kind === "triage_failed" ? String(e.data.error ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : e.kind === "run_now" ? String(e.data.agent ?? "") : "";
   return (
     <div className="flex gap-3 py-1.5 text-sm">
       <span className="w-14 shrink-0 text-xs leading-5 text-muted-foreground/70 sm:w-20">{ago(e.at)}</span>
