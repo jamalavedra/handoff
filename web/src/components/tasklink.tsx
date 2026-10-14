@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { Link, useRouterState, useSearch } from "@tanstack/react-router";
+import { taskHref } from "../tabs";
+import { useOpenInTab } from "./tabs";
 
 const wide = window.matchMedia("(min-width: 1024px)");
 
@@ -18,9 +20,11 @@ export function usePanelTask() {
   return useSearch({ strict: false }).task;
 }
 
+// TaskLink opens a task in place; ⌘/Ctrl+click or middle-click opens it in a background tab on desktop.
 export function TaskLink({ id, className, children }: { id: string; className?: string; children: React.ReactNode }) {
   const isWide = useWide();
   const onTaskPage = useRouterState({ select: (s) => s.location.pathname.startsWith("/tasks/") });
-  if (!isWide || onTaskPage) return <Link to="/tasks/$id" params={{ id }} className={className}>{children}</Link>;
-  return <Link to="." search={(p) => ({ ...p, task: id })} className={className}>{children}</Link>;
+  const tab = useOpenInTab(taskHref(id));
+  if (!isWide || onTaskPage) return <Link to="/tasks/$id" params={{ id }} className={className} {...tab}>{children}</Link>;
+  return <Link to="." search={(p) => ({ ...p, task: id })} className={className} {...tab}>{children}</Link>;
 }

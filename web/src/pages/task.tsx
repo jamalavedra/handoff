@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { AppWindow, ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
+import { useTabs } from "../components/tabs";
+import { taskHref } from "../tabs";
 import { Markdown } from "../components/markdown";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
@@ -133,6 +135,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const navigate = useNavigate();
   const router = useRouter();
   const canGoBack = useCanGoBack();
+  const tabs = useTabs();
   const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
   const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }), refetchInterval: 10000 });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
@@ -255,6 +258,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <Menu>
           {(done) => (
             <>
+              {panel && tabs && <MenuItem icon={AppWindow} onClick={() => { tabs.openInTab(taskHref(t.id)); done(); }}>Open in new tab</MenuItem>}
               <MenuItem icon={Copy} onClick={() => { navigator.clipboard?.writeText(t.id); done(); }}>Copy ID <span className="ml-auto font-mono text-xs text-muted-foreground/70">{t.id}</span></MenuItem>
               {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
