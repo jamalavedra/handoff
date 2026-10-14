@@ -10,6 +10,8 @@ import { Avatar, ErrorText, Who } from "./app";
 import { MicButton } from "./dictation";
 import { useDictation } from "@/hooks/use-dictation";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ActivityTrail, LiveTrail } from "./activity-trail";
+import { useAgentLine } from "../agent-activity";
 
 // A task's chat is its conversation with the team and its agents. It lives in the assistant panel
 // ("This task"), beside the task it's about; the task itself shows a preview that opens it.
@@ -86,6 +88,7 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
         <section className="flex flex-col gap-3" aria-label="Comments">
           {comments.map((c) => <Bubble key={c.id} c={c} mine={c.author?.id === meId} mentions={memberNames} locked={locked} />)}
         </section>
+        <LiveTrail task={id} />
         <div ref={endRef} />
       </div>
       {!locked && (
@@ -140,7 +143,7 @@ function Bubble({ c, mine, mentions, locked }: { c: Comment; mine: boolean; ment
       {!mine && <Avatar m={c.author} className="mt-0.5" />}
       <div className={cn("min-w-0 max-w-[88%] rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
         {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
-        {c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
+        {c.activity?.length ? <ActivityTrail steps={c.activity} /> : c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
         <Markdown text={c.body} mentions={mentions} />
         <Reactions c={c} disabled={locked} />
         {mine && <div className="mt-0.5 text-right text-[11px] text-muted-foreground/70">{ago(c.created_at)}</div>}
@@ -150,8 +153,10 @@ function Bubble({ c, mine, mentions, locked }: { c: Comment; mine: boolean; ment
 }
 
 // ChatPreview sits at the bottom of a task: the latest message and a way into the chat.
-export function ChatPreview({ comments, agent, typing, onOpen }: { comments: Comment[]; agent?: MemberRef; typing?: string; onOpen: () => void }) {
+// While the workspace's agent works on the task, it shows its latest step instead.
+export function ChatPreview({ task, comments, agent, typing, onOpen }: { task?: string; comments: Comment[]; agent?: MemberRef; typing?: string; onOpen: () => void }) {
   const last = comments.at(-1);
+  typing = useAgentLine(task) ?? typing;
   return (
     <button
       type="button"

@@ -1,5 +1,16 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import type { Progress } from "./activity";
+
+type Listener = (m: Progress) => void;
+const listeners = new Set<Listener>();
+
+// onProgress hears the agent's steps as it works (see agent-activity.ts). They change nothing stored,
+// so they go to whoever shows them instead of refreshing every query.
+export function onProgress(fn: Listener) {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
 
 // useLive keeps every open query fresh: the server pushes "task X changed" and we refetch.
 export function useLive(enabled: boolean) {
@@ -16,6 +27,7 @@ export function useLive(enabled: boolean) {
     es.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data) as { kind: string; task?: string };
+        if (m.kind === "progress") return void listeners.forEach((l) => l(m as Progress));
         if (m.kind === "presence" && m.task) return void qc.invalidateQueries({ queryKey: ["task", m.task] });
       } catch {
         // not JSON: refresh everything
