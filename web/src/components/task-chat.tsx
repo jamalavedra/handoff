@@ -139,16 +139,20 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   );
 }
 
+// Bubble is one message; an agent's carries the trace of what it did underneath.
 function Bubble({ c, mine, mentions, locked }: { c: Comment; mine: boolean; mentions: string[]; locked: boolean }) {
   return (
     <div className={cn("flex gap-2.5", mine && "flex-row-reverse")}>
       {!mine && <Avatar m={c.author} className="mt-0.5" />}
-      <div className={cn("min-w-0 max-w-[88%] rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
-        {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
-        {c.activity?.length ? <ActivityTrail steps={c.activity} /> : c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
-        <Markdown text={c.body} mentions={mentions} />
-        <Reactions c={c} disabled={locked} />
-        {mine && <div className="mt-0.5 text-right text-[11px] text-muted-foreground/70">{ago(c.created_at)}</div>}
+      <div className="flex min-w-0 max-w-[88%] flex-col gap-1.5">
+        <div className={cn("min-w-0 rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
+          {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
+          {!c.activity?.length && c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
+          <Markdown text={c.body} mentions={mentions} />
+          <Reactions c={c} disabled={locked} />
+          {mine && <div className="mt-0.5 text-right text-[11px] text-muted-foreground/70">{ago(c.created_at)}</div>}
+        </div>
+        {c.activity?.length ? <ActivityTrail steps={c.activity} className="px-1" /> : null}
       </div>
     </div>
   );

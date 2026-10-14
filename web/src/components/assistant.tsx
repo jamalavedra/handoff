@@ -476,12 +476,12 @@ function AssistantMessage({ m, agent, onNavigate }: { m: Msg; agent?: MemberRef;
     <div className="flex gap-2.5">
       <Avatar m={agent ?? fallbackAgent} className="mt-0.5" />
       <div className="min-w-0 flex-1">
-        {m.steps && m.steps.length > 0 && <ActivityTrail steps={fromSteps(m.steps)} onNavigate={onNavigate} />}
         {m.error ? (
           <p className="flex items-start gap-1.5 text-sm text-red-600"><AlertCircle className="mt-0.5 size-4 shrink-0" />{m.content}</p>
         ) : (
           <Markdown text={m.content} className="text-[15px] leading-relaxed text-foreground/90 sm:text-sm" />
         )}
+        {m.steps && m.steps.length > 0 && <ActivityTrail steps={fromSteps(m.steps)} onNavigate={onNavigate} className="mt-1.5" />}
       </div>
     </div>
   );
