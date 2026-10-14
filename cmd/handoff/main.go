@@ -90,6 +90,7 @@ func serve() error {
 		return err
 	}
 	go svc.RunTriage(ctx)
+	go svc.RunWebhooks(ctx)
 	srv := server.New(cfg, svc, &mail.Mailer{URL: cfg.SMTPURL, From: cfg.MailFrom}, static, version)
 	hs := &http.Server{Addr: cfg.Addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {

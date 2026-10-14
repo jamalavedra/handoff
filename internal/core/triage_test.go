@@ -45,7 +45,7 @@ func triageEnv(t *testing.T, srv *httptest.Server) *env {
 	t.Helper()
 	base, _ := url.Parse("http://handoff.test")
 	s := core.New(testutil.DB(t), &config.Config{BaseURL: base, Secret: []byte("test secret")})
-	s.TriageHTTP = srv.Client()
+	s.OutboundHTTP = srv.Client()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go s.RunTriage(ctx)

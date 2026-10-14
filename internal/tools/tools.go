@@ -109,6 +109,8 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "update_agent", Description: "Rename, change permissions of, or revoke an agent."}, s.UpdateAgent),
 		def(Tool{Name: "list_approvals", ReadOnly: true, Description: "Pending agent requests you can decide."}, s.ListApprovals),
 		def(Tool{Name: "decide_approval", Description: "Approve or reject an agent request."}, s.DecideApproval),
+		def(Tool{Name: "set_webhook", Description: "Owners and admins: POST an agent's notifications (assigned, mentioned, due, approvals) to a URL, signed with a secret returned once. Empty url removes it; rotate=true issues a new secret."}, s.SetWebhook),
+		def(Tool{Name: "test_webhook", Description: "Owners and admins: send a ping to an agent's webhook and report the answer."}, s.TestWebhook),
 		def(Tool{Name: "get_triage", ReadOnly: true, Description: "Admins: which agent and model triage new tasks."}, s.GetTriage),
 		def(Tool{Name: "set_triage", Description: "Admins: choose the agent that triages each new task people create, and the OpenAI-compatible model it uses."}, s.SetTriage),
 		def(Tool{Name: "disable_triage", Description: "Admins: stop triaging new tasks."}, s.DisableTriage),

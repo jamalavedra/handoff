@@ -152,12 +152,12 @@ func (p *Principal) ownerName() string {
 type Service struct {
 	DB  *db.DB
 	Cfg *config.Config
-	// TriageHTTP, when set, replaces the client used to call triage models (tests).
-	TriageHTTP *http.Client
-	triageJobs chan triageJob
-	// triageHTTP is the shared model client, built on first use.
-	triageHTTP     *http.Client
-	triageHTTPOnce sync.Once
+	// OutboundHTTP, when set, replaces the client for triage models and agent webhooks (tests).
+	OutboundHTTP *http.Client
+	triageJobs   chan triageJob
+	// outboundHTTP is the shared guarded client, built on first use.
+	outboundHTTP *http.Client
+	outboundOnce sync.Once
 }
 
 func New(d *db.DB, cfg *config.Config) *Service {

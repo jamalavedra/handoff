@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bot, Check, Copy, KeyRound, X } from "lucide-react";
-import { ago, api, type Member, type Permissions, type Project, type Task } from "../lib";
+import { Bot, Check, Copy, KeyRound, Webhook as WebhookIcon, X } from "lucide-react";
+import { ago, api, cn, type Member, type Permissions, type Project, type Task, type Webhook } from "../lib";
+import { toast } from "sonner";
 import { Badge, Card, Empty, ErrorText, PageHeader } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -140,8 +141,50 @@ function AgentCard({ a, mine }: { a: Member; mine: boolean }) {
           </div>
         </div>
       )}
+      {mine && <WebhookSection a={a} />}
       {!mine && <div className="mt-2 flex flex-wrap gap-1">{perms.actions.map((x) => <Badge key={x}>{x}</Badge>)}</div>}
       <ErrorText error={save.error || revoke.error || mkKey.error || rmKey.error} />
     </Card>
+  );
+}
+
+// WebhookSection: for agents that aren't always connected. Handoff POSTs their notifications
+// (assigned, mentioned, due, approvals) to a URL, signed with a secret shown once.
+function WebhookSection({ a }: { a: Member }) {
+  const invalidate = useInvalidate();
+  const [url, setUrl] = useState(a.webhook?.url ?? "");
+  const [secret, setSecret] = useState<string | null>(null);
+  const set = useMutation({
+    mutationFn: (v: { url: string; rotate?: boolean }) => api.tool<Webhook | null>("set_webhook", { agent: a.id, ...v }),
+    onSuccess: (w) => { if (w?.secret) setSecret(w.secret); invalidate(); },
+  });
+  const test = useMutation({
+    mutationFn: () => api.tool<{ status: number; error?: string }>("test_webhook", { agent: a.id }),
+    onSuccess: (r) => { r.error ? toast.error(`Webhook: ${r.error}`) : toast(`Webhook answered ${r.status}`); invalidate(); },
+  });
+  const w = a.webhook;
+  return (
+    <div className="mt-4 border-t border-border pt-3 text-sm">
+      <div className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground"><WebhookIcon className="size-3.5" />Webhook</div>
+      <p className="mb-2 max-w-xl text-xs text-muted-foreground">
+        For agents that aren't always connected (a Slack bot, a cloud function): Handoff POSTs to this URL when a task is assigned to {a.name}, it's @mentioned, or one of its tasks comes due — so a recurring task assigned to it runs on a schedule. Verify <code>X-Handoff-Signature: t=…,v1=…</code> as HMAC-SHA256 of <code>t.body</code> with the secret.
+      </p>
+      <form className="flex max-w-xl gap-2" onSubmit={(e) => { e.preventDefault(); set.mutate({ url }); }}>
+        <Input type="url" placeholder="https://example.com/handoff-webhook" value={url} onChange={(e) => setUrl(e.target.value)} aria-label={`Webhook URL for ${a.name}`} />
+        <Button type="submit" size="sm" variant="outline" disabled={set.isPending || url === (w?.url ?? "")}>Save</Button>
+      </form>
+      {secret && <div className="my-2 max-w-xl"><p className="mb-1 text-xs text-amber-700">Signing secret. Copy it now; it won't be shown again.</p><CopyBox text={secret} label="Copy webhook secret" /></div>}
+      {w && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className={cn("text-xs", w.last_error ? "text-red-600" : "text-muted-foreground")}>
+            {w.last_at ? (w.last_error ? `Last delivery failed ${ago(w.last_at)}: ${w.last_error}` : `Last delivery ${w.last_status} · ${ago(w.last_at)}`) : "Nothing sent yet"}
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => test.mutate()} disabled={test.isPending}>Send test</Button>
+          <Button size="sm" variant="ghost" onClick={() => set.mutate({ url: w.url, rotate: true })}>Rotate secret</Button>
+          <Button size="sm" variant="ghost" className="text-red-600" onClick={() => { setUrl(""); setSecret(null); set.mutate({ url: "" }); }}>Remove</Button>
+        </div>
+      )}
+      <ErrorText error={set.error || test.error} />
+    </div>
   );
 }
