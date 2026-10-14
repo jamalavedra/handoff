@@ -449,6 +449,7 @@ type CommentOut struct {
 	Reactions  []ReactionOut `json:"reactions"`
 	Lookups    []Lookup      `json:"lookups,omitempty"`
 	Options    []string      `json:"options,omitempty" jsonschema:"quick answers the agent offered with its question"`
+	Blocks     []Block       `json:"blocks,omitempty" jsonschema:"images, maps… the agent attached to its message"`
 	// Activity is what the agent did while working on this message, in order.
 	Activity []ActivityStep `json:"activity,omitempty"`
 }
@@ -506,7 +507,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 		if out.Here, err = c.here(r.ID); err != nil {
 			return err
 		}
-		rows, err := c.tx.Query(c.ctx, `SELECT id, author_id::text, coalesce(on_behalf_of::text, ''), body, created_at, lookups, activity, options
+		rows, err := c.tx.Query(c.ctx, `SELECT id, author_id::text, coalesce(on_behalf_of::text, ''), body, created_at, lookups, activity, options, blocks
 			FROM comments WHERE task_id = $1 ORDER BY created_at`, r.ID)
 		if err != nil {
 			return err
@@ -515,7 +516,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 			var co CommentOut
 			var author, obo string
 			var at time.Time
-			if err := rows.Scan(&co.ID, &author, &obo, &co.Body, &at, &co.Lookups, &co.Activity, &co.Options); err != nil {
+			if err := rows.Scan(&co.ID, &author, &obo, &co.Body, &at, &co.Lookups, &co.Activity, &co.Options, &co.Blocks); err != nil {
 				rows.Close()
 				return err
 			}
@@ -1205,6 +1206,7 @@ type commentExtra struct {
 	activity []ActivityStep
 	done     *Member  // gets an agent_done notification
 	options  []string // quick answers to the question it asks
+	blocks   []Block
 }
 
 func (s *Service) Comment(ctx context.Context, p *Principal, in CommentIn) (TaskDetailOut, error) {
@@ -1237,12 +1239,15 @@ func (c *call) addComment(taskID, body string, x commentExtra) error {
 	if len(x.activity) > 0 {
 		act, _ = json.Marshal(x.activity)
 	}
-	var opts []byte
+	var opts, blocks []byte
 	if len(x.options) > 0 {
 		opts, _ = json.Marshal(x.options)
 	}
-	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body, lookups, activity, options) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body, lk, act, opts).Scan(&commentID); err != nil {
+	if len(x.blocks) > 0 {
+		blocks, _ = json.Marshal(x.blocks)
+	}
+	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body, lookups, activity, options, blocks) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body, lk, act, opts, blocks).Scan(&commentID); err != nil {
 		return err
 	}
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, taskID); err != nil {
