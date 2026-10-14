@@ -64,7 +64,9 @@ export function summary(steps: ActivityStep[]) {
   const failed = steps.filter((s) => s.error).length;
   const label = n === 0 ? "reasoning" : n === 1 ? "1 step" : `${n} steps`;
   const sources = [...new Set(steps.filter((s) => s.type === "lookup" && s.source).map((s) => s.source!))];
-  const headline = sources.length ? `Looked up ${sources.join(", ")}`
+  const asked = steps.some((s) => s.tool === "ask_person" && !s.error);
+  const headline = asked ? "Needs your input"
+    : sources.length ? `Looked up ${sources.join(", ")}`
     : wrote(steps) ? "Made changes"
     : n === 0 ? "Thought it through"
     : "Checked the tasks";

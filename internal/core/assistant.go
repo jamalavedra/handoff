@@ -84,6 +84,8 @@ type AssistantChatOut struct {
 	// Error is set when the turn stopped before answering. Steps still lists what was done; retrying
 	// with the same turn id carries on from there.
 	Error string `json:"error,omitempty"`
+	// asked is set when the agent handed the task back with a question: the answers it offered.
+	asked []string
 }
 
 // assistantTurn is what the server remembers about one turn while it runs and for a while after.
@@ -98,6 +100,7 @@ type assistantTurn struct {
 	done     map[string]string // write calls already made (tool and arguments) and what they returned
 	finished bool
 	reply    string
+	asked    []string // set when it asked the person (ask_person): the answers it offered
 }
 
 // takeTurn claims a turn for one request: a new one, or an earlier attempt to resume.
@@ -202,10 +205,13 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 	}
 	defer s.releaseTurn(t)
 	if t.finished {
-		return AssistantChatOut{Reply: t.reply, Steps: slices.Clone(t.steps), Agent: out.Agent, Changed: t.changed}, nil
+		return AssistantChatOut{Reply: t.reply, Steps: slices.Clone(t.steps), Agent: out.Agent, Changed: t.changed, asked: t.asked}, nil
 	}
 	out.Steps, out.Changed = append(out.Steps, t.steps...), t.changed
 	a := &assistantRun{s: s, p: p, agent: agent, out: &out, turn: t, turnID: turnID, sessions: extSessions{}}
+	if in.shared {
+		a.task = strings.TrimSpace(in.Task)
+	}
 	// Steps go out as they happen: to the person alone, or to the task's viewers when the server runs it there.
 	a.progress = &progress{org: p.Org.ID, member: p.Member.ID, turn: turnID}
 	if in.shared {
@@ -235,6 +241,9 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 		var tools []map[string]any
 		if withTools {
 			tools = append(slices.Clip(assistantToolDefs), extToolDefs(a.ext)...)
+			if a.task != "" {
+				tools = append(tools, askPersonDef)
+			}
 		}
 		msg, err := s.assistantComplete(lctx, st, string(cred), ask, tools, 4000)
 		if err != nil {
@@ -261,7 +270,7 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 					out.Reply = strings.Join(did, ". ") + "."
 				}
 			}
-			t.finished, t.reply = true, out.Reply
+			t.finished, t.reply, t.asked = true, out.Reply, out.asked
 			return out, nil
 		}
 		t.rounds++
@@ -556,6 +565,7 @@ type assistantRun struct {
 	ext      []extTool
 	sessions extSessions
 	progress *progress
+	task     string // the task the server runs this turn on, when it does
 }
 
 // add records a step and shows it on open screens.
@@ -576,6 +586,9 @@ func (a *assistantRun) call(ctx context.Context, name, args string) string {
 		if assistantTools[i].name == name {
 			tool = &assistantTools[i]
 		}
+	}
+	if tool == nil && name == "ask_person" && a.task != "" {
+		return a.askPerson(ctx, args)
 	}
 	if tool == nil {
 		if i := slices.IndexFunc(a.ext, func(t extTool) bool { return t.fn == name }); i >= 0 {
@@ -923,6 +936,72 @@ func (a *assistantRun) comment(ctx context.Context, raw json.RawMessage) (any, *
 		return nil, &AssistantStep{Summary: "Couldn't comment on " + clip(in.ID, 30)}, err
 	}
 	return map[string]any{"ok": true, "task": brief(d.Task)}, &AssistantStep{Summary: "Commented on “" + clip(d.Task.Title, 60) + "”", Tasks: refs(d.Task)}, nil
+}
+
+// ask_person: on a task's chat, the agent hands the task back to the person it works for when it
+// needs them (a choice, a detail, something only they can do). The task moves to their list until
+// they answer in the chat, which hands it back to the agent.
+type aAskIn struct {
+	Options []string `json:"options,omitempty" jsonschema:"up to 4 short answers the person can tap, when the question has clear choices"`
+}
+
+var askPersonDef = map[string]any{"type": "function", "function": map[string]any{
+	"name":        "ask_person",
+	"description": "Required whenever you need the person's input to go on (a decision between options, a detail only they know, a step only they can do like buying, booking or trying on): hands this task back to them until they answer. Call it once, with up to 4 short answers when the choice is clear-cut, then end your turn with the question as your reply.",
+	"parameters":  schemaOf[aAskIn](),
+}}
+
+func (a *assistantRun) askPerson(ctx context.Context, args string) string {
+	var in aAskIn
+	_ = json.Unmarshal([]byte(args), &in)
+	var opts []string
+	for _, o := range in.Options {
+		if o = strings.TrimSpace(o); o != "" && len(opts) < 4 {
+			opts = append(opts, clip(o, 80))
+		}
+	}
+	// The hand-back itself happens once the question is posted (replyOne), so the task never waits on
+	// someone who wasn't asked anything.
+	a.out.asked = opts
+	if opts == nil {
+		a.out.asked = []string{}
+	}
+	a.add(ctx, AssistantStep{Type: "write", Tool: "ask_person", Summary: "Handed it back to " + a.p.Member.Name + " for their input"})
+	return `{"ok":true,"next":"now reply with your question, short and specific"}`
+}
+
+// handBack gives the task to the person the agent works for, waiting on their input, and tells them.
+func (s *Service) handBack(ctx context.Context, agent *Principal, task string, person *Member) error {
+	return s.run(ctx, agent, func(c *call) error {
+		if err := c.p.require(ActUpdate); err != nil {
+			return err
+		}
+		// Through getTask, so it only reaches tasks the agent may see and change for this person.
+		r, err := c.getTask(task, false, true)
+		if IsCode(err, ErrNotFound) {
+			return nil // gone meanwhile: nothing to wait for
+		}
+		if err != nil {
+			return err
+		}
+		if r.Status == "done" || r.Status == "cancelled" {
+			return nil
+		}
+		title := r.Title
+		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET assignee_id = $2, waiting_on = $2, updated_at = now() WHERE id = $1`, task, person.ID); err != nil {
+			return err
+		}
+		if err := c.event(task, "updated", map[string]any{"assignee": person.Name, "waiting_on": person.Name}); err != nil {
+			return err
+		}
+		return c.notify(person, "assigned", task, title)
+	})
+}
+
+// asksPerson says whether a reply ends by asking the person something: then the agent is waiting on them.
+func asksPerson(reply string) bool {
+	r := strings.TrimRight(strings.TrimSpace(reply), "*_ )\"\u201d")
+	return strings.HasSuffix(r, "?")
 }
 
 // callExternal runs a connection's tool for the model and records it as a step.
