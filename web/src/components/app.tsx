@@ -86,6 +86,7 @@ export function TaskCheck({ t, onToggle, disabled }: { t: Task; onToggle: () => 
   return (
     <button
       type="button"
+      data-task-check
       aria-label={label}
       title={label}
       disabled={disabled}
