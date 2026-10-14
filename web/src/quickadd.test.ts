@@ -97,6 +97,7 @@ test("knows when an agent is on a task", () => {
   assert.equal(agentOnIt({ status: "open" }, [{ member: human, typing: true }]), false);
   assert.equal(agentOnIt({ status: "open" }, [{ member: agent, typing: true }]), true);
   assert.equal(agentOnIt({ status: "done", triage: "pending", claimed_by: agent }), false);
+  assert.equal(agentOnIt({ status: "open", triage: "pending", deleted_at: "2026-10-14T10:00:00Z" }), false);
 });
 
 test("finds the mention being typed", () => {

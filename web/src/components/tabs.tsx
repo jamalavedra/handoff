@@ -301,11 +301,15 @@ function TabLabel({ href, onMissing }: { href: string; onMissing?: () => void })
 
 // Shares the task page's cache entry; a tab only reads it, it doesn't poll or mark anything read.
 // cachedTask finds a task in whatever the app already loaded: its detail, or any task list
-// (cached as { tasks } or, on the Team board, a bare array).
+// (cached as { tasks } or, on the Team board, a bare array). Invalidated entries are skipped: a
+// closed tab's detail isn't refetched, and would keep showing, say, a claim that's been released.
 function cachedTask(qc: QueryClient, id: string) {
-  const detail = qc.getQueryData<{ task: Task }>(["task", id])?.task;
-  if (detail) return detail;
-  for (const [, data] of qc.getQueriesData<{ tasks: Task[] } | Task[]>({ queryKey: ["tasks"] })) {
+  const cache = qc.getQueryCache();
+  const detail = cache.find<{ task: Task }>({ queryKey: ["task", id], exact: true });
+  if (detail?.state.data && !detail.state.isInvalidated) return detail.state.data.task;
+  for (const q of cache.findAll({ queryKey: ["tasks"] })) {
+    if (q.state.isInvalidated) continue;
+    const data = q.state.data as { tasks: Task[] } | Task[] | undefined;
     const t = (Array.isArray(data) ? data : data?.tasks)?.find((x) => x.id === id);
     if (t) return t;
   }
