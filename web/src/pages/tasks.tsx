@@ -13,6 +13,8 @@ import { groupByDue } from "../quickadd";
 import { useMe } from "../main";
 import { Board, useView, ViewToggle } from "./board";
 import { TaskLink, usePanelTask } from "../components/tasklink";
+import { patchTask, reopen, undoable, useChangeFlash } from "../components/feedback";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function useInvalidate() {
   const qc = useQueryClient();
@@ -22,18 +24,26 @@ export function useInvalidate() {
 export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   const me = useMe();
   const invalidate = useInvalidate();
+  const qc = useQueryClient();
   const closed = t.status === "done" || t.status === "cancelled";
+  // The checkbox answers immediately; the server catches up, and Undo reopens.
+  // `wasClosed` is the state at click time: the optimistic patch flips `closed` before onSuccess runs.
   const toggle = useMutation({
-    mutationFn: () => (closed ? api.tool("update_task", { id: t.id, status: "open" }) : api.tool("close_task", { id: t.id, status: "done" })),
-    onSuccess: invalidate,
+    mutationFn: (wasClosed: boolean) => (wasClosed ? reopen(t.id) : api.tool("close_task", { id: t.id, status: "done" })),
+    onMutate: (wasClosed) => patchTask(qc, t.id, { status: wasClosed ? "open" : "done" }),
+    onError: (_e, _v, rollback) => rollback?.(),
+    onSuccess: (_r, wasClosed) => { if (!wasClosed) undoable(qc, `Completed “${t.title}”`, () => reopen(t.id)); },
+    onSettled: invalidate,
   });
+  const flash = useChangeFlash(t.id, t.updated_at);
+  const agentWorking = !closed && t.claimed_by?.kind === "agent";
   const waiting = !closed && !t.ready && t.blocked_by.length > 0 && !t.claimed_by;
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
   const selected = usePanelTask() === t.id;
   return (
     <div>
-    <div className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:min-h-11 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted", selected && "border-ring ring-1 ring-ring md:bg-accent md:ring-0 md:hover:bg-accent")}>
-      <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate()} />
+    <div className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:min-h-11 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted", flash && "change-flash", agentWorking && "agent-working", selected && "border-ring ring-1 ring-ring md:bg-accent md:ring-0 md:hover:bg-accent")}>
+      <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate(closed)} />
       <TaskLink id={t.id} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
         {t.unseen && !closed && !selected && <span role="img" aria-label="Changed by someone else" title="Changed by someone else since you last opened it" className="size-2 shrink-0 rounded-full bg-unseen" />}
         <span className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-muted-foreground/70 line-through")}>{t.title}</span>
@@ -59,9 +69,22 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
 }
 
 export function TaskList({ tasks, empty, action }: { tasks?: Task[]; empty: string; action?: (t: Task) => React.ReactNode }) {
-  if (!tasks) return <Card><Empty>Loading…</Empty></Card>;
+  if (!tasks) return <TaskListSkeleton />;
   if (tasks.length === 0) return <Card><Empty>{empty}</Empty></Card>;
   return <div className="flex flex-col gap-2 md:gap-0.5">{tasks.map((t) => <TaskRow key={t.id} t={t} action={action?.(t)} />)}</div>;
+}
+
+function TaskListSkeleton() {
+  return (
+    <div className="flex flex-col gap-2 md:gap-0.5" aria-busy="true" aria-label="Loading tasks">
+      {[62, 48, 71, 40].map((w) => (
+        <div key={w} className="flex min-h-14 items-center gap-3 rounded-2xl border border-border px-4 md:min-h-11 md:border-transparent md:px-3">
+          <Skeleton className="size-5 rounded-full" />
+          <Skeleton className="h-3.5 rounded-full" style={{ width: `${w}%` }} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function NewTask({ project }: { project?: string }) {

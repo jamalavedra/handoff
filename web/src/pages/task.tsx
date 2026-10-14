@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
+import { markLocal, reopen, undoable } from "../components/feedback";
 
 type Here = { member: MemberRef; typing?: boolean };
 type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] };
@@ -144,10 +145,17 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   }, [id, loaded, commentCount, qc]);
   const [blocker, setBlocker] = useState("");
   const dueRef = useRef<HTMLInputElement>(null);
-  const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => api.tool("update_task", { id, ...patch }), onSuccess: invalidate });
-  const close = useMutation({ mutationFn: (status: string) => api.tool("close_task", { id, status }), onSuccess: invalidate });
-  const trash = useMutation({ mutationFn: () => api.tool("trash_task", { id }), onSuccess: invalidate });
-  const restore = useMutation({ mutationFn: () => api.tool("restore_task", { id }), onSuccess: invalidate });
+  // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
+  const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => { markLocal(id); return api.tool("update_task", { id, ...patch }); }, onSuccess: invalidate });
+  const close = useMutation({
+    mutationFn: (status: string) => { markLocal(id); return api.tool("close_task", { id, status }); },
+    onSuccess: (_r, status) => { invalidate(); undoable(qc, status === "done" ? "Task completed" : "Task cancelled", () => reopen(id)); },
+  });
+  const trash = useMutation({
+    mutationFn: () => { markLocal(id); return api.tool("trash_task", { id }); },
+    onSuccess: () => { invalidate(); undoable(qc, "Moved to trash", () => api.tool("restore_task", { id })); },
+  });
+  const restore = useMutation({ mutationFn: () => { markLocal(id); return api.tool("restore_task", { id }); }, onSuccess: invalidate });
   const claim = useMutation({ mutationFn: () => api.tool("claim_task", { id }), onSuccess: invalidate });
   const release = useMutation({ mutationFn: () => api.tool("release_task", { id }), onSuccess: invalidate });
   const lastTyping = useRef(0);

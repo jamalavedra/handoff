@@ -198,3 +198,17 @@
     -webkit-tap-highlight-color: transparent;
   }
 }
+
+/* A row edited elsewhere glows briefly; a row an agent is working on breathes. */
+@keyframes change-flash {
+  from { background-color: color-mix(in oklab, var(--color-green-500) 16%, transparent); }
+}
+@keyframes agent-working {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-violet-500) 0%, transparent); }
+  50% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-violet-500) 22%, transparent); }
+}
+.change-flash { animation: change-flash 1.9s ease-out; }
+.agent-working { animation: agent-working 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .change-flash, .agent-working { animation: none; }
+}
