@@ -283,7 +283,7 @@ func (s *Service) connServer(ctx context.Context, org, id string) (connServer, e
 		return srv, err
 	}
 	if len(sealed) > 0 && srv.auth == "oauth" {
-		if srv.secret, err = s.freshAccess(ctx, org, id, sealed); err != nil {
+		if srv.secret, err = s.freshAccess(ctx, org, id); err != nil {
 			return srv, errf(ErrInvalid, "%s: %s", srv.name, clip(err.Error(), 200))
 		}
 	} else if len(sealed) > 0 {

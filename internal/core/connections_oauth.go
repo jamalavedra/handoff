@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -95,6 +96,20 @@ type authServerMeta struct {
 	ScopesSupported       []string `json:"scopes_supported"`
 }
 
+// signInHostOK limits where an MCP server can send Handoff's sign-in requests: https on a named host,
+// or the MCP server's own host. (Multi-workspace servers also refuse private addresses outright.)
+func signInHostOK(raw string, mcp *url.URL) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil {
+		return false
+	}
+	if strings.EqualFold(u.Host, mcp.Host) && (u.Scheme == "https" || u.Scheme == mcp.Scheme) {
+		return true
+	}
+	h := u.Hostname()
+	return u.Scheme == "https" && net.ParseIP(h) == nil && h != "localhost" && !strings.HasSuffix(h, ".localhost") && strings.Contains(h, ".")
+}
+
 // discoverAuth finds the authorization server for an MCP endpoint (RFC 9728, then RFC 8414).
 func (s *Service) discoverAuth(ctx context.Context, endpoint string) (authServerMeta, []string, error) {
 	var meta authServerMeta
@@ -110,18 +125,30 @@ func (s *Service) discoverAuth(ctx context.Context, endpoint string) (authServer
 			return meta, nil, errf(ErrInvalid, "%s doesn't say how to sign in (no OAuth metadata); try an API key instead", u.Host)
 		}
 	}
-	as := strings.TrimRight(prm.AuthorizationServers[0], "/")
-	if _, err := triageBaseURL(as); err != nil {
-		return meta, nil, errf(ErrInvalid, "the sign-in server address isn't valid")
+	as, err := url.Parse(strings.TrimRight(prm.AuthorizationServers[0], "/"))
+	if err != nil || !signInHostOK(as.String(), u) {
+		return meta, nil, errf(ErrInvalid, "the sign-in server address isn't allowed: it must be https (or the MCP server's own host)")
 	}
-	if err := s.getJSON(ctx, as+"/.well-known/oauth-authorization-server", &meta); err != nil || meta.TokenEndpoint == "" {
-		if err := s.getJSON(ctx, as+"/.well-known/openid-configuration", &meta); err != nil || meta.TokenEndpoint == "" {
-			return meta, nil, errf(ErrInvalid, "couldn't read the sign-in server's settings at %s", as)
+	// RFC 8414 puts .well-known before the issuer's path; OpenID Connect providers also use the
+	// appended form.
+	issuer := as.Scheme + "://" + as.Host
+	found := false
+	for _, c := range []string{
+		issuer + "/.well-known/oauth-authorization-server" + as.Path,
+		issuer + "/.well-known/openid-configuration" + as.Path,
+		issuer + as.Path + "/.well-known/openid-configuration",
+	} {
+		if err := s.getJSON(ctx, c, &meta); err == nil && meta.TokenEndpoint != "" {
+			found = true
+			break
 		}
 	}
-	for _, e := range []string{meta.AuthorizationEndpoint, meta.TokenEndpoint} {
-		if _, err := url.Parse(e); err != nil || !strings.HasPrefix(e, "http") {
-			return meta, nil, errf(ErrInvalid, "the sign-in server's endpoints aren't valid")
+	if !found {
+		return meta, nil, errf(ErrInvalid, "couldn't read the sign-in server's settings at %s", as)
+	}
+	for _, e := range []string{meta.AuthorizationEndpoint, meta.TokenEndpoint, meta.RegistrationEndpoint} {
+		if e != "" && !signInHostOK(e, u) {
+			return meta, nil, errf(ErrInvalid, "the sign-in server's endpoints aren't allowed: they must be https (or the MCP server's own host)")
 		}
 	}
 	scopes := prm.ScopesSupported
@@ -215,6 +242,11 @@ func (s *Service) StartConnectionOAuth(ctx context.Context, p *Principal, in Sta
 	return out, nil
 }
 
+// errTransient marks a failure worth retrying (no answer, or a 5xx).
+type errTransient struct{ error }
+
+func (e errTransient) Unwrap() error { return e.error }
+
 // tokenRequest posts a form to the token endpoint and reads the tokens.
 func (s *Service) tokenRequest(ctx context.Context, endpoint string, form url.Values) (oauthSecret, error) {
 	var sec oauthSecret
@@ -223,7 +255,7 @@ func (s *Service) tokenRequest(ctx context.Context, endpoint string, form url.Va
 	req.Header.Set("Accept", "application/json")
 	resp, err := s.outbound().Do(req)
 	if err != nil {
-		return sec, err
+		return sec, errTransient{err}
 	}
 	defer resp.Body.Close()
 	var tok struct {
@@ -236,7 +268,11 @@ func (s *Service) tokenRequest(ctx context.Context, endpoint string, form url.Va
 		if tok.Error != "" {
 			return sec, fmt.Errorf("the service said %s", tok.Error)
 		}
-		return sec, fmt.Errorf("the service didn't return a token (%d)", resp.StatusCode)
+		err := fmt.Errorf("the service didn't return a token (%d)", resp.StatusCode)
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return sec, errTransient{err}
+		}
+		return sec, err
 	}
 	sec.Access, sec.Refresh = tok.AccessToken, tok.RefreshToken
 	if tok.ExpiresIn > 0 {
@@ -270,14 +306,26 @@ func (s *Service) FinishConnectionOAuth(ctx context.Context, p *Principal, state
 		"client_id": {clientID}, "code_verifier": {verifier}, "resource": {endpoint},
 	})
 	if err != nil {
+		if errors.As(err, new(errTransient)) {
+			// The code is still good: put the sign-in back so reloading the page tries again.
+			_ = s.run(context.WithoutCancel(ctx), p, func(c *call) error {
+				_, err := c.tx.Exec(c.ctx, `INSERT INTO mcp_oauth_pending (org_id, state, name, url, redirect_uri, client_id, verifier, token_endpoint, created_by, expires_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + interval '10 minutes') ON CONFLICT DO NOTHING`,
+					p.Org.ID, state, name, endpoint, redirect, clientID, verifier, tokenEndpoint, p.Member.ID)
+				return err
+			})
+			return out, errf(ErrInvalid, "the service didn't answer (%s); reload this page to try again", clip(err.Error(), 120))
+		}
 		return out, errf(ErrInvalid, "sign-in failed: %s", clip(err.Error(), 150))
 	}
 	sec.ClientID, sec.TokenEndpoint, sec.Resource = clientID, tokenEndpoint, endpoint
-	tools, err := s.listServerTools(ctx, connServer{url: endpoint, auth: "oauth", secret: sec.Access})
-	if err != nil {
-		return out, errf(ErrInvalid, "signed in, but couldn't list the tools: %s", clip(err.Error(), 150))
+	// The code is spent, so keep the sign-in even if the tools can't be listed yet: Refresh fetches them.
+	tools, listErr := s.listServerTools(ctx, connServer{url: endpoint, auth: "oauth", secret: sec.Access})
+	out, err = s.saveConnection(ctx, p, name, endpoint, "oauth", "", sec, tools)
+	if err == nil && listErr != nil {
+		err = errf(ErrInvalid, "%s is connected, but its tools couldn't be listed (%s); use Refresh", name, clip(listErr.Error(), 120))
 	}
-	return s.saveConnection(ctx, p, name, endpoint, "oauth", "", sec, tools)
+	return out, err
 }
 
 // saveConnection stores a new connection (sealing its secret) with its read-only tools switched on.
@@ -301,7 +349,7 @@ func (s *Service) saveConnection(ctx context.Context, p *Principal, name, endpoi
 	}
 	var on []string
 	for _, t := range tools {
-		if t.ReadOnly {
+		if t.ReadOnly && !t.Destructive {
 			on = append(on, t.Name)
 		}
 	}
@@ -331,40 +379,59 @@ func (s *Service) saveConnection(ctx context.Context, p *Principal, name, endpoi
 	return out, err
 }
 
-// freshAccess returns a usable access token for an OAuth connection, refreshing (and saving) it when
-// it's about to expire.
-func (s *Service) freshAccess(ctx context.Context, org, id string, sealed []byte) (string, error) {
-	b, err := s.unseal(sealed)
-	if err != nil {
-		return "", err
-	}
-	var sec oauthSecret
-	if err := json.Unmarshal(b, &sec); err != nil {
-		return "", err
-	}
-	if sec.Expiry.IsZero() || time.Until(sec.Expiry) > time.Minute || sec.Refresh == "" {
-		return sec.Access, nil
-	}
-	next, err := s.tokenRequest(ctx, sec.TokenEndpoint, url.Values{
-		"grant_type": {"refresh_token"}, "refresh_token": {sec.Refresh}, "client_id": {sec.ClientID}, "resource": {sec.Resource},
+// freshAccess returns a usable access token for an OAuth connection, renewing (and saving) it when
+// it's about to expire. The row stays locked while renewing so concurrent turns don't spend the same
+// rotating refresh token twice: the second one waits and reads the renewed token.
+func (s *Service) freshAccess(ctx context.Context, org, id string) (string, error) {
+	var access string
+	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
+		var sealed []byte
+		if err := tx.QueryRow(ctx, `SELECT secret FROM mcp_connections WHERE id::text = $1 FOR UPDATE`, id).Scan(&sealed); err != nil {
+			return err
+		}
+		b, err := s.unseal(sealed)
+		if err != nil {
+			return err
+		}
+		var sec oauthSecret
+		if err := json.Unmarshal(b, &sec); err != nil {
+			return err
+		}
+		if sec.Expiry.IsZero() || time.Until(sec.Expiry) > time.Minute {
+			access = sec.Access
+			return nil
+		}
+		if sec.Refresh == "" {
+			if time.Now().Before(sec.Expiry) {
+				access = sec.Access
+				return nil
+			}
+			return errors.New("the sign-in expired; connect it again")
+		}
+		rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		next, err := s.tokenRequest(rctx, sec.TokenEndpoint, url.Values{
+			"grant_type": {"refresh_token"}, "refresh_token": {sec.Refresh}, "client_id": {sec.ClientID}, "resource": {sec.Resource},
+		})
+		if err != nil {
+			return fmt.Errorf("the sign-in expired and couldn't be renewed (%s); connect it again", clip(err.Error(), 100))
+		}
+		if next.Refresh == "" {
+			next.Refresh = sec.Refresh // some services keep the refresh token
+		}
+		next.ClientID, next.TokenEndpoint, next.Resource = sec.ClientID, sec.TokenEndpoint, sec.Resource
+		nb, _ := json.Marshal(next)
+		resealed, err := s.seal(nb)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE mcp_connections SET secret = $2, updated_at = now() WHERE id::text = $1`, id, resealed); err != nil {
+			return err
+		}
+		access = next.Access
+		return nil
 	})
-	if err != nil {
-		return "", fmt.Errorf("the sign-in expired and couldn't be renewed (%s); connect it again", clip(err.Error(), 100))
-	}
-	if next.Refresh == "" {
-		next.Refresh = sec.Refresh // some services keep the refresh token
-	}
-	next.ClientID, next.TokenEndpoint, next.Resource = sec.ClientID, sec.TokenEndpoint, sec.Resource
-	nb, _ := json.Marshal(next)
-	resealed, err := s.seal(nb)
-	if err != nil {
-		return "", err
-	}
-	_ = s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE mcp_connections SET secret = $2, updated_at = now() WHERE id::text = $1`, id, resealed)
-		return err
-	})
-	return next.Access, nil
+	return access, err
 }
 
 // LoopbackCallback is where a local-development sign-in lands (http://localhost:<port>): it returns

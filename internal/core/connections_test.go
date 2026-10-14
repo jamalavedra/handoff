@@ -133,6 +133,7 @@ func fakeOAuthServer(t *testing.T) (*httptest.Server, func() []string) {
 	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	var mu sync.Mutex
 	var grants []string
+	flaky := true                    // the first code exchange gets a 503, as a busy service would
 	challenge := map[string]string{} // client_id -> code challenge, set when the test "approves"
 	mux := http.NewServeMux()
 	var base string
@@ -143,7 +144,7 @@ func fakeOAuthServer(t *testing.T) (*httptest.Server, func() []string) {
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"resource": base + "/mcp", "authorization_servers": []string{base + "/auth"}, "scopes_supported": []string{"mcp:tools"}})
 	})
-	mux.HandleFunc("GET /auth/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server/auth", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"authorization_endpoint": base + "/auth/authorize", "token_endpoint": base + "/auth/token", "registration_endpoint": base + "/auth/register"})
 	})
 	mux.HandleFunc("POST /auth/register", func(w http.ResponseWriter, r *http.Request) {
@@ -169,6 +170,11 @@ func fakeOAuthServer(t *testing.T) (*httptest.Server, func() []string) {
 		grants = append(grants, r.FormValue("grant_type"))
 		switch r.FormValue("grant_type") {
 		case "authorization_code":
+			if flaky {
+				flaky = false
+				http.Error(w, "busy", http.StatusServiceUnavailable)
+				return
+			}
 			sum := sha256.Sum256([]byte(r.FormValue("code_verifier")))
 			if r.FormValue("code") != "code-1" || base64.RawURLEncoding.EncodeToString(sum[:]) != challenge[r.FormValue("client_id")] {
 				w.WriteHeader(400)
@@ -232,6 +238,10 @@ func TestConnectionOAuth(t *testing.T) {
 	if _, err := e.s.FinishConnectionOAuth(e.ctx, admin, "nope", "code-1"); !core.IsCode(err, core.ErrInvalid) {
 		t.Fatalf("unknown state accepted: %v", err)
 	}
+	// A service hiccup leaves the sign-in in place, so the callback can simply be retried.
+	if _, err := e.s.FinishConnectionOAuth(e.ctx, admin, q.Get("state"), "code-1"); !core.IsCode(err, core.ErrInvalid) || !strings.Contains(err.Error(), "try again") {
+		t.Fatalf("503 not reported as retryable: %v", err)
+	}
 	c, err := e.s.FinishConnectionOAuth(e.ctx, admin, q.Get("state"), "code-1")
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +259,7 @@ func TestConnectionOAuth(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if g := grants(); !slices.Equal(g, []string{"authorization_code", "refresh_token"}) {
+	if g := grants(); !slices.Equal(g, []string{"authorization_code", "authorization_code", "refresh_token"}) {
 		t.Fatalf("grants: %v", g)
 	}
 }
