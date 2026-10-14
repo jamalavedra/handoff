@@ -6,6 +6,13 @@ export type Parsed = {
   assignee?: Ref;
   project?: Ref;
   priority?: number;
+  repeat?: Repeat;
+};
+
+export type Repeat = "daily" | "weekdays" | "weekly" | "biweekly" | "monthly" | "yearly";
+
+export const repeatLabel: Record<Repeat, string> = {
+  daily: "Every day", weekdays: "Every weekday", weekly: "Every week", biweekly: "Every 2 weeks", monthly: "Every month", yearly: "Every year",
 };
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
@@ -50,6 +57,20 @@ const dateRules: DateRule[] = [
   } },
   { re: new RegExp(`${LEAD}${MONTH}\\s+(\\d{1,2})(?:st|nd|rd|th)?`, "i"), at: (m, t) => monthDay(m[1], m[2], t) },
   { re: new RegExp(`${LEAD}(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}`, "i"), at: (m, t) => monthDay(m[2], m[1], t) },
+];
+
+type RepeatRule = { re: RegExp; repeat: Repeat; start: (m: RegExpMatchArray, today: Date) => Date };
+
+// Repeats are read before dates, so "every friday" isn't taken as a one-off Friday. Each sets the
+// first due date unless the text also names one.
+const repeatRules: RepeatRule[] = [
+  { re: /every\s+day|daily/i, repeat: "daily", start: (_, t) => t },
+  { re: /every\s+weekday|weekdays/i, repeat: "weekdays", start: (_, t) => addDays(t, t.getDay() === 6 ? 2 : t.getDay() === 0 ? 1 : 0) },
+  { re: new RegExp(`every\\s+(${WEEKDAYS.join("|")})`, "i"), repeat: "weekly", start: (m, t) => addDays(t, (WEEKDAYS.indexOf(m[1].toLowerCase()) - t.getDay() + 7) % 7) },
+  { re: /every\s+(?:other|2)\s+weeks?|biweekly|fortnightly/i, repeat: "biweekly", start: (_, t) => t },
+  { re: /every\s+week|weekly/i, repeat: "weekly", start: (_, t) => t },
+  { re: /every\s+month|monthly/i, repeat: "monthly", start: (_, t) => t },
+  { re: /every\s+year|yearly|annually/i, repeat: "yearly", start: (_, t) => t },
 ];
 
 const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
@@ -105,6 +126,16 @@ export function parseQuickAdd(text: string, opts: { members: Ref[]; projects: Re
     t = t.slice(0, pr.index!) + pr[1] + t.slice(pr.index! + pr[0].length);
   }
 
+  let start: Date | undefined;
+  for (const rule of repeatRules) {
+    const m = t.match(bounded(rule.re));
+    if (!m) continue;
+    out.repeat = rule.repeat;
+    start = rule.start(m[2].match(rule.re)!, today);
+    t = t.slice(0, m.index!) + m[1] + t.slice(m.index! + m[0].length);
+    break;
+  }
+
   for (const rule of dateRules) {
     const m = t.match(bounded(rule.re));
     if (!m) continue;
@@ -116,6 +147,7 @@ export function parseQuickAdd(text: string, opts: { members: Ref[]; projects: Re
     break;
   }
 
+  if (!out.due && start) out.due = isoDate(start);
   out.title = t.replace(/\s+/g, " ").trim();
   return out;
 }

@@ -107,3 +107,18 @@ test("splits mentions, longest name first", () => {
     { text: ".", mention: false },
   ]);
 });
+
+test("repeats", () => {
+  assert.deepEqual(parse("Water plants every day"), { title: "Water plants", due: "2026-10-13", repeat: "daily", assignee: undefined, project: undefined });
+  assert.equal(parse("Standup every weekday").repeat, "weekdays");
+  // Every friday starts this Friday; every tuesday starts today.
+  assert.deepEqual([parse("Send report every friday").repeat, parse("Send report every friday").due, parse("Send report every friday").title], ["weekly", "2026-10-16", "Send report"]);
+  assert.equal(parse("x every tuesday").due, "2026-10-13");
+  assert.equal(parse("1:1 every other week").repeat, "biweekly");
+  assert.equal(parse("Pay rent monthly").repeat, "monthly");
+  assert.equal(parse("Renew domain yearly").repeat, "yearly");
+  // An explicit date wins for the first occurrence.
+  assert.deepEqual([parse("Invoice monthly from Oct 20").repeat, parse("Invoice monthly from Oct 20").due], ["monthly", "2026-10-20"]);
+  // Plain weekday words still mean a one-off date.
+  assert.equal(parse("Plan monday meeting").repeat, undefined);
+});

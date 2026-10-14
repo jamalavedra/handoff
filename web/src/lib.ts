@@ -63,6 +63,7 @@ export type Task = {
   triage_error?: string;
   // The start of the newest comment an agent left: its one-line status.
   agent_note?: string;
+  repeat?: "daily" | "weekdays" | "weekly" | "biweekly" | "monthly" | "yearly";
 };
 
 export type Project = { id: string; name: string; description?: string; emoji?: string; visibility: string; open_tasks: number; members?: string[] };

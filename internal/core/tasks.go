@@ -46,6 +46,7 @@ type TaskOut struct {
 	Triage         string     `json:"triage,omitempty" jsonschema:"pending while the workspace's triage agent evaluates it, then done or failed"`
 	TriageError    string     `json:"triage_error,omitempty"`
 	AgentNote      string     `json:"agent_note,omitempty" jsonschema:"start of the latest comment an agent left, for a one-line status"`
+	Repeat         string     `json:"repeat,omitempty" jsonschema:"daily, weekdays, weekly, biweekly, monthly or yearly: completing it creates the next one"`
 	URL            string     `json:"url"`
 }
 
@@ -59,7 +60,7 @@ type taskRow struct {
 	BlockedBy, Blocks                                          []string
 	OpenBlockers                                               int
 	Unseen                                                     bool
-	Triage, TriageError, AgentNote                             string
+	Triage, TriageError, AgentNote, Repeat                     string
 }
 
 // openBlockers counts unfinished blockers of t; the same expression drives "ready".
@@ -72,7 +73,7 @@ const taskSelect = `SELECT t.id, t.project_id::text, t.title, t.body, t.status, 
 	t.due_at, t.claim_expires_at, t.closed_at, t.deleted_at, t.created_at, t.updated_at, t.labels,
 	coalesce((SELECT array_agg(d.blocker_id ORDER BY d.blocker_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocked_id = t.id), '{}'),
 	coalesce((SELECT array_agg(d.blocked_id ORDER BY d.blocked_id) FROM task_deps d WHERE d.org_id = t.org_id AND d.blocker_id = t.id), '{}'),
-	` + openBlockers + `, ` + unseen + `, coalesce(t.triage, ''), t.triage_error, ` + agentNote + `
+	` + openBlockers + `, ` + unseen + `, coalesce(t.triage, ''), t.triage_error, ` + agentNote + `, t.repeat
 	FROM tasks t`
 
 // agentNote is the start of the newest comment by an agent: what it last said about the task.
@@ -104,7 +105,7 @@ func (c *call) queryTasks(where string, args ...any) ([]*taskRow, error) {
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.Title, &r.Body, &r.Status, &r.Priority,
 			&r.AssigneeID, &r.Parent, &r.ExternalID, &r.ClaimedBy, &r.CreatedBy, &r.OnBehalfOf, &r.CloseReason,
 			&r.Due, &r.ClaimExpires, &r.ClosedAt, &r.DeletedAt, &r.CreatedAt, &r.Updated, &r.Labels,
-			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen, &r.Triage, &r.TriageError, &r.AgentNote); err != nil {
+			&r.BlockedBy, &r.Blocks, &r.OpenBlockers, &r.Unseen, &r.Triage, &r.TriageError, &r.AgentNote, &r.Repeat); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -123,7 +124,7 @@ func (c *call) out(r *taskRow, withBody bool) TaskOut {
 		CreatedBy: c.ref(r.CreatedBy), OnBehalfOf: c.ref(r.OnBehalfOf), CreatedAt: ts(r.CreatedAt), UpdatedAt: ts(r.Updated),
 		ClosedAt: ts(r.ClosedAt), CloseReason: r.CloseReason, DeletedAt: ts(r.DeletedAt),
 		BlockedBy: nonNil(r.BlockedBy), Blocks: nonNil(r.Blocks), Unseen: r.Unseen,
-		Triage: r.Triage, TriageError: r.TriageError, AgentNote: r.AgentNote,
+		Triage: r.Triage, TriageError: r.TriageError, AgentNote: r.AgentNote, Repeat: r.Repeat,
 		URL: c.s.Cfg.OrgURL(c.p.Org.Slug) + "/tasks/" + r.ID,
 	}
 	if p := c.projects[r.ProjectID]; p != nil {
@@ -495,6 +496,7 @@ type NewTask struct {
 	Priority   *int     `json:"priority,omitempty" jsonschema:"0 (urgent) to 4 (someday), default 2"`
 	Assignee   string   `json:"assignee,omitempty" jsonschema:"'me', 'owner', a name, email or id"`
 	Due        string   `json:"due,omitempty" jsonschema:"YYYY-MM-DD"`
+	Repeat     string   `json:"repeat,omitempty" jsonschema:"daily, weekdays, weekly, biweekly, monthly or yearly"`
 	Labels     []string `json:"labels,omitempty"`
 	Parent     string   `json:"parent,omitempty" jsonschema:"parent task id"`
 	BlockedBy  []string `json:"blocked_by,omitempty" jsonschema:"ids of tasks that must finish first; may reference external_ids from this batch"`
@@ -583,6 +585,68 @@ func (s *Service) CreateTasks(ctx context.Context, p *Principal, in CreateTasksI
 	return out, err
 }
 
+func parseRepeat(s string) (string, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "", "daily", "weekdays", "weekly", "biweekly", "monthly", "yearly":
+		return s, nil
+	}
+	return "", errf(ErrInvalid, "repeat must be daily, weekdays, weekly, biweekly, monthly or yearly")
+}
+
+// nextDue is the next occurrence after today, counted on from the current due date (or from today when
+// there is none), skipping any that are already in the past.
+func nextDue(repeat string, due *time.Time, today time.Time) time.Time {
+	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	d := today
+	if due != nil {
+		d = time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	step := func(t time.Time) time.Time {
+		switch repeat {
+		case "daily":
+			return t.AddDate(0, 0, 1)
+		case "weekdays":
+			t = t.AddDate(0, 0, 1)
+			for t.Weekday() == time.Saturday || t.Weekday() == time.Sunday {
+				t = t.AddDate(0, 0, 1)
+			}
+			return t
+		case "weekly":
+			return t.AddDate(0, 0, 7)
+		case "biweekly":
+			return t.AddDate(0, 0, 14)
+		case "monthly":
+			return t.AddDate(0, 1, 0)
+		default: // yearly
+			return t.AddDate(1, 0, 0)
+		}
+	}
+	d = step(d)
+	for !d.After(today) {
+		d = step(d)
+	}
+	return d
+}
+
+// nextOccurrence creates the next task in a repeating series, carrying its fields over.
+func (c *call) nextOccurrence(r *taskRow) (TaskOut, error) {
+	prio := r.Priority
+	nt := NewTask{
+		Title: r.Title, Body: r.Body, Project: r.ProjectID, Priority: &prio, Assignee: r.AssigneeID,
+		Due: nextDue(r.Repeat, r.Due, time.Now().UTC()).Format("2006-01-02"), Labels: r.Labels, Repeat: r.Repeat,
+	}
+	id, _, err := c.createOne(nt)
+	if err != nil {
+		return TaskOut{}, err
+	}
+	n, err := c.getTask(id, false, false)
+	if err != nil {
+		return TaskOut{}, err
+	}
+	return c.out(n, true), nil
+}
+
 // explicitFields lists what the creator set on purpose, so triage never second-guesses it.
 func explicitFields(nt NewTask) []string {
 	f := []string{}
@@ -638,6 +702,10 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
+	repeat, err := parseRepeat(nt.Repeat)
+	if err != nil {
+		return "", false, err
+	}
 	var parent, ext *string
 	if nt.Parent != "" {
 		pt, err := c.getTask(nt.Parent, false, false)
@@ -661,10 +729,10 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 			triage = &pending
 		}
 		_, err = c.tx.Exec(c.ctx, `INSERT INTO tasks (org_id, id, project_id, title, body, priority, assignee_id, due_at, labels,
-			parent_id, external_id, created_by, on_behalf_of, triage, triage_explicit)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+			parent_id, external_id, created_by, on_behalf_of, triage, triage_explicit, repeat)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 			c.p.Org.ID, id, pr.ID, title, nt.Body, prio, assignee, due, cleanLabels(nt.Labels), parent, ext, c.p.Member.ID, c.p.onBehalfOf(),
-			triage, explicitFields(nt))
+			triage, explicitFields(nt), repeat)
 		if db.IsUniqueViolation(err) {
 			if _, err := c.tx.Exec(c.ctx, `ROLLBACK TO SAVEPOINT create_task`); err != nil {
 				return "", false, err
@@ -722,6 +790,7 @@ type UpdateTaskIn struct {
 	Due      *string  `json:"due,omitempty" jsonschema:"YYYY-MM-DD; empty string clears"`
 	Labels   []string `json:"labels,omitempty" jsonschema:"replaces the label set"`
 	Project  string   `json:"project,omitempty" jsonschema:"move to this project"`
+	Repeat   *string  `json:"repeat,omitempty" jsonschema:"daily, weekdays, weekly, biweekly, monthly or yearly; empty string stops repeating"`
 }
 
 type TaskResult struct {
@@ -836,6 +905,14 @@ func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
 	if in.Labels != nil {
 		put("labels", cleanLabels(in.Labels))
 		changed["labels"] = cleanLabels(in.Labels)
+	}
+	if in.Repeat != nil {
+		rp, err := parseRepeat(*in.Repeat)
+		if err != nil {
+			return nil, err
+		}
+		put("repeat", rp)
+		changed["repeat"] = rp
 	}
 	if in.Project != "" {
 		pr, err := c.resolveProject(in.Project)
@@ -965,6 +1042,7 @@ type CloseTaskIn struct {
 type CloseTaskOut struct {
 	Task      TaskOut   `json:"task"`
 	Unblocked []TaskOut `json:"unblocked" jsonschema:"tasks that became ready because this one closed"`
+	Next      *TaskOut  `json:"next,omitempty" jsonschema:"the next occurrence, when a repeating task is done"`
 }
 
 func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (CloseTaskOut, error) {
@@ -999,6 +1077,14 @@ func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (
 			return err
 		}
 		out.Task = c.out(r, true)
+		// Done with a repeating task: the next one is due one interval later. Cancelling ends the series.
+		if st == "done" && r.Repeat != "" {
+			next, err := c.nextOccurrence(r)
+			if err != nil {
+				return err
+			}
+			out.Next = &next
+		}
 		if len(r.Blocks) > 0 {
 			rs, err := c.queryTasks(readyCond+" AND t.id = ANY($1) AND t.project_id::text = ANY($2)", r.Blocks, c.visible)
 			if err != nil {

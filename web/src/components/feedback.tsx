@@ -3,6 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { api, type Task } from "../lib";
+import { dueLabel } from "../quickadd";
 import { useInbox } from "../pages/notifications";
 
 // Tasks this tab changed in the last few seconds. Rows flash only for changes made elsewhere.
@@ -43,6 +44,16 @@ export function undoable(qc: QueryClient, message: string, undo: () => Promise<u
 }
 
 export const reopen = (id: string) => api.tool("update_task", { id, status: "open" });
+
+// Completing a repeating task makes the next one; the toast says when, and Undo takes both back.
+export function completedText(base: string, next?: Task) {
+  return next?.due ? `${base} · next ${dueLabel(next.due).text}` : base;
+}
+
+export async function undoClose(id: string, next?: Task) {
+  await reopen(id);
+  if (next) await api.tool("trash_task", { id: next.id });
+}
 
 const kindText = { mention: "mentioned you", assigned: "assigned you a task", approval: "needs your approval" } as const;
 

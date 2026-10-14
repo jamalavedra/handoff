@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowUp, Bot, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
-import { dueLabel, mentionQuery, splitMentions } from "../quickadd";
+import { dueLabel, mentionQuery, repeatLabel, splitMentions } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck, Who } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
-import { markLocal, reopen, undoable } from "../components/feedback";
+import { completedText, markLocal, undoable, undoClose } from "../components/feedback";
 import { toast } from "sonner";
 
 type Here = { member: MemberRef; typing?: boolean };
@@ -147,8 +147,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
   const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => { markLocal(id); return api.tool("update_task", { id, ...patch }); }, onSuccess: invalidate });
   const close = useMutation({
-    mutationFn: (status: string) => { markLocal(id); return api.tool("close_task", { id, status }); },
-    onSuccess: (_r, status) => { invalidate(); undoable(qc, status === "done" ? "Task completed" : "Task cancelled", () => reopen(id)); },
+    mutationFn: (status: string) => { markLocal(id); return api.tool<{ next?: Task }>("close_task", { id, status }); },
+    onSuccess: (r, status) => { invalidate(); undoable(qc, completedText(status === "done" ? "Task completed" : "Task cancelled", r.next), () => undoClose(id, r.next)); },
   });
   const trash = useMutation({
     mutationFn: () => { markLocal(id); return api.tool("trash_task", { id }); },
@@ -271,6 +271,12 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             {priorityText.map((p, i) => <option key={i} value={i}>{p}</option>)}
           </select>
         )}>{priorityText[t.priority]}</Pill>
+        <Pill label="Repeat" icon={RepeatIcon} select={!locked && (
+          <select className={overlay} value={t.repeat ?? ""} onChange={(e) => update.mutate({ repeat: e.target.value })} aria-label="Repeat">
+            <option value="">Doesn't repeat</option>
+            {(Object.keys(repeatLabel) as (keyof typeof repeatLabel)[]).map((r) => <option key={r} value={r}>{repeatLabel[r]}</option>)}
+          </select>
+        )}>{t.repeat ? repeatLabel[t.repeat] : "Doesn't repeat"}</Pill>
         <Pill label="Project" icon={Folder} select={!locked && (
           <select className={overlay} value={t.project_id} onChange={(e) => update.mutate({ project: e.target.value })} aria-label="Project">
             {projects.data?.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
