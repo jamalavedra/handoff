@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -154,6 +155,9 @@ type Service struct {
 	// TriageHTTP, when set, replaces the client used to call triage models (tests).
 	TriageHTTP *http.Client
 	triageJobs chan triageJob
+	// triageHTTP is the shared model client, built on first use.
+	triageHTTP     *http.Client
+	triageHTTPOnce sync.Once
 }
 
 func New(d *db.DB, cfg *config.Config) *Service {

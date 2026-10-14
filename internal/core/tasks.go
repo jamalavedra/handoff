@@ -725,127 +725,136 @@ type TaskResult struct {
 func (s *Service) UpdateTask(ctx context.Context, p *Principal, in UpdateTaskIn) (TaskResult, error) {
 	var out TaskResult
 	err := s.run(ctx, p, func(c *call) error {
-		if err := p.require(ActUpdate); err != nil {
-			return err
-		}
-		r, err := c.getTask(in.ID, false, true)
-		var newAssignee *Member
+		r, err := c.updateTask(in)
 		if err != nil {
 			return err
 		}
-		changed := map[string]any{}
-		set := []string{}
-		args := []any{r.ID}
-		put := func(col string, v any) {
-			args = append(args, v)
-			set = append(set, fmt.Sprintf("%s = $%d", col, len(args)))
-		}
-		if in.Title != nil {
-			t := strings.TrimSpace(*in.Title)
-			if t == "" || len(t) > 300 {
-				return errf(ErrInvalid, "title must be 1-300 characters")
-			}
-			put("title", t)
-			changed["title"] = t
-		}
-		if in.Body != nil {
-			switch in.BodyMode {
-			case "", "append":
-				nb := r.Body
-				if strings.TrimSpace(nb) != "" {
-					nb += "\n\n"
-				}
-				put("body", nb+*in.Body)
-				changed["body"] = "appended"
-			case "replace":
-				if !in.Confirm {
-					return errf(ErrInvalid, "replacing the whole body discards the existing text; ask the user, then call again with confirm=true")
-				}
-				put("body", *in.Body)
-				changed["body"] = "replaced"
-			default:
-				return errf(ErrInvalid, "body_mode must be append or replace")
-			}
-		}
-		if in.Status != "" {
-			switch in.Status {
-			case "open", "in_progress", "blocked":
-			case "done", "cancelled":
-				return errf(ErrInvalid, "use close_task to mark a task %s", in.Status)
-			default:
-				return errf(ErrInvalid, "unknown status %q", in.Status)
-			}
-			if in.Status != r.Status {
-				put("status", in.Status)
-				changed["status"] = in.Status
-				if r.Status == "done" || r.Status == "cancelled" {
-					set = append(set, "closed_at = NULL", "close_reason = ''")
-				}
-			}
-		}
-		if in.Priority != nil {
-			if *in.Priority < 0 || *in.Priority > 4 {
-				return errf(ErrInvalid, "priority must be 0-4")
-			}
-			put("priority", *in.Priority)
-			changed["priority"] = *in.Priority
-		}
-		if in.Assignee != nil {
-			if strings.TrimSpace(*in.Assignee) == "" {
-				put("assignee_id", nil)
-				changed["assignee"] = nil
-			} else {
-				m, err := c.resolveMember(*in.Assignee)
-				if err != nil {
-					return err
-				}
-				put("assignee_id", m.ID)
-				changed["assignee"] = m.Name
-				if m.ID != r.AssigneeID {
-					newAssignee = m
-				}
-			}
-		}
-		if in.Due != nil {
-			d, err := parseDue(*in.Due)
-			if err != nil {
-				return err
-			}
-			put("due_at", d)
-			changed["due"] = *in.Due
-		}
-		if in.Labels != nil {
-			put("labels", cleanLabels(in.Labels))
-			changed["labels"] = cleanLabels(in.Labels)
-		}
-		if in.Project != "" {
-			pr, err := c.resolveProject(in.Project)
-			if err != nil {
-				return err
-			}
-			put("project_id", pr.ID)
-			changed["project"] = pr.Name
-			if pr.ID != r.ProjectID {
-				changed["from_project_id"] = r.ProjectID
-			}
-		}
-		if len(set) == 0 {
-			return errf(ErrInvalid, "nothing to update")
-		}
-		if _, err := c.tx.Exec(c.ctx, "UPDATE tasks SET "+strings.Join(set, ", ")+", updated_at = now() WHERE id = $1", args...); err != nil {
-			return err
-		}
-		if err := c.notify(newAssignee, "assigned", r.ID, r.Title); err != nil {
-			return err
-		}
-		if err := c.event(r.ID, "updated", changed); err != nil {
-			return err
-		}
-		r, err = c.getTask(r.ID, false, false)
 		out.Task = c.out(r, true)
-		return err
+		return nil
 	})
 	return out, err
+}
+
+// updateTask applies an update inside the caller's transaction and returns the task as it is now.
+func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
+	p := c.p
+	if err := p.require(ActUpdate); err != nil {
+		return nil, err
+	}
+	r, err := c.getTask(in.ID, false, true)
+	var newAssignee *Member
+	if err != nil {
+		return nil, err
+	}
+	changed := map[string]any{}
+	set := []string{}
+	args := []any{r.ID}
+	put := func(col string, v any) {
+		args = append(args, v)
+		set = append(set, fmt.Sprintf("%s = $%d", col, len(args)))
+	}
+	if in.Title != nil {
+		t := strings.TrimSpace(*in.Title)
+		if t == "" || len(t) > 300 {
+			return nil, errf(ErrInvalid, "title must be 1-300 characters")
+		}
+		put("title", t)
+		changed["title"] = t
+	}
+	if in.Body != nil {
+		switch in.BodyMode {
+		case "", "append":
+			nb := r.Body
+			if strings.TrimSpace(nb) != "" {
+				nb += "\n\n"
+			}
+			put("body", nb+*in.Body)
+			changed["body"] = "appended"
+		case "replace":
+			if !in.Confirm {
+				return nil, errf(ErrInvalid, "replacing the whole body discards the existing text; ask the user, then call again with confirm=true")
+			}
+			put("body", *in.Body)
+			changed["body"] = "replaced"
+		default:
+			return nil, errf(ErrInvalid, "body_mode must be append or replace")
+		}
+	}
+	if in.Status != "" {
+		switch in.Status {
+		case "open", "in_progress", "blocked":
+		case "done", "cancelled":
+			return nil, errf(ErrInvalid, "use close_task to mark a task %s", in.Status)
+		default:
+			return nil, errf(ErrInvalid, "unknown status %q", in.Status)
+		}
+		if in.Status != r.Status {
+			put("status", in.Status)
+			changed["status"] = in.Status
+			if r.Status == "done" || r.Status == "cancelled" {
+				set = append(set, "closed_at = NULL", "close_reason = ''")
+			}
+		}
+	}
+	if in.Priority != nil {
+		if *in.Priority < 0 || *in.Priority > 4 {
+			return nil, errf(ErrInvalid, "priority must be 0-4")
+		}
+		put("priority", *in.Priority)
+		changed["priority"] = *in.Priority
+	}
+	if in.Assignee != nil {
+		if strings.TrimSpace(*in.Assignee) == "" {
+			put("assignee_id", nil)
+			changed["assignee"] = nil
+		} else {
+			m, err := c.resolveMember(*in.Assignee)
+			if err != nil {
+				return nil, err
+			}
+			put("assignee_id", m.ID)
+			changed["assignee"] = m.Name
+			if m.ID != r.AssigneeID {
+				newAssignee = m
+			}
+		}
+	}
+	if in.Due != nil {
+		d, err := parseDue(*in.Due)
+		if err != nil {
+			return nil, err
+		}
+		put("due_at", d)
+		changed["due"] = *in.Due
+	}
+	if in.Labels != nil {
+		put("labels", cleanLabels(in.Labels))
+		changed["labels"] = cleanLabels(in.Labels)
+	}
+	if in.Project != "" {
+		pr, err := c.resolveProject(in.Project)
+		if err != nil {
+			return nil, err
+		}
+		put("project_id", pr.ID)
+		changed["project"] = pr.Name
+		if pr.ID != r.ProjectID {
+			changed["from_project_id"] = r.ProjectID
+		}
+	}
+	if len(set) == 0 {
+		return nil, errf(ErrInvalid, "nothing to update")
+	}
+	if _, err := c.tx.Exec(c.ctx, "UPDATE tasks SET "+strings.Join(set, ", ")+", updated_at = now() WHERE id = $1", args...); err != nil {
+		return nil, err
+	}
+	if err := c.notify(newAssignee, "assigned", r.ID, r.Title); err != nil {
+		return nil, err
+	}
+	if err := c.event(r.ID, "updated", changed); err != nil {
+		return nil, err
+	}
+	return c.getTask(r.ID, false, false)
 }
 
 type ClaimTaskIn struct {

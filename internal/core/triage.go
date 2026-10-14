@@ -103,8 +103,12 @@ func (s *Service) SetTriage(ctx context.Context, p *Principal, in SetTriageIn) (
 		if !m.IsAgent() || m.Status != "active" {
 			return errf(ErrInvalid, "%s is not an active agent", m.Name)
 		}
-		if !slices.Contains(m.Permissions.Actions, ActUpdate) {
-			return errf(ErrInvalid, "%s needs the update permission to triage tasks", m.Name)
+		// It reads every new task and edits it, so it needs read and update on all projects.
+		if !slices.Contains(m.Permissions.Actions, ActRead) || !slices.Contains(m.Permissions.Actions, ActUpdate) {
+			return errf(ErrInvalid, "%s needs the read and update permissions to triage tasks", m.Name)
+		}
+		if !slices.Contains(m.Permissions.Projects, "*") {
+			return errf(ErrInvalid, "%s needs access to all projects to triage tasks", m.Name)
 		}
 		base, err := triageBaseURL(in.BaseURL)
 		if err != nil {
@@ -147,7 +151,7 @@ func (s *Service) DisableTriage(ctx context.Context, p *Principal, _ struct{}) (
 			return err
 		}
 		// Nothing will pick these up any more.
-		_, err := c.tx.Exec(c.ctx, `UPDATE tasks SET triage = NULL WHERE triage = 'pending'`)
+		_, err := c.tx.Exec(c.ctx, `UPDATE tasks SET triage = NULL, triage_claim = NULL, triage_claim_until = NULL WHERE triage = 'pending'`)
 		return err
 	})
 	return TriageOut{}, err
@@ -279,6 +283,7 @@ func (s *Service) pendingTriage(ctx context.Context, olderThan time.Duration) []
 	for _, org := range orgs {
 		_ = s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, `SELECT id FROM tasks WHERE triage = 'pending' AND created_at < now() - make_interval(secs => $1)
+				AND (triage_claim_until IS NULL OR triage_claim_until < now())
 				ORDER BY created_at LIMIT 100`, olderThan.Seconds())
 			if err != nil {
 				return err
@@ -298,11 +303,16 @@ type triageSettings struct {
 	Credential              []byte
 }
 
-type triageTask struct {
-	Title, Body string
-	Explicit    []string
-	State       string
+// triageClaim is one worker's hold on a pending task: only the holder may apply or record an outcome.
+type triageClaim struct {
+	job      triageJob
+	token    string
+	explicit []string
 }
+
+// errTriageStale means the task stopped being ours while the model was thinking: triage was switched
+// off, the agent changed, or the claim lapsed. Nothing is written.
+var errTriageStale = errors.New("triage claim no longer current")
 
 func (s *Service) triageOne(ctx context.Context, j triageJob) {
 	org, err := s.OrgByID(ctx, j.org)
@@ -310,95 +320,130 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 		slog.Error("triage", "task", j.task, "err", err)
 		return
 	}
-	var st *triageSettings
-	var t triageTask
-	err = s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
-		var x triageSettings
-		err := tx.QueryRow(ctx, `SELECT agent_id::text, base_url, model, credential FROM triage_settings`).
-			Scan(&x.AgentID, &x.BaseURL, &x.Model, &x.Credential)
-		if err == nil {
-			st = &x
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		return tx.QueryRow(ctx, `SELECT title, body, triage_explicit, coalesce(triage, '') FROM tasks WHERE id = $1 AND deleted_at IS NULL`, j.task).
-			Scan(&t.Title, &t.Body, &t.Explicit, &t.State)
-	})
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && t.State != "pending") {
-		return
-	}
+	st, cl, err := s.claimTriage(ctx, j)
 	if err != nil {
-		slog.Error("triage", "task", j.task, "err", err)
+		slog.Error("triage: claim", "task", j.task, "err", err)
 		return
 	}
-	if st == nil {
-		s.endTriage(ctx, j, "", "", nil)
-		return
+	if cl == nil {
+		return // not pending, someone else holds it, or triage is off
 	}
 	agent, err := s.Principal(ctx, org, st.AgentID, "triage")
 	if err != nil {
-		s.endTriage(ctx, j, st.AgentID, "the triage agent can't act: "+err.Error(), nil)
+		s.failTriage(ctx, cl, st.AgentID, "the triage agent can't act: "+err.Error())
+		return
+	}
+	// Check what the agent may see before anything leaves the server.
+	d, err := s.GetTask(ctx, agent, TaskIDIn{ID: j.task})
+	if IsCode(err, ErrNotFound) || IsCode(err, ErrForbidden) {
+		s.dropTriage(ctx, cl)
+		return
+	}
+	if err != nil {
+		s.failTriage(ctx, cl, st.AgentID, err.Error())
 		return
 	}
 	cred, err := s.unseal(st.Credential)
 	if err != nil {
-		s.endTriage(ctx, j, st.AgentID, "the saved model credential can't be read (was HANDOFF_SECRET changed?); an admin needs to enter it again", nil)
+		s.failTriage(ctx, cl, st.AgentID, "the saved model credential can't be read (was HANDOFF_SECRET changed?); an admin needs to enter it again")
 		return
 	}
 	projects, err := s.ListProjects(ctx, agent, struct{}{})
 	if err != nil {
-		s.endTriage(ctx, j, st.AgentID, err.Error(), nil)
+		s.failTriage(ctx, cl, st.AgentID, err.Error())
 		return
 	}
 	members, err := s.ListMembers(ctx, agent, struct{}{})
 	if err != nil {
-		s.endTriage(ctx, j, st.AgentID, err.Error(), nil)
+		s.failTriage(ctx, cl, st.AgentID, err.Error())
 		return
 	}
 	lctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	t := triageTask{Title: d.Task.Title, Body: d.Task.Body, Explicit: cl.explicit}
 	sugg, err := s.askModel(lctx, st, string(cred), org, t, projects.Projects, members.Members)
 	if err != nil {
-		s.endTriage(ctx, j, st.AgentID, err.Error(), nil)
+		s.failTriage(ctx, cl, st.AgentID, err.Error())
 		return
 	}
-	changed, err := s.applyTriage(ctx, agent, j.task, t, sugg, projects.Projects, members.Members)
+	err = s.applyTriage(ctx, agent, cl, t, sugg, members.Members)
+	if errors.Is(err, errTriageStale) {
+		return
+	}
 	if err != nil {
-		s.endTriage(ctx, j, st.AgentID, err.Error(), changed)
-		return
+		s.failTriage(ctx, cl, st.AgentID, err.Error())
 	}
-	s.endTriage(ctx, j, st.AgentID, "", changed)
 }
 
-// endTriage records the outcome. An empty agentID means triage was switched off: the mark is
-// simply cleared.
-func (s *Service) endTriage(ctx context.Context, j triageJob, agentID, failure string, changed []string) {
+type triageTask struct {
+	Title, Body string
+	Explicit    []string
+}
+
+// claimTriage takes the task for this worker if it is pending and nobody else holds a live claim.
+func (s *Service) claimTriage(ctx context.Context, j triageJob) (*triageSettings, *triageClaim, error) {
+	var st *triageSettings
+	var cl *triageClaim
 	err := s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
-		if agentID == "" {
-			_, err := tx.Exec(ctx, `UPDATE tasks SET triage = NULL WHERE id = $1 AND triage = 'pending'`, j.task)
+		var x triageSettings
+		err := tx.QueryRow(ctx, `SELECT agent_id::text, base_url, model, credential FROM triage_settings`).
+			Scan(&x.AgentID, &x.BaseURL, &x.Model, &x.Credential)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Switched off: nothing will evaluate it.
+			_, err = tx.Exec(ctx, `UPDATE tasks SET triage = NULL WHERE id = $1 AND triage = 'pending'`, j.task)
 			return err
 		}
-		state, kind, data := "done", "triaged", map[string]any{"changed": nonNil(changed)}
-		if failure != "" {
-			if len(failure) > 300 {
-				failure = failure[:300] + "…"
-			}
-			state, kind, data = "failed", "triage_failed", map[string]any{"error": failure}
-		}
-		if _, err := tx.Exec(ctx, `UPDATE tasks SET triage = $2, triage_error = $3 WHERE id = $1`, j.task, state, failure); err != nil {
+		if err != nil {
 			return err
 		}
-		b, _ := json.Marshal(data)
-		// The event also tells open screens to refresh.
-		_, err := tx.Exec(ctx, `INSERT INTO events (org_id, task_id, actor_id, via, kind, data) VALUES ($1, $2, $3, 'triage', $4, $5)`,
-			j.org, j.task, agentID, kind, b)
+		c := triageClaim{job: j}
+		err = tx.QueryRow(ctx, `UPDATE tasks SET triage_claim = gen_random_uuid(), triage_claim_until = now() + interval '3 minutes'
+			WHERE id = $1 AND triage = 'pending' AND deleted_at IS NULL AND (triage_claim_until IS NULL OR triage_claim_until < now())
+			RETURNING triage_claim::text, triage_explicit`, j.task).Scan(&c.token, &c.explicit)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		st, cl = &x, &c
+		return nil
+	})
+	return st, cl, err
+}
+
+// dropTriage clears the mark without a trace: the triage agent can't see this task.
+func (s *Service) dropTriage(ctx context.Context, cl *triageClaim) {
+	err := s.DB.InOrg(ctx, cl.job.org, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE tasks SET triage = NULL, triage_claim = NULL, triage_claim_until = NULL
+			WHERE id = $1 AND triage = 'pending' AND triage_claim = $2`, cl.job.task, cl.token)
 		return err
 	})
 	if err != nil {
-		slog.Error("triage: record outcome", "task", j.task, "err", err)
+		slog.Error("triage: drop", "task", cl.job.task, "err", err)
 	}
-	if failure != "" {
-		slog.Warn("triage failed", "task", j.task, "reason", failure)
+}
+
+// failTriage records why triage failed, if this worker still holds the claim.
+func (s *Service) failTriage(ctx context.Context, cl *triageClaim, agentID, reason string) {
+	if len(reason) > 300 {
+		reason = reason[:300] + "…"
+	}
+	slog.Warn("triage failed", "task", cl.job.task, "reason", reason)
+	err := s.DB.InOrg(ctx, cl.job.org, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE tasks SET triage = 'failed', triage_error = $3, triage_claim = NULL, triage_claim_until = NULL
+			WHERE id = $1 AND triage = 'pending' AND triage_claim = $2`, cl.job.task, cl.token, reason)
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		b, _ := json.Marshal(map[string]any{"error": reason})
+		// The event also tells open screens to refresh.
+		_, err = tx.Exec(ctx, `INSERT INTO events (org_id, task_id, actor_id, via, kind, data) VALUES ($1, $2, $3, 'triage', 'triage_failed', $4)`,
+			cl.job.org, cl.job.task, agentID, b)
+		return err
+	})
+	if err != nil {
+		slog.Error("triage: record failure", "task", cl.job.task, "err", err)
 	}
 }
 
@@ -501,89 +546,122 @@ func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string,
 	return sugg, nil
 }
 
-// triageClient refuses private, loopback and link-local addresses unless this server is a single
-// workspace or in dev mode, so one workspace's admin can't point the server at internal services.
+// triageClient is shared by every model call. It never follows redirects, so the bearer token can't
+// be forwarded to another host, and it refuses private, loopback and link-local addresses unless this
+// server is a single workspace or in dev mode, so one workspace's admin can't reach internal services.
 func (s *Service) triageClient() *http.Client {
 	if s.TriageHTTP != nil {
 		return s.TriageHTTP
 	}
-	allowPrivate := s.Cfg.Dev || s.Cfg.SingleOrg != ""
-	d := &net.Dialer{Timeout: 10 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
-		if allowPrivate {
+	s.triageHTTPOnce.Do(func() {
+		allowPrivate := s.Cfg.Dev || s.Cfg.SingleOrg != ""
+		d := &net.Dialer{Timeout: 10 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+			if allowPrivate {
+				return nil
+			}
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			ip := net.ParseIP(host)
+			if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+				return fmt.Errorf("refusing to call %s: private address", host)
+			}
 			return nil
+		}}
+		s.triageHTTP = &http.Client{
+			Timeout:       90 * time.Second,
+			Transport:     &http.Transport{DialContext: d.DialContext, TLSHandshakeTimeout: 10 * time.Second, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 4},
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
-		host, _, err := net.SplitHostPort(address)
+	})
+	return s.triageHTTP
+}
+
+// applyTriage makes the suggested changes as the triage agent in one transaction, holding the task's
+// row lock. It first confirms the claim is still ours and triage still uses this agent, then compares
+// against the task as it is now: a field is only filled when the creator didn't set it and it still
+// holds its default, and the title only changes if nobody renamed the task meanwhile.
+func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageClaim, t triageTask, sugg triageSuggestion, members []MemberOut) error {
+	return s.run(ctx, agent, func(c *call) error {
+		var state, claim, current string
+		err := c.tx.QueryRow(c.ctx, `SELECT coalesce(triage, ''), coalesce(triage_claim::text, '') FROM tasks WHERE id = $1 FOR UPDATE`, cl.job.task).
+			Scan(&state, &claim)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (state != "pending" || claim != cl.token)) {
+			return errTriageStale
+		}
 		if err != nil {
 			return err
 		}
-		ip := net.ParseIP(host)
-		if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-			return fmt.Errorf("refusing to call %s: private address", host)
+		err = c.tx.QueryRow(c.ctx, `SELECT agent_id::text FROM triage_settings`).Scan(&current)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && current != agent.Member.ID) {
+			return errTriageStale
 		}
-		return nil
-	}}
-	return &http.Client{Timeout: 90 * time.Second, Transport: &http.Transport{DialContext: d.DialContext, TLSHandshakeTimeout: 10 * time.Second}}
-}
-
-// applyTriage makes the suggested changes as the triage agent. A field is only filled when the
-// creator didn't set it and it still holds its default, so edits made meanwhile always win.
-func (s *Service) applyTriage(ctx context.Context, agent *Principal, id string, t triageTask, sugg triageSuggestion, projects []ProjectOut, members []MemberOut) ([]string, error) {
-	cur, err := s.GetTask(ctx, agent, TaskIDIn{ID: id})
-	if err != nil {
-		return nil, err
-	}
-	task := cur.Task
-	explicit := func(f string) bool { return slices.Contains(t.Explicit, f) }
-	upd := UpdateTaskIn{ID: id}
-	var changed []string
-	if title := strings.TrimSpace(sugg.Title); title != "" && len(title) <= 300 && title != task.Title && task.Title == t.Title {
-		upd.Title, changed = &title, append(changed, "title")
-	}
-	if due := strings.TrimSpace(sugg.Due); due != "" && !explicit("due") && task.Due == "" {
-		if _, err := time.Parse("2006-01-02", due); err == nil {
-			upd.Due, changed = &due, append(changed, "due")
+		if err != nil {
+			return err
 		}
-	}
-	if p := sugg.Priority; p != nil && *p >= 0 && *p <= 4 && *p != 2 && !explicit("priority") && task.Priority == 2 {
-		upd.Priority, changed = p, append(changed, "priority")
-	}
-	if name := strings.TrimSpace(sugg.Project); name != "" && !explicit("project") && task.Project == DefaultProject {
-		for _, p := range projects {
-			if strings.EqualFold(p.Name, name) && p.Name != DefaultProject {
-				upd.Project, changed = p.ID, append(changed, "project")
-				break
+		if err := agent.require(ActUpdate); err != nil {
+			return err
+		}
+		r, err := c.getTask(cl.job.task, false, false)
+		if err != nil {
+			return err
+		}
+		explicit := func(f string) bool { return slices.Contains(t.Explicit, f) }
+		upd := UpdateTaskIn{ID: r.ID}
+		changed := []string{}
+		if title := strings.TrimSpace(sugg.Title); title != "" && len(title) <= 300 && title != r.Title && r.Title == t.Title {
+			upd.Title, changed = &title, append(changed, "title")
+		}
+		if due := strings.TrimSpace(sugg.Due); due != "" && !explicit("due") && r.Due == nil {
+			if _, err := time.Parse("2006-01-02", due); err == nil {
+				upd.Due, changed = &due, append(changed, "due")
 			}
 		}
-	}
-	if len(sugg.Labels) > 0 && !explicit("labels") && len(task.Labels) == 0 {
-		labels := sugg.Labels
-		if len(labels) > 3 {
-			labels = labels[:3]
+		if p := sugg.Priority; p != nil && *p >= 0 && *p <= 4 && *p != 2 && !explicit("priority") && r.Priority == 2 {
+			upd.Priority, changed = p, append(changed, "priority")
 		}
-		upd.Labels, changed = labels, append(changed, "labels")
-	}
-	if name := strings.TrimSpace(sugg.Assignee); name != "" && !explicit("assignee") && task.Assignee == nil {
-		for _, m := range members {
-			if strings.EqualFold(m.Name, name) && m.Status == "active" {
-				who := m.ID
-				upd.Assignee, changed = &who, append(changed, "assignee")
-				break
+		if name := strings.TrimSpace(sugg.Project); name != "" && !explicit("project") && c.projects[r.ProjectID] != nil && c.projects[r.ProjectID].Name == DefaultProject {
+			for _, id := range c.visible {
+				if p := c.projects[id]; p != nil && strings.EqualFold(p.Name, name) && p.Name != DefaultProject {
+					upd.Project, changed = p.ID, append(changed, "project")
+					break
+				}
 			}
 		}
-	}
-	if len(changed) > 0 {
-		if _, err := s.UpdateTask(ctx, agent, upd); err != nil {
-			return nil, err
+		if len(sugg.Labels) > 0 && !explicit("labels") && len(r.Labels) == 0 {
+			labels := sugg.Labels
+			if len(labels) > 3 {
+				labels = labels[:3]
+			}
+			upd.Labels, changed = labels, append(changed, "labels")
 		}
-	}
-	if plan := strings.TrimSpace(sugg.Plan); plan != "" {
-		if len(plan) > 2000 {
-			plan = plan[:2000]
+		if name := strings.TrimSpace(sugg.Assignee); name != "" && !explicit("assignee") && r.AssigneeID == "" {
+			for _, m := range members {
+				if strings.EqualFold(m.Name, name) && m.Status == "active" {
+					who := m.ID
+					upd.Assignee, changed = &who, append(changed, "assignee")
+					break
+				}
+			}
 		}
-		if _, err := s.Comment(ctx, agent, CommentIn{ID: id, Body: plan}); err != nil {
-			return changed, err
+		if len(changed) > 0 {
+			if _, err := c.updateTask(upd); err != nil {
+				return err
+			}
 		}
-		changed = append(changed, "plan")
-	}
-	return changed, nil
+		if plan := strings.TrimSpace(sugg.Plan); plan != "" {
+			if len(plan) > 2000 {
+				plan = plan[:2000]
+			}
+			if err := c.addComment(r.ID, plan); err != nil {
+				return err
+			}
+			changed = append(changed, "plan")
+		}
+		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET triage = 'done', triage_error = '', triage_claim = NULL, triage_claim_until = NULL WHERE id = $1`, r.ID); err != nil {
+			return err
+		}
+		return c.event(r.ID, "triaged", map[string]any{"changed": changed})
+	})
 }

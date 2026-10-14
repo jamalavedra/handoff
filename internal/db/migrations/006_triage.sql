@@ -22,4 +22,7 @@ CREATE POLICY org_isolation ON triage_settings
 ALTER TABLE tasks ADD COLUMN triage text CHECK (triage IN ('pending', 'done', 'failed'));
 ALTER TABLE tasks ADD COLUMN triage_explicit text[] NOT NULL DEFAULT '{}';
 ALTER TABLE tasks ADD COLUMN triage_error text NOT NULL DEFAULT '';
+-- triage_claim: the worker evaluating it right now (any server); the lease lets another take over after a crash.
+ALTER TABLE tasks ADD COLUMN triage_claim uuid;
+ALTER TABLE tasks ADD COLUMN triage_claim_until timestamptz;
 CREATE INDEX tasks_triage_pending ON tasks (org_id) WHERE triage = 'pending';
