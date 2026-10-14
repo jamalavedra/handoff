@@ -349,6 +349,7 @@ type SearchTasksIn struct {
 	Assignee    string   `json:"assignee,omitempty" jsonschema:"'me', 'unassigned', a name, email or id"`
 	Label       string   `json:"label,omitempty"`
 	IncludeDone bool     `json:"include_done,omitempty"`
+	DueBefore   string   `json:"due_before,omitempty" jsonschema:"YYYY-MM-DD: only tasks due before this day, e.g. today's date for overdue tasks"`
 	Trashed     bool     `json:"trashed,omitempty" jsonschema:"list trashed tasks instead"`
 	IncludeBody bool     `json:"include_body,omitempty" jsonschema:"return each task's full body"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"default 50, max 500"`
@@ -392,6 +393,13 @@ func (s *Service) SearchTasks(ctx context.Context, p *Principal, in SearchTasksI
 		}
 		if in.Label != "" {
 			add(" AND $%d = ANY(t.labels)", in.Label)
+		}
+		if in.DueBefore != "" {
+			before, err := time.Parse("2006-01-02", strings.TrimSpace(in.DueBefore))
+			if err != nil {
+				return errf(ErrInvalid, "due_before must be YYYY-MM-DD")
+			}
+			add(" AND t.due_at < $%d", before)
 		}
 		w, a, err := c.assigneeFilter(in.Assignee, len(args))
 		if err != nil {
@@ -458,16 +466,20 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 		}
 		out.Task = c.out(r, true)
 		out.Task.Unseen = false
-		if err := c.markSeen(r.ID); err != nil {
-			return err
+		// The assistant reads for someone else: the agent's own seen marks, alerts and presence stay as they are.
+		quiet := p.Via == ViaAssistant
+		if !quiet {
+			if err := c.markSeen(r.ID); err != nil {
+				return err
+			}
 		}
 		// Agents read a task on purpose. The web app polls open tasks, so it calls mark_read when someone actually looks.
-		if p.Via != "web" {
+		if p.Via != "web" && !quiet {
 			if _, err := c.tx.Exec(c.ctx, `UPDATE notifications SET read_at = now() WHERE member_id = $1 AND task_id = $2 AND read_at IS NULL AND kind <> 'approval'`, p.Member.ID, r.ID); err != nil {
 				return err
 			}
 		}
-		if p.Member.IsAgent() {
+		if p.Member.IsAgent() && !quiet {
 			if err := c.markHere(r.ID, agentHere, nil); err != nil {
 				return err
 			}

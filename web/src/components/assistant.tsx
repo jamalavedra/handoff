@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState, useSearch } from "@tanstack/react-router";
 import { AlertCircle, ArrowUp, CalendarDays, Check, CheckCircle2, ChevronRight, FileText, FolderKanban, ListPlus, MessageSquare, Pencil, Plus, RotateCcw, Search, Sparkles, SquarePen, Users, X } from "lucide-react";
 import { api, cn, projectName, type Me, type MemberRef, type Project, type Task } from "../lib";
+import { parseStored, stored, toApi, type Msg, type Step } from "../assistant-history";
 import { Markdown } from "./markdown";
 import { TaskLink } from "./tasklink";
 import { Avatar } from "./app";
@@ -12,11 +13,8 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/compone
 // The assistant is a chat with the workspace's triage agent: it answers questions about tasks and
 // makes changes as that agent, for the person asking. The conversation lives in this tab only.
 
-type TaskRef = { id: string; title: string };
-type Step = { tool: string; summary: string; tasks?: TaskRef[]; error?: string };
-type Msg = { role: "user" | "assistant"; content: string; steps?: Step[]; error?: boolean };
 type Status = { enabled: boolean; agent?: MemberRef };
-type Reply = { reply: string; steps: Step[]; agent?: MemberRef; changed: boolean };
+type Reply = { reply: string; steps: Step[]; agent?: MemberRef; changed: boolean; error?: string };
 
 type Ctx = { open: boolean; setOpen: (o: boolean) => void; toggle: () => void };
 const AssistantContext = createContext<Ctx>({ open: false, setOpen: () => {}, toggle: () => {} });
@@ -49,10 +47,10 @@ export function useAssistantInset() {
 
 const storeKey = "handoff-assistant";
 
-function load(): Msg[] {
+// The conversation is kept per tab, and only shown to the member (in the workspace) who had it.
+function load(org: string, member: string): Msg[] {
   try {
-    const v = JSON.parse(sessionStorage.getItem(storeKey) ?? "[]");
-    return Array.isArray(v) ? v : [];
+    return parseStored(sessionStorage.getItem(storeKey), org, member);
   } catch {
     return [];
   }
@@ -67,9 +65,9 @@ export function clearAssistant() {
   }
 }
 
-function save(msgs: Msg[]) {
+function save(org: string, member: string, msgs: Msg[]) {
   try {
-    sessionStorage.setItem(storeKey, JSON.stringify(msgs.slice(-40)));
+    sessionStorage.setItem(storeKey, stored(org, member, msgs));
   } catch {
     // private mode or full: the chat just won't survive a reload
   }
@@ -132,13 +130,7 @@ const stepIcon: Record<string, typeof Search> = {
   create_tasks: Plus, update_task: Pencil, close_task: CheckCircle2, comment: MessageSquare,
 };
 
-// The model only sees text, so tasks the assistant touched travel with its reply as a short note.
-function toApi(m: Msg) {
-  const touched = (m.steps ?? []).filter((s) => !s.error && s.tasks?.length && s.tool !== "get_task");
-  if (m.role !== "assistant" || !touched.length) return { role: m.role, content: m.content };
-  const note = touched.map((s) => `${s.tool}: ${s.tasks!.map((t) => `${t.id} "${t.title}"`).join(", ")}`).join("; ");
-  return { role: m.role, content: `${m.content}\n\n(Tasks I touched: ${note})` };
-}
+const newTurn = () => (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
 // AssistantPanel renders the chat as a right-hand panel on desktop and a bottom drawer on phones.
 export function AssistantPanel({ me }: { me: Me }) {
@@ -167,20 +159,23 @@ function Chat({ me, onClose, drawer }: { me: Me; onClose: () => void; drawer?: b
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["assistant"], queryFn: () => api.tool<Status>("get_assistant"), refetchInterval: false });
   const page = usePageContext();
-  const [msgs, setMsgs] = useState<Msg[]>(load);
+  const org = me.org?.slug ?? "";
+  const member = me.member?.id ?? "";
+  const [msgs, setMsgs] = useState<Msg[]>(() => load(org, member));
   const [input, setInput] = useState("");
   const [dropped, setDropped] = useState<string>(); // context the person removed from this chat
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const chatId = useRef(0);
   const withContext = dropped !== page.key;
-  useEffect(() => save(msgs), [msgs]);
+  useEffect(() => save(org, member, msgs), [org, member, msgs]);
   useEffect(() => { if (!drawer) inputRef.current?.focus(); }, [drawer]);
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [msgs.length]);
 
   const send = useMutation({
-    mutationFn: (v: { history: Msg[]; id: number }) =>
+    mutationFn: (v: { history: Msg[]; turn: string; id: number }) =>
       api.tool<Reply>("assistant_chat", {
+        turn: v.turn,
         messages: v.history.filter((m) => !m.error).map(toApi),
         task: withContext && page.kind === "task" ? page.task : undefined,
         project: withContext && page.kind === "project" ? page.project : undefined,
@@ -188,7 +183,8 @@ function Chat({ me, onClose, drawer }: { me: Me; onClose: () => void; drawer?: b
     onSuccess: (r, v) => {
       if (v.id !== chatId.current) return; // a new chat started meanwhile
       if (r.changed) qc.invalidateQueries();
-      setMsgs((m) => [...m, { role: "assistant", content: r.reply, steps: r.steps }]);
+      // A turn that stopped early still shows what it did; Try again resumes it on the server.
+      setMsgs((m) => [...m, r.error ? { role: "assistant", content: r.error, steps: r.steps, error: true } : { role: "assistant", content: r.reply, steps: r.steps }]);
     },
     onError: (e, v) => {
       if (v.id !== chatId.current) return;
@@ -200,16 +196,17 @@ function Chat({ me, onClose, drawer }: { me: Me; onClose: () => void; drawer?: b
   const ask = (text: string) => {
     const t = text.trim();
     if (!t || send.isPending) return;
-    const history = [...msgs.filter((m) => !m.error), { role: "user" as const, content: t }];
-    setMsgs([...msgs, { role: "user", content: t }]);
+    const turn = newTurn();
+    const history: Msg[] = [...msgs.filter((m) => !m.error), { role: "user", content: t, turn }];
+    setMsgs([...msgs, { role: "user", content: t, turn }]);
     setInput("");
-    send.mutate({ history, id: chatId.current });
+    send.mutate({ history, turn, id: chatId.current });
   };
-  // Retry resends the conversation up to the failed answer.
+  // Retry sends the same turn again: the server carries on from what it already did instead of redoing it.
   const retry = () => {
     const history = msgs.filter((m) => !m.error);
     setMsgs(history);
-    send.mutate({ history, id: chatId.current });
+    send.mutate({ history, turn: history.at(-1)?.turn ?? newTurn(), id: chatId.current });
   };
   const reset = () => {
     chatId.current++;

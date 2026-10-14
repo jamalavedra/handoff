@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/joalavedra/handoff/internal/core"
 )
@@ -35,11 +36,20 @@ func scriptedModel(t *testing.T, replies ...map[string]any) (*httptest.Server, f
 		}
 		var req chatReq
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		// Triage of the tasks a test creates is answered aside, so it never takes a scripted reply.
+		if sys, _ := req.Messages[0]["content"].(string); len(req.Tools) == 0 && strings.HasPrefix(sys, "You triage") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]any{"content": "{}"}}}})
+			return
+		}
 		mu.Lock()
 		n := len(got)
 		got = append(got, req)
 		mu.Unlock()
 		reply := replies[min(n, len(replies)-1)]
+		if code, ok := reply["_status"].(int); ok {
+			http.Error(w, `{"error":"overloaded"}`, code)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": reply}}})
 	}))
 	t.Cleanup(srv.Close)
@@ -190,7 +200,7 @@ func TestAssistantSeesOnlyWhatThePersonSees(t *testing.T) {
 	// Opening it by id doesn't work either, even as the open task.
 	srv2, reqs2 := scriptedModel(t, calls(toolCall("c1", "get_task", map[string]any{"id": secretID})), say("Can't see it."))
 	e.s.OutboundHTTP = srv2.Client()
-	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m"}); err != nil {
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m", Credential: "sk-test"}); err != nil {
 		t.Fatal(err)
 	}
 	in := ask("summarise this task")
@@ -285,7 +295,7 @@ func TestAssistantWritesWorkIntoTheTask(t *testing.T) {
 	}
 	srv2, _ := scriptedModel(t, calls(toolCall("c1", "update_task", map[string]any{"id": "OWN", "body": "v3", "body_mode": "replace", "confirm": true})), say("ok"))
 	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"OWN": own}, srv2.Client().Transport}}
-	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m"}); err != nil {
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m", Credential: "sk-test"}); err != nil {
 		t.Fatal(err)
 	}
 	if out, err = e.s.AssistantChat(e.ctx, admin, ask("rewrite it")); err != nil || len(out.Steps) != 1 || out.Steps[0].Error == "" {
@@ -316,6 +326,210 @@ func (r rewrite) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp.Body = io.NopCloser(strings.NewReader(s))
 	resp.ContentLength = int64(len(s))
 	return resp, nil
+}
+
+func TestAssistantRetryDoesNotRepeatWrites(t *testing.T) {
+	writes := calls(
+		toolCall("c1", "create_tasks", map[string]any{"tasks": []map[string]any{{"title": "Book the venue"}}}),
+		toolCall("c2", "comment", map[string]any{"id": "TASK", "body": "Venue shortlist is in the details."}),
+		toolCall("c3", "update_task", map[string]any{"id": "TASK", "body": "## Shortlist\n- Hall A"}),
+	)
+	// The model makes its changes, then fails; on the retry it (unhelpfully) asks for them all again,
+	// the task with slightly different arguments.
+	again := calls(
+		toolCall("c4", "create_tasks", map[string]any{"tasks": []map[string]any{{"title": "Book the venue", "priority": 2}}}),
+		toolCall("c5", "comment", map[string]any{"id": "TASK", "body": "Venue shortlist is in the details."}),
+		toolCall("c6", "update_task", map[string]any{"id": "TASK", "body": "## Shortlist\n- Hall A"}),
+	)
+	srv, reqs := scriptedModel(t, writes, map[string]any{"_status": http.StatusBadGateway}, again, say("Booked and noted."))
+	e, admin, _ := assistantEnv(t, srv, "asstretry")
+	task := e.create(t, admin, core.NewTask{Title: "Plan the offsite"})[0].ID
+	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"TASK": task}, srv.Client().Transport}}
+
+	in := ask("book a venue and note it on the offsite task")
+	in.Turn = "turn-1"
+	out, err := e.s.AssistantChat(e.ctx, admin, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The failure comes back with what was already done.
+	if out.Error == "" || !strings.Contains(out.Error, "502") || len(out.Steps) != 3 || !out.Changed || out.Reply != "" {
+		t.Fatalf("partial result: %+v", out)
+	}
+	out, err = e.s.AssistantChat(e.ctx, admin, in)
+	if err != nil || out.Error != "" || out.Reply != "Booked and noted." || len(out.Steps) != 4 {
+		t.Fatalf("retry: %+v %v", out, err)
+	}
+	// The retry picked up where it stopped: the model saw its earlier calls and their results.
+	if m := reqs()[2].Messages; !slices.ContainsFunc(m, func(x map[string]any) bool { return x["role"] == "tool" && x["tool_call_id"] == "c2" }) {
+		t.Fatal("retry didn't replay the turn's earlier tool calls")
+	}
+	res, _ := e.s.SearchTasks(e.ctx, admin, core.SearchTasksIn{Query: "Book the venue"})
+	d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task})
+	if len(res.Tasks) != 1 || len(d.Comments) != 1 || d.Task.Body != "## Shortlist\n- Hall A" {
+		t.Fatalf("writes repeated: %d tasks, %d comments, body %q", len(res.Tasks), len(d.Comments), d.Task.Body)
+	}
+	// Asking again once it's done returns the same answer without calling the model.
+	n := len(reqs())
+	if out, err = e.s.AssistantChat(e.ctx, admin, in); err != nil || out.Reply != "Booked and noted." || len(reqs()) != n {
+		t.Fatalf("finished turn re-run: %+v %v", out, err)
+	}
+}
+
+func TestAssistantReadsLeaveNoTrace(t *testing.T) {
+	srv, _ := scriptedModel(t, calls(toolCall("c1", "get_task", map[string]any{"id": "TASK"})), say("It's assigned to me."))
+	e, admin, bot := assistantEnv(t, srv, "asstquiet")
+	// The agent's own task, so triage (which reads as the agent too) leaves it alone.
+	task := e.create(t, bot, core.NewTask{Title: "Check the contract"})[0].ID
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task, Body: "@Acme Bot can you check this?"}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"TASK": task}, srv.Client().Transport}}
+	before, err := e.s.Inbox(e.ctx, bot, core.InboxIn{})
+	if err != nil || before.Unread != 1 {
+		t.Fatalf("agent inbox before: %+v %v", before, err)
+	}
+	in := ask("summarise this task")
+	in.Task = task
+	if _, err := e.s.AssistantChat(e.ctx, admin, in); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := e.s.Inbox(e.ctx, bot, core.InboxIn{})
+	if after.Unread != 1 {
+		t.Fatalf("the assistant's reads cleared the agent's alerts: %d unread", after.Unread)
+	}
+	d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task})
+	if len(d.Here) != 0 {
+		t.Fatalf("the assistant's reads showed the agent as here: %+v", d.Here)
+	}
+}
+
+func TestAssistantCantReachAnotherOwnersPrivateWork(t *testing.T) {
+	srv, reqs := scriptedModel(t,
+		calls(
+			toolCall("c1", "search_tasks", map[string]any{"query": "salary"}),
+			toolCall("c2", "search_tasks", map[string]any{"project": "Board"}),
+			toolCall("c3", "get_task", map[string]any{"id": "SECRET"}),
+			toolCall("c4", "update_task", map[string]any{"id": "SECRET", "title": "pwned", "body": "x"}),
+			toolCall("c5", "close_task", map[string]any{"id": "SECRET"}),
+			toolCall("c6", "comment", map[string]any{"id": "SECRET", "body": "x"}),
+			toolCall("c7", "create_tasks", map[string]any{"tasks": []map[string]any{{"title": "planted", "project": "Board"}}}),
+			toolCall("c8", "update_task", map[string]any{"id": "OPEN", "project": "Board"}),
+			toolCall("c9", "list_projects", map[string]any{}),
+		),
+		say("Done."),
+	)
+	e, admin, _ := assistantEnv(t, srv, "asstowner")
+	board, err := e.s.CreateProject(e.ctx, admin, core.CreateProjectIn{Name: "Board", Visibility: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := e.create(t, admin, core.NewTask{Title: "salary review", Project: "Board"})[0].ID
+	open := e.create(t, admin, core.NewTask{Title: "open task"})[0].ID
+	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"SECRET": secret, "OPEN": open}, srv.Client().Transport}}
+	if _, err := e.s.Invite(e.ctx, admin, core.InviteIn{Email: "bob@asstowner.test"}); err != nil {
+		t.Fatal(err)
+	}
+	bob, err := e.s.MemberForLogin(e.ctx, admin.Org, "bob@asstowner.test", "Bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bp, _ := e.s.Principal(e.ctx, admin.Org, bob.ID, "web")
+
+	// Bob asks with the private project (and then its task) as the page he's "on".
+	in := ask("go")
+	in.Project = board.ID
+	out, err := e.s.AssistantChat(e.ctx, bp, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := reqs()
+	if sys := rs[0].Messages[0]["content"].(string); strings.Contains(sys, "Board") || strings.Contains(sys, "salary") {
+		t.Fatalf("private work in the prompt: %s", sys)
+	}
+	for _, id := range []string{"c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"} {
+		if res := toolResult(t, rs, id); strings.Contains(res, "salary") || (id == "c9" && strings.Contains(res, "Board")) {
+			t.Fatalf("%s leaked private work: %s", id, res)
+		}
+	}
+	for i, st := range out.Steps {
+		if i >= 1 && i <= 7 && st.Error == "" {
+			t.Fatalf("step %d reached the private project: %+v", i+1, st)
+		}
+	}
+	d, err := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: secret})
+	if err != nil || d.Task.Title != "salary review" || d.Task.Status != "open" || len(d.Comments) != 0 || d.Task.Body != "" {
+		t.Fatalf("private task changed: %+v %v", d.Task, err)
+	}
+	if res, _ := e.s.SearchTasks(e.ctx, admin, core.SearchTasksIn{Project: "Board"}); len(res.Tasks) != 1 {
+		t.Fatalf("task planted in the private project: %+v", res.Tasks)
+	}
+	if d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: open}); d.Task.Project == "Board" {
+		t.Fatal("task moved into the private project")
+	}
+
+	// The same as the open task.
+	srv2, reqs2 := scriptedModel(t, say("ok"))
+	e.s.OutboundHTTP = srv2.Client()
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m", Credential: "sk-test"}); err != nil {
+		t.Fatal(err)
+	}
+	in = ask("summarise this task")
+	in.Task = secret
+	if _, err := e.s.AssistantChat(e.ctx, bp, in); err != nil {
+		t.Fatal(err)
+	}
+	if sys := reqs2()[0].Messages[0]["content"].(string); strings.Contains(sys, "salary") {
+		t.Fatalf("private task as context: %s", sys)
+	}
+}
+
+func TestAssistantOverdueIsComplete(t *testing.T) {
+	srv, reqs := scriptedModel(t,
+		calls(toolCall("c1", "search_tasks", map[string]any{"overdue": true})),
+		calls(toolCall("c2", "search_tasks", map[string]any{"overdue": true, "offset": 20})),
+		say("25 overdue."),
+	)
+	e, admin, _ := assistantEnv(t, srv, "asstdue")
+	var many []core.NewTask
+	for i := range 25 {
+		many = append(many, core.NewTask{Title: "late " + string(rune('a'+i)), Due: "2020-01-01"})
+	}
+	many = append(many, core.NewTask{Title: "later", Due: "2999-01-01"}, core.NewTask{Title: "no date"})
+	e.create(t, admin, many...)
+	if _, err := e.s.AssistantChat(e.ctx, admin, ask("what's overdue?")); err != nil {
+		t.Fatal(err)
+	}
+	var first, second struct {
+		Tasks   []map[string]any `json:"tasks"`
+		HasMore bool             `json:"has_more"`
+	}
+	_ = json.Unmarshal([]byte(toolResult(t, reqs(), "c1")), &first)
+	_ = json.Unmarshal([]byte(toolResult(t, reqs(), "c2")), &second)
+	if len(first.Tasks) != 20 || !first.HasMore || len(second.Tasks) != 5 || second.HasMore {
+		t.Fatalf("pages: %d (more %v), %d (more %v)", len(first.Tasks), first.HasMore, len(second.Tasks), second.HasMore)
+	}
+	for _, tk := range append(first.Tasks, second.Tasks...) {
+		if !strings.HasPrefix(tk["title"].(string), "late ") {
+			t.Fatalf("not overdue: %v", tk)
+		}
+	}
+}
+
+func TestAssistantClipsLongReplies(t *testing.T) {
+	srv, reqs := scriptedModel(t, say("ok"))
+	e, admin, _ := assistantEnv(t, srv, "asstlong")
+	in := core.AssistantChatIn{Messages: []core.AssistantMessage{
+		{Role: "user", Content: "list everything"},
+		{Role: "assistant", Content: strings.Repeat("é", 6000)}, // 12,000 bytes, e.g. a long reply plus its task note
+		{Role: "user", Content: "thanks, now the next one"},
+	}}
+	if _, err := e.s.AssistantChat(e.ctx, admin, in); err != nil {
+		t.Fatalf("a long earlier reply blocked the follow-up: %v", err)
+	}
+	if got := reqs()[0].Messages[2]["content"].(string); len(got) > 8000 || !utf8.ValidString(got) {
+		t.Fatalf("earlier reply not clipped cleanly: %d bytes", len(got))
+	}
 }
 
 func TestAssistantStopsLooping(t *testing.T) {
