@@ -81,7 +81,6 @@ export function DuePill({ due, done }: { due: string; done?: boolean }) {
 
 // TaskCheck is the round checkbox: empty when open, half-filled while someone works on it.
 export function TaskCheck({ t, onToggle, disabled }: { t: Task; onToggle: () => void; disabled?: boolean }) {
-  const working = t.status === "in_progress" || !!t.claimed_by;
   const label = t.status === "done" || t.status === "cancelled" ? `Reopen ${t.title}` : `Mark ${t.title} done`;
   return (
     <button
@@ -93,15 +92,19 @@ export function TaskCheck({ t, onToggle, disabled }: { t: Task; onToggle: () => 
       onClick={onToggle}
       className="-m-2 flex size-10 shrink-0 items-center justify-center rounded-full disabled:cursor-default sm:size-9"
     >
-      {t.status === "done" ? (
-        <span className="flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground"><Check className="size-3.5" strokeWidth={3} /></span>
-      ) : t.status === "cancelled" ? (
-        <span className="flex size-5 items-center justify-center rounded-full border-[1.5px] border-input text-muted-foreground/70"><X className="size-3" strokeWidth={3} /></span>
-      ) : working ? (
-        <svg viewBox="0 0 20 20" className="size-5 text-amber-500" aria-hidden><circle cx="10" cy="10" r="8.25" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M10 3.5a6.5 6.5 0 0 0 0 13z" fill="currentColor" /></svg>
-      ) : (
-        <span className={cn("size-5 rounded-full border-[1.5px] transition-colors", t.status === "blocked" || (!t.ready && t.blocked_by.length > 0) ? "border-dashed border-input" : "border-foreground/40 hover:border-foreground hover:bg-accent")} />
-      )}
+      <StatusCircle t={t} interactive />
     </button>
   );
+}
+
+// StatusCircle is the checkbox's face on its own, for places that show a task's state without toggling it.
+export function StatusCircle({ t, small, interactive }: { t: Pick<Task, "status" | "claimed_by" | "ready" | "blocked_by">; small?: boolean; interactive?: boolean }) {
+  const working = t.status === "in_progress" || !!t.claimed_by;
+  const size = small ? "size-3.5" : "size-5";
+  const ring = small ? "border-[1.25px]" : "border-[1.5px]";
+  if (t.status === "done") return <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground", size)}><Check className={small ? "size-2.5" : "size-3.5"} strokeWidth={3} /></span>;
+  if (t.status === "cancelled") return <span className={cn("flex shrink-0 items-center justify-center rounded-full border-input text-muted-foreground/70", size, ring)}><X className={small ? "size-2" : "size-3"} strokeWidth={3} /></span>;
+  if (working) return <svg viewBox="0 0 20 20" className={cn("shrink-0 text-amber-500", size)} aria-hidden><circle cx="10" cy="10" r="8.25" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M10 3.5a6.5 6.5 0 0 0 0 13z" fill="currentColor" /></svg>;
+  const waiting = t.status === "blocked" || (!t.ready && t.blocked_by.length > 0);
+  return <span className={cn("shrink-0 rounded-full transition-colors", size, ring, waiting ? "border-dashed border-input" : "border-foreground/40", !waiting && interactive && "hover:border-foreground hover:bg-accent")} />;
 }

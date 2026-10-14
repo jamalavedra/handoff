@@ -23,6 +23,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useNotificationToasts } from "./components/feedback";
 import { CommandPaletteProvider, useCommandPalette } from "./components/command-palette";
 import { ShortcutsDialog, useShortcuts } from "./components/shortcuts";
+import { TabsProvider, TabStrip, useOpenInTab } from "./components/tabs";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
 
@@ -45,8 +46,9 @@ function Shell() {
 }
 
 function NavLink({ to, icon: Icon, children }: { to: string; icon: typeof Inbox; children: React.ReactNode }) {
+  const tab = useOpenInTab(to);
   return (
-    <Link to={to} className="group flex min-h-8 items-center gap-2 rounded-[10px] px-2 py-1 text-[14px] font-medium text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]" activeOptions={{ exact: to === "/" || to === "/projects" }}>
+    <Link to={to} {...tab} className="group flex min-h-8 items-center gap-2 rounded-[10px] px-2 py-1 text-[14px] font-medium text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]" activeOptions={{ exact: to === "/" || to === "/projects" }}>
       <Icon className="size-4 text-foreground/50 transition-colors group-hover:text-foreground/80 group-data-[status=active]:text-foreground" />
       {children}
     </Link>
@@ -97,14 +99,19 @@ function ProjectsNav({ projects }: { projects: Project[] }) {
         </CollapsibleTrigger>
       </div>
       <CollapsibleContent className="mt-0.5 ml-[1.125rem] flex flex-col gap-0.5 border-l border-sidebar-border pl-2">
-        {projects.map((p) => (
-          <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex min-h-7 items-center justify-between gap-2 rounded-[10px] px-2 py-1 text-[13px] text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
-            <span className="truncate">{projectName(p)}</span>
-            <span className="text-xs text-foreground/40 tabular-nums">{p.open_tasks}</span>
-          </Link>
-        ))}
+        {projects.map((p) => <ProjectNavLink key={p.id} p={p} />)}
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+function ProjectNavLink({ p }: { p: Project }) {
+  const tab = useOpenInTab(`/projects/${p.id}`);
+  return (
+    <Link to="/projects/$id" params={{ id: p.id }} {...tab} className="flex min-h-7 items-center justify-between gap-2 rounded-[10px] px-2 py-1 text-[13px] text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
+      <span className="truncate">{projectName(p)}</span>
+      <span className="text-xs text-foreground/40 tabular-nums">{p.open_tasks}</span>
+    </Link>
   );
 }
 
@@ -139,6 +146,7 @@ function Layout({ me }: { me: Me }) {
   const showHelp = useCallback(() => setHelp(true), []);
   useShortcuts(showHelp);
   return (
+    <TabsProvider>
     <QuickAddProvider>
       <CommandPaletteProvider me={me} onShortcuts={showHelp}>
       <ShortcutsDialog open={help} onOpenChange={setHelp} />
@@ -177,19 +185,25 @@ function Layout({ me }: { me: Me }) {
           </div>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
-          {!onTask && <MobileTopBar me={me} unread={unread} />}
-          <main className={cn("min-w-0 flex-1 px-4 md:px-8 md:pt-8 md:pb-6 lg:px-16", onTask ? "pt-[calc(0.5rem+env(safe-area-inset-top))] pb-[env(safe-area-inset-bottom)]" : "pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))]")}>
-            <div className="mx-auto max-w-[800px]">
-              <Outlet />
+          <TabStrip />
+          <div className="flex min-w-0 flex-1">
+            <div className="flex min-w-0 flex-1 flex-col">
+              {!onTask && <MobileTopBar me={me} unread={unread} />}
+              <main className={cn("min-w-0 flex-1 px-4 md:px-8 md:pt-8 md:pb-6 lg:px-16", onTask ? "pt-[calc(0.5rem+env(safe-area-inset-top))] pb-[env(safe-area-inset-bottom)]" : "pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))]")}>
+                <div className="mx-auto max-w-[800px]">
+                  <Outlet />
+                </div>
+              </main>
             </div>
-          </main>
+            <TaskPanel />
+          </div>
         </div>
-        <TaskPanel />
         {!onTask && <MobileTabBar pending={pending} unread={unread} />}
         <Toaster />
       </div>
       </CommandPaletteProvider>
     </QuickAddProvider>
+    </TabsProvider>
   );
 }
 
@@ -214,8 +228,9 @@ function TaskPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, navigate]);
   if (!open || !wide) return null;
+  // Wide screens always have the tab strip (h-11) above the panel.
   return (
-    <aside key={task} aria-label="Task" className="sticky top-0 h-dvh w-[30rem] shrink-0 overflow-y-auto border-l border-border bg-background xl:w-[34rem]">
+    <aside key={task} aria-label="Task" className="sticky top-11 h-[calc(100dvh-2.75rem)] w-[30rem] shrink-0 overflow-y-auto border-l border-border bg-background xl:w-[34rem]">
       <TaskView id={task} panel />
     </aside>
   );
