@@ -118,6 +118,9 @@ func TestTriage(t *testing.T) {
 	if len(d.Comments) != 1 || d.Comments[0].Author.ID != bot.Member.ID || !strings.HasPrefix(d.Comments[0].Body, "Done when") {
 		t.Fatalf("plan comment: %+v", d.Comments)
 	}
+	if !strings.HasPrefix(got.AgentNote, "Done when the intro") {
+		t.Fatalf("agent note = %q", got.AgentNote)
+	}
 	if !slices.ContainsFunc(d.Events, func(ev core.EventOut) bool { return ev.Kind == "triaged" && ev.Actor.ID == bot.Member.ID }) {
 		t.Fatalf("no triaged event by the agent: %+v", d.Events)
 	}
