@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { Markdown } from "../components/markdown";
@@ -131,6 +131,8 @@ export function TaskPage() {
 // TaskView is the task page body; with `panel` it renders inside the desktop side panel.
 export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const navigate = useNavigate();
+  const router = useRouter();
+  const canGoBack = useCanGoBack();
   const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
   const q = useQuery({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }), refetchInterval: 10000 });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
@@ -180,8 +182,16 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); lastTyping.current = 0; watch(); invalidate(); } });
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: invalidate });
 
+  // Back within the app when there is somewhere to go; a deep link (fresh tab) lands on My tasks.
+  const goBack = () => (canGoBack ? router.history.back() : navigate({ to: "/" }));
+  // On phones the full page has no app bars, so loading and errors keep a way back.
+  const back = (
+    <button onClick={() => goBack()} className="-ml-2 mb-3 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent">
+      <ChevronLeft className="size-5" />Back
+    </button>
+  );
   if (q.error) {
-    if (!panel) return <ErrorText error={q.error} />;
+    if (!panel) return <div>{back}<ErrorText error={q.error} /></div>;
     return (
       <div className="px-5 pt-4">
         <button onClick={closePanel} className="-ml-2 mb-3 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)"><X className="size-5" /></button>
@@ -189,7 +199,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       </div>
     );
   }
-  if (!q.data) return null;
+  if (!q.data) return panel ? null : back;
   const { task: t, comments, events } = q.data;
   const closed = t.status === "done" || t.status === "cancelled";
   const locked = !!t.deleted_at;
@@ -223,7 +233,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             <X className="size-5" />
           </button>
         ) : (
-          <button onClick={() => window.history.length > 1 ? window.history.back() : navigate({ to: "/" })} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent" aria-label="Back">
+          <button onClick={() => goBack()} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent" aria-label="Back">
             <ChevronLeft className="size-5" /><span className="hidden sm:inline">Back</span>
           </button>
         )}
