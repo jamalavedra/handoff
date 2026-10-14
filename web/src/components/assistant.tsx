@@ -1,13 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState, useSearch } from "@tanstack/react-router";
-import { AlertCircle, ArrowUp, CalendarDays, Check, CheckCircle2, ChevronRight, FileText, FolderKanban, ListPlus, MessageSquare, Pencil, Plus, RotateCcw, Search, Sparkles, SquarePen, Users, X } from "lucide-react";
+import { AlertCircle, ArrowUp, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, FileText, FolderKanban, ListPlus, MessageSquare, Pencil, Plus, RotateCcw, Search, Sparkles, SquarePen, Users, X } from "lucide-react";
 import { api, cn, projectName, type Me, type MemberRef, type Project, type Task } from "../lib";
 import { parseStored, stored, toApi, type Msg, type Step } from "../assistant-history";
 import { Markdown } from "./markdown";
 import { TaskLink } from "./tasklink";
 import { Avatar } from "./app";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { TaskChat } from "./task-chat";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -17,8 +19,16 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 type Status = { enabled: boolean; agent?: MemberRef };
 type Reply = { reply: string; steps: Step[]; agent?: MemberRef; changed: boolean; error?: string };
 
-type Ctx = { open: boolean; setOpen: (o: boolean) => void; toggle: () => void };
-const AssistantContext = createContext<Ctx>({ open: false, setOpen: () => {}, toggle: () => {} });
+// The panel shows one of two conversations: the open task's chat with the team and its agents
+// ("task"), or this person's private assistant across the workspace ("global").
+export type Mode = "task" | "global";
+type Ctx = {
+  open: boolean; setOpen: (o: boolean) => void; toggle: () => void;
+  mode: Mode; setMode: (m: Mode) => void;
+  focus: number; // bumped to put the cursor in the composer
+  openTaskChat: () => void;
+};
+const AssistantContext = createContext<Ctx>({ open: false, setOpen: () => {}, toggle: () => {}, mode: "task", setMode: () => {}, focus: 0, openTaskChat: () => {} });
 export const useAssistant = () => useContext(AssistantContext);
 
 const desktop = window.matchMedia("(min-width: 768px)");
@@ -36,6 +46,13 @@ function useMedia(mq: MediaQueryList) {
 
 // From the sidebar breakpoint up the assistant is a side panel; below it, a drawer.
 const useDesktop = () => useMedia(desktop);
+
+// useTaskChatShown: the task's chat is already beside it (desktop panel open on "This task").
+export function useTaskChatShown() {
+  const a = useAssistant();
+  const isDesktop = useDesktop();
+  return a.open && a.mode === "task" && isDesktop;
+}
 
 // useAssistantInset is how far the open side panel pushes things anchored to the right edge (toasts).
 export function useAssistantInset() {
@@ -75,10 +92,26 @@ function save(org: string, member: string, msgs: Msg[]) {
 }
 
 // AssistantProvider owns the open state and ⌘J. The panel itself is rendered by <AssistantPanel />.
+const modeKey = "handoff-assistant-mode";
+const savedMode = (): Mode => {
+  try {
+    return localStorage.getItem(modeKey) === "global" ? "global" : "task";
+  } catch {
+    return "task";
+  }
+};
+
 export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [mode, setModeState] = useState<Mode>(savedMode);
+  const [focus, setFocus] = useState(0);
   const toggle = useCallback(() => setOpen((o) => !o), []);
-  const ctx = useMemo(() => ({ open, setOpen, toggle }), [open, toggle]);
+  const setMode = useCallback((m: Mode) => {
+    setModeState(m);
+    try { localStorage.setItem(modeKey, m); } catch { /* private window */ }
+  }, []);
+  const openTaskChat = useCallback(() => { setMode("task"); setOpen(true); setFocus((f) => f + 1); }, [setMode]);
+  const ctx = useMemo(() => ({ open, setOpen, toggle, mode, setMode, focus, openTaskChat }), [open, toggle, mode, setMode, focus, openTaskChat]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "j" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
@@ -178,10 +211,78 @@ export function AssistantPanel({ me }: { me: Me }) {
   );
 }
 
+// Chat is the panel: a header with the conversation switcher, then the task's chat or the assistant.
 function Chat({ me, onClose, drawer }: { me: Me; onClose: () => void; drawer?: boolean }) {
+  const a = useAssistant();
+  const page = usePageContext();
+  const taskMode = a.mode === "task" && page.kind === "task";
+  return (
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={(e) => { if (e.key === "Escape" && !drawer && !e.defaultPrevented) { e.stopPropagation(); onClose(); } }}
+    >
+      {/* Both stay mounted while the panel is open, so switching never drops a reply on its way or
+          a draft; only the one in view shows. */}
+      {page.kind === "task" && (
+        <div className={cn("flex min-h-0 flex-1 flex-col", !taskMode && "hidden")}>
+          <PanelHeader drawer={drawer} onClose={onClose} page={page} taskMode />
+          <TaskChat key={page.task} id={page.task!} focus={a.focus} drawer={drawer} active={taskMode} />
+        </div>
+      )}
+      <div className={cn("flex min-h-0 flex-1 flex-col", taskMode && "hidden")}>
+        <AssistantChat me={me} onClose={onClose} drawer={drawer} page={page} active={!taskMode} />
+      </div>
+    </div>
+  );
+}
+
+// PanelHeader names the conversation and switches between the task's chat and the assistant.
+function PanelHeader({ drawer, onClose, page, taskMode, sub, actions }: { drawer?: boolean; onClose: () => void; page: ReturnType<typeof usePageContext>; taskMode: boolean; sub?: string; actions?: React.ReactNode }) {
+  const a = useAssistant();
+  const [open, setOpen] = useState(false);
+  const pick = (m: Mode) => { a.setMode(m); setOpen(false); };
+  return (
+    <header className={cn("flex items-center gap-2 px-4", drawer ? "pt-2 pb-2" : "h-14 border-b border-border")}>
+      {taskMode ? <MessageSquare className="size-4 shrink-0 text-muted-foreground" /> : <Sparkles className="size-4 shrink-0 text-violet-600" />}
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button className="-ml-1 flex min-w-0 flex-1 items-center gap-1 rounded-lg px-1 py-0.5 text-left hover:bg-accent" aria-label="Switch conversation">
+            <span className="min-w-0">
+              <span className="block truncate text-[15px] font-semibold leading-tight">{taskMode ? "Task chat" : "Assistant"}</span>
+              <span className="block truncate text-xs text-muted-foreground">{taskMode ? page.label : sub ?? "Across the workspace"}</span>
+            </span>
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-72 p-1">
+          <ModeItem icon={MessageSquare} active={taskMode} disabled={page.kind !== "task"} onClick={() => pick("task")} title="This task" hint={page.kind === "task" ? `Shared with the team · ${page.label}` : "Open a task to see its chat"} />
+          <ModeItem icon={Sparkles} active={!taskMode} onClick={() => pick("global")} title="Everything" hint="Your private assistant, across the workspace" />
+        </PopoverContent>
+      </Popover>
+      {actions}
+      <button onClick={onClose} className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title={drawer ? "Close" : "Close (⌘J)"}>
+        <X className="size-4" />
+      </button>
+    </header>
+  );
+}
+
+function ModeItem({ icon: Icon, active, disabled, onClick, title, hint }: { icon: typeof Search; active: boolean; disabled?: boolean; onClick: () => void; title: string; hint: string }) {
+  return (
+    <button disabled={disabled} onClick={onClick} className="flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-accent disabled:opacity-50 disabled:hover:bg-transparent">
+      <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="block truncate text-xs text-muted-foreground">{hint}</span>
+      </span>
+      {active && <Check className="mt-0.5 size-4 shrink-0" />}
+    </button>
+  );
+}
+
+function AssistantChat({ me, onClose, drawer, page, active }: { me: Me; onClose: () => void; drawer?: boolean; page: ReturnType<typeof usePageContext>; active: boolean }) {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["assistant"], queryFn: () => api.tool<Status>("get_assistant"), refetchInterval: false });
-  const page = usePageContext();
   const org = me.org?.slug ?? "";
   const member = me.member?.id ?? "";
   const [msgs, setMsgs] = useState<Msg[]>(() => load(org, member));
@@ -192,7 +293,7 @@ function Chat({ me, onClose, drawer }: { me: Me; onClose: () => void; drawer?: b
   const chatId = useRef(0);
   const withContext = dropped !== page.key;
   useEffect(() => save(org, member, msgs), [org, member, msgs]);
-  useEffect(() => { if (!drawer) inputRef.current?.focus(); }, [drawer]);
+  useEffect(() => { if (!drawer && active) inputRef.current?.focus(); }, [drawer, active]);
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [msgs.length]);
 
   const send = useMutation({
@@ -254,25 +355,19 @@ function Chat({ me, onClose, drawer }: { me: Me; onClose: () => void; drawer?: b
   const lastFailed = msgs.at(-1)?.error;
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col"
-      onKeyDown={(e) => { if (e.key === "Escape" && !drawer) { e.stopPropagation(); onClose(); } }}
-    >
-      <header className={cn("flex items-center gap-2 px-4", drawer ? "pt-2 pb-2" : "h-14 border-b border-border")}>
-        <Sparkles className="size-4 text-violet-600" />
-        <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-semibold leading-tight">Assistant</div>
-          {agent && <div className="truncate text-xs text-muted-foreground">Acts as {agent.name} for you</div>}
-        </div>
-        {msgs.length > 0 && (
-          <button onClick={reset} className="flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="New chat" title="New chat">
+    <>
+      <PanelHeader
+        drawer={drawer}
+        onClose={onClose}
+        page={page}
+        taskMode={false}
+        sub={agent ? `Private · acts as ${agent.name} for you` : undefined}
+        actions={msgs.length > 0 && (
+          <button onClick={reset} className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="New chat" title="New chat">
             <SquarePen className="size-4" />
           </button>
         )}
-        <button onClick={onClose} className="flex size-8 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close assistant" title={drawer ? "Close" : "Close (⌘J)"}>
-          <X className="size-4" />
-        </button>
-      </header>
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
         {off ? (
@@ -324,7 +419,7 @@ function Chat({ me, onClose, drawer }: { me: Me; onClose: () => void; drawer?: b
           </div>
         </form>
       )}
-    </div>
+    </>
   );
 }
 
