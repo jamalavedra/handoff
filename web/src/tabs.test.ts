@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { activate, arrive, close, fresh, open, restore, resumeHistory, stepHistory, target, visit, type Tabs } from "./tabs.ts";
+import { activate, arrive, close, fresh, open, restore, resumeHistory, stepHistory, tabHref, target, visit, type Tabs } from "./tabs.ts";
 
 const s0: Tabs = { tabs: [{ id: "a", href: "/" }, { id: "b", href: "/activity" }], active: "a" };
 const hrefs = (s: Tabs) => s.tabs.map((t) => t.href);
@@ -94,6 +94,29 @@ test("arriving from outside", () => {
   assert.equal(arrive(s0, "/", "n"), s0);
   assert.equal(arrive(s0, "/activity", "n").active, "b");
   assert.deepEqual(hrefs(arrive(s0, "/team", "n")), ["/", "/team", "/activity"]);
+});
+
+test("a task in the side panel is held as its full page", () => {
+  assert.equal(tabHref("/?task=acme-1"), "/tasks/acme-1");
+  assert.equal(tabHref("/projects/p1?view=board&task=a%2Fb"), "/tasks/a%2Fb");
+  assert.equal(tabHref("/projects/p1?view=board"), "/projects/p1?view=board");
+  assert.equal(tabHref("/tasks/acme-1"), "/tasks/acme-1");
+  assert.equal(tabHref("/?task="), "/?task=");
+  assert.equal(tabHref("/tasks/a?task=b"), "/tasks/a?task=b");
+  assert.deepEqual(target("/tasks/%E0%A4"), { kind: "task", id: "%E0%A4" });
+
+  // Opening a task in the panel turns the active tab into that task; selecting it shows the page.
+  const s = visit(s0, "/?task=acme-1", false);
+  assert.deepEqual(hrefs(s), ["/tasks/acme-1", "/activity"]);
+  assert.equal(visit(s, "/tasks/acme-1", false), s);
+  assert.deepEqual(hrefs(visit(s, "/", false)), ["/", "/activity"]);
+  assert.deepEqual(hrefs(open(s0, "/projects/p1?task=acme-2", "n")), ["/", "/tasks/acme-2", "/activity"]);
+  assert.equal(open(s, "/?task=acme-1", "n", { foreground: true }).active, "a");
+  assert.deepEqual(hrefs(arrive(s0, "/team?task=acme-3", "n")), ["/", "/tasks/acme-3", "/activity"]);
+
+  // Tabs saved with a panel location come back as task pages.
+  const saved = { tabs: [{ id: "a", href: "/?task=acme-1" }, { id: "b", href: "/team" }], active: "b" };
+  assert.deepEqual(hrefs(restore(saved, "/team", "n")), ["/tasks/acme-1", "/team"]);
 });
 
 test("forward bookkeeping belongs to one history", () => {

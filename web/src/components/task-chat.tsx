@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ChevronDown, Globe, MessageSquare, Search, SmilePlus } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, Globe, MessageSquare, Search, SmilePlus } from "lucide-react";
 import { sources } from "../checklist";
 import { toast } from "sonner";
 import { ago, api, cn, type Comment, type Event, type Lookup, type Member, type MemberRef, type Task } from "../lib";
 import { mentionQuery } from "../quickadd";
+import { insertAt, mentionText, replaceQuery, step } from "../mention";
+import { MentionMenu, useMentionItems, type Item } from "./mention-menu";
 import { useMe } from "../main";
 import { Markdown } from "./markdown";
 import { Avatar, ErrorText, Who } from "./app";
@@ -33,6 +35,8 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   const [comment, setComment] = useState("");
   const [caret, setCaret] = useState(0);
   const [pick, setPick] = useState(0);
+  // Esc closes the @ menu for the mention it was showing; typing another @ opens it again.
+  const [dismissed, setDismissed] = useState<number | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const lastTyping = useRef(0);
@@ -58,18 +62,22 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
 
   const people = members.data?.members.filter((m) => m.status !== "removed") ?? [];
   const memberNames = people.map((m) => m.name);
-  const mq = mentionQuery(comment, caret);
-  const suggestions = mq ? people.filter((m) => m.name.toLowerCase().includes(mq.query.toLowerCase())).slice(0, 5) : [];
-  const picked = suggestions.length ? pick % suggestions.length : 0;
-  const insertMention = (name: string) => {
-    if (!mq) return;
-    const pos = mq.start + name.length + 2;
-    setComment(comment.slice(0, mq.start) + "@" + name + " " + comment.slice(caret));
-    setCaret(pos);
+  const typed = mentionQuery(comment, caret);
+  const mq = typed && typed.start !== dismissed ? typed : null;
+  const suggestions = useMentionItems(mq?.query ?? null, people, id);
+  const picked = step(pick, 0, suggestions.length);
+  // edit writes the composer and puts the caret back where the change ends.
+  const edit = (next: { text: string; caret: number }) => {
+    setComment(next.text);
+    setCaret(next.caret);
+    setPick(0);
     requestAnimationFrame(() => {
       ref.current?.focus();
-      ref.current?.setSelectionRange(pos, pos);
+      ref.current?.setSelectionRange(next.caret, next.caret);
     });
+  };
+  const insertMention = (item: Item) => {
+    if (mq) edit(replaceQuery(comment, mq.start, caret, mentionText(item)));
   };
   const t = q.data?.task;
   const comments = q.data?.comments ?? [];
@@ -106,37 +114,42 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
           className={cn("relative mx-3 mt-1 flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-sm focus-within:ring-2 focus-within:ring-input", drawer ? "mb-[calc(0.75rem+env(safe-area-inset-bottom))]" : "mb-3")}
           onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim() && !send.isPending) send.mutate(comment); }}
         >
-          {suggestions.length > 0 && (
-            <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg">
-              {suggestions.map((m, i) => (
-                <li key={m.id} role="option" aria-selected={i === picked}>
-                  <button type="button" onMouseDown={(e) => { e.preventDefault(); insertMention(m.name); }} className={cn("flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted", i === picked && "bg-accent")}>
-                    <Avatar m={{ id: m.id, name: m.name, kind: m.kind }} />
-                    <span className="truncate">{m.name}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <MentionMenu items={suggestions} active={picked} onPick={insertMention} onHover={setPick} />
           {typers.length > 0 && <span aria-live="polite" className="absolute -top-6 left-3 animate-pulse text-xs text-muted-foreground">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</span>}
           <textarea
             rows={1}
             ref={ref}
             placeholder={t?.assignee?.kind === "agent" ? `Message ${t.assignee.name}…` : "Message… type @ to mention"}
             value={comment}
-            onChange={(e) => { dictation.cancel(); setComment(e.target.value); setCaret(e.target.selectionStart ?? 0); setPick(0); typing(); }}
+            role="combobox"
+            aria-expanded={suggestions.length > 0}
+            aria-controls={suggestions.length ? "mention-menu" : undefined}
+            aria-activedescendant={suggestions.length ? `mention-${picked}` : undefined}
+            onChange={(e) => {
+              dictation.cancel();
+              const at = e.target.selectionStart ?? 0;
+              setComment(e.target.value);
+              setCaret(at);
+              setPick(0);
+              // A dismissed menu stays closed while that same @ is being typed; a new @ reopens it.
+              if (mentionQuery(e.target.value, at)?.start !== dismissed) setDismissed(null);
+              typing();
+            }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={(e) => {
               if (suggestions.length) {
-                if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); setPick(picked + (e.key === "ArrowDown" ? 1 : suggestions.length - 1)); return; }
-                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insertMention(suggestions[picked].name); return; }
-                if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setCaret(0); return; }
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); setPick(step(picked, e.key === "ArrowDown" ? 1 : -1, suggestions.length)); return; }
+                if ((e.key === "Enter" && !e.nativeEvent.isComposing) || e.key === "Tab") { e.preventDefault(); insertMention(suggestions[picked]); return; }
+                if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setDismissed(mq?.start ?? null); return; }
               }
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
             }}
             aria-label="Comment"
             className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-muted-foreground/70 sm:text-sm"
           />
+          <button type="button" onClick={() => { dictation.cancel(); setDismissed(null); edit(insertAt(comment, ref.current?.selectionStart ?? caret)); }} aria-label="Mention a person, agent or task" title="Mention a person, agent or task" className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none">
+            <AtSign className="size-[18px]" />
+          </button>
           {dictation.supported && <MicButton listening={dictation.listening} onToggle={() => dictation.toggle(comment)} wave={dictation} />}
           <button disabled={!comment.trim() || send.isPending} aria-label="Send comment" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:bg-foreground/10 disabled:text-muted-foreground/70">
             <ArrowUp className="size-4" />

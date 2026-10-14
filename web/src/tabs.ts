@@ -7,26 +7,44 @@ export type Tabs = { tabs: Tab[]; active: string };
 
 export const home = "/";
 
-// What a tab is named after: a task page, a project, or another page. A ?task= side panel is
-// passing detail, so the tab keeps the page's name (the panel's ⋯ menu can give the task its own tab).
+// What a tab is named after: a task page, a project, or another page.
 export type Target = { kind: "task"; id: string } | { kind: "project"; id: string } | { kind: "page"; path: string };
 
+const decode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
 export function target(href: string): Target {
-  const path = href.split("?")[0];
+  const path = href.split(/[?#]/)[0];
   const task = path.match(/^\/tasks\/([^/]+)/)?.[1];
-  if (task) return { kind: "task", id: decodeURIComponent(task) };
+  if (task) return { kind: "task", id: decode(task) };
   const project = path.match(/^\/projects\/([^/]+)/)?.[1];
-  if (project) return { kind: "project", id: decodeURIComponent(project) };
+  if (project) return { kind: "project", id: decode(project) };
   return { kind: "page", path };
 }
 
 export const taskHref = (id: string) => `/tasks/${encodeURIComponent(id)}`;
+
+// tabHref is what a tab holds for a location. Tabs are full pages, so a task open in the side
+// panel (?task=) is held as its own task page, and selecting the tab opens it full size.
+export function tabHref(href: string): string {
+  // On a task page the page itself wins over a stray ?task=.
+  if (target(href).kind === "task") return href;
+  const q = href.indexOf("?");
+  const id = q < 0 ? null : new URLSearchParams(href.slice(q + 1).split("#")[0]).get("task");
+  return id ? taskHref(id) : href;
+}
 
 const activeTab = (s: Tabs) => s.tabs.find((t) => t.id === s.active);
 
 // visit follows the router. Normally the active tab takes the new location; going back or forward
 // onto a location another tab holds switches to that tab instead, so Back undoes a tab switch.
 export function visit(s: Tabs, href: string, traverse: boolean): Tabs {
+  href = tabHref(href);
   const cur = activeTab(s);
   if (cur?.href === href) return s;
   const other = traverse ? s.tabs.find((t) => t.href === href) : undefined;
@@ -37,6 +55,7 @@ export function visit(s: Tabs, href: string, traverse: boolean): Tabs {
 // open adds a tab after the active one (and after its earlier background children). `foreground`
 // switches to it. A location that is already open is reused rather than duplicated.
 export function open(s: Tabs, href: string, id: string, { foreground = false } = {}): Tabs {
+  href = tabHref(href);
   const existing = s.tabs.find((t) => t.href === href);
   if (existing) return foreground ? { ...s, active: existing.id } : s;
   let at = s.tabs.findIndex((t) => t.id === s.active) + 1;
@@ -78,7 +97,8 @@ export function restore(saved: unknown, href: string, id: string): Tabs {
     // Same-origin paths only, and no duplicate ids a bad write could have left behind.
     if (!t || typeof t.id !== "string" || typeof t.href !== "string" || !/^\/(?!\/)/.test(t.href) || ids.has(t.id)) continue;
     ids.add(t.id);
-    clean.push(typeof t.opener === "string" ? { id: t.id, href: t.href, opener: t.opener } : { id: t.id, href: t.href });
+    const to = tabHref(t.href);
+    clean.push(typeof t.opener === "string" ? { id: t.id, href: to, opener: t.opener } : { id: t.id, href: to });
   }
   if (!clean.length) return single;
   // Openers keep later background tabs in order; one pointing at a tab that's gone means nothing.
@@ -90,6 +110,7 @@ export function restore(saved: unknown, href: string, id: string): Tabs {
 // arrive brings a location in from outside (a fresh load, or returning to desktop width): the
 // active tab if it's already there, else the tab that has it, else a new tab beside the active one.
 export function arrive(s: Tabs, href: string, id: string): Tabs {
+  href = tabHref(href);
   if (s.tabs.find((t) => t.id === s.active)?.href === href) return s;
   return open(s, href, id, { foreground: true });
 }
