@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, AtSign, ChevronDown, Globe, MessageSquare, Search, SmilePlus } from "lucide-react";
 import { sources } from "../checklist";
@@ -15,6 +15,8 @@ import { useDictation } from "@/hooks/use-dictation";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ActivityTrail, LiveTrail } from "./activity-trail";
 import { useAgentLine, useChatInView } from "../agent-activity";
+import { cleanQuote, replyArgs, snippet, type ReplyDraft } from "../reply";
+import { QuotedReply, ReplyAction, ReplyChip, ReplyContext, ReplyTarget, SelectionReply } from "./reply";
 
 // A task's chat is its conversation with the team and its agents. It lives in the assistant panel
 // ("This task"), beside the task it's about; the task itself shows a preview that opens it.
@@ -38,6 +40,13 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   // Esc closes the @ menu for the mention it was showing; typing another @ opens it again.
   const [dismissed, setDismissed] = useState<number | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // The message (or the part of one) the next message replies to.
+  const [reply, setReply] = useState<ReplyDraft | null>(null);
+  const startReply = useCallback((c: Comment, quote?: string) => {
+    setReply({ id: c.id, author: c.author?.name, quote: quote ? cleanQuote(quote) : undefined, excerpt: snippet(c.body) });
+    ref.current?.focus();
+  }, []);
   const endRef = useRef<HTMLDivElement>(null);
   const lastTyping = useRef(0);
   const typing = () => {
@@ -48,15 +57,15 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   const dictation = useDictation((text) => { setComment(text); setCaret(text.length); typing(); });
   // Switching tasks drops the draft and dictation that belonged to the old one.
   const { cancel: cancelDictation } = dictation;
-  useEffect(() => () => { cancelDictation(); setComment(""); setCaret(0); }, [id, cancelDictation]);
+  useEffect(() => () => { cancelDictation(); setComment(""); setCaret(0); setReply(null); }, [id, cancelDictation]);
   useEffect(() => { if (active && (focus || !drawer)) ref.current?.focus(); }, [focus, id, drawer, active]);
   // Mounted only while the panel is open; active while it shows this chat.
   useChatInView(id, active);
   const count = q.data?.comments.length ?? 0;
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
   const send = useMutation({
-    mutationFn: (body: string) => api.tool("comment", { id, body }),
-    onSuccess: () => { setComment(""); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
+    mutationFn: (v: { body: string; reply?: ReplyDraft | null }) => api.tool("comment", { id, body: v.body, ...replyArgs(v.reply ?? null) }),
+    onSuccess: (_, v) => { setComment(""); if (v.reply) setReply(null); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
@@ -86,8 +95,8 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   const locked = !t || !!t.deleted_at;
 
   return (
-    <>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
+    <ReplyContext.Provider value={locked ? null : startReply}>
+      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
         {q.error && <ErrorText error={q.error} />}
         {q.data && comments.length === 0 && (
           <div className="mt-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
@@ -98,22 +107,26 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
         )}
         <section className="flex flex-col gap-3" aria-label="Comments">
           {comments.map((c, i) => (
-            <Bubble
-              key={c.id} c={c} mine={c.author?.id === meId} mentions={memberNames} locked={locked}
-              // The agent's question, while the task waits on me: its answers are a tap away.
-              answers={i === comments.length - 1 && t?.waiting_on?.id === meId && !send.isPending ? c.options : undefined}
-              onAnswer={(a) => send.mutate(a)}
-            />
+            <ReplyTarget key={c.id} c={c}>
+              <Bubble
+                c={c} mine={c.author?.id === meId} mentions={memberNames} locked={locked}
+                // The agent's question, while the task waits on me: its answers are a tap away.
+                answers={i === comments.length - 1 && t?.waiting_on?.id === meId && !send.isPending ? c.options : undefined}
+                onAnswer={(a) => send.mutate({ body: a })}
+              />
+            </ReplyTarget>
           ))}
         </section>
+        <SelectionReply scroller={scrollRef} comments={comments} />
         <LiveTrail task={id} />
         <div ref={endRef} />
       </div>
       {!locked && (
         <form
-          className={cn("relative mx-3 mt-1 flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-sm focus-within:ring-2 focus-within:ring-input", drawer ? "mb-[calc(0.75rem+env(safe-area-inset-bottom))]" : "mb-3")}
-          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim() && !send.isPending) send.mutate(comment); }}
+          className={cn("relative mx-3 mt-1 flex flex-wrap items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-sm focus-within:ring-2 focus-within:ring-input", drawer ? "mb-[calc(0.75rem+env(safe-area-inset-bottom))]" : "mb-3")}
+          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim() && !send.isPending) send.mutate({ body: comment, reply }); }}
         >
+          {reply && <ReplyChip draft={reply} onCancel={() => { setReply(null); ref.current?.focus(); }} />}
           <MentionMenu items={suggestions} active={picked} onPick={insertMention} onHover={setPick} />
           {typers.length > 0 && <span aria-live="polite" className="absolute -top-6 left-3 animate-pulse text-xs text-muted-foreground">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</span>}
           <textarea
@@ -142,6 +155,8 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
                 if ((e.key === "Enter" && !e.nativeEvent.isComposing) || e.key === "Tab") { e.preventDefault(); insertMention(suggestions[picked]); return; }
                 if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setDismissed(mq?.start ?? null); return; }
               }
+              // Esc closes the @ menu first, then drops the reply.
+              if (e.key === "Escape" && reply) { e.preventDefault(); e.stopPropagation(); setReply(null); return; }
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
             }}
             aria-label="Comment"
@@ -156,7 +171,7 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
           </button>
         </form>
       )}
-    </>
+    </ReplyContext.Provider>
   );
 }
 
@@ -170,6 +185,7 @@ function Bubble({ c, mine, mentions, locked, answers, onAnswer }: { c: Comment; 
         <div className={cn("min-w-0 rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
           {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
           {!c.activity?.length && c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
+          <QuotedReply r={c.reply_to} />
           <Markdown text={c.body} mentions={mentions} />
           {cited.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
@@ -296,6 +312,7 @@ function Reactions({ c, disabled }: { c: Comment; disabled: boolean }) {
           </PopoverContent>
         </Popover>
       )}
+      {!disabled && <ReplyAction c={c} />}
     </div>
   );
 }
