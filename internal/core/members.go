@@ -391,6 +391,12 @@ func (s *Service) DecideApproval(ctx context.Context, p *Principal, in DecideIn)
 		if err := c.event(taskID, "approval_"+decision, map[string]any{"approval_id": in.ID, "action": action, "agent": c.ref(agentID).Name}); err != nil {
 			return err
 		}
+		// The agent that asked hears back (its inbox, and its webhook if it has one).
+		if taskID != "" {
+			if err := c.notify(c.members[agentID], "approval", taskID, decision+": "+action); err != nil {
+				return err
+			}
+		}
 		out = ApprovalOut{ID: in.ID, Agent: c.ref(agentID), Action: action, Status: decision}
 		return nil
 	})

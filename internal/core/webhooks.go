@@ -94,7 +94,7 @@ func (s *Service) SetWebhook(ctx context.Context, p *Principal, in SetWebhookIn)
 		}
 		u, err := triageBaseURL(raw)
 		if err != nil {
-			return errf(ErrInvalid, "url must be an http(s) URL")
+			return errf(ErrInvalid, "url must be an http(s) URL without credentials in it")
 		}
 		existing, err := c.webhookOut(m.ID)
 		if err != nil {
@@ -277,130 +277,142 @@ func (s *Service) DeliverWebhooks(ctx context.Context) {
 	}
 }
 
-type pendingDelivery struct {
-	notification int64
-	attempts     int
-	hook         webhookTarget
-	payload      webhookPayload
-}
-
 // webhookTick does one round for a workspace: note tasks that came due for agents, queue new
-// notifications for agents with a webhook, then claim and send what's due.
+// notifications for agents with a webhook, then send what's due one delivery at a time.
 func (s *Service) webhookTick(ctx context.Context, org, slug string) {
-	var batch []pendingDelivery
 	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
-		// Due today (UTC) and assigned to an agent with a webhook: one "due" notification per due date.
+		// Due today (UTC) and assigned to an agent with a webhook: one "due" notification per agent and due date.
 		if _, err := tx.Exec(ctx, `INSERT INTO notifications (org_id, member_id, kind, task_id, actor_id, excerpt)
 			SELECT t.org_id, t.assignee_id, 'due', t.id, t.created_by, to_char(t.due_at, 'YYYY-MM-DD')
 			FROM tasks t JOIN agent_webhooks w ON w.org_id = t.org_id AND w.agent_id = t.assignee_id
 			WHERE t.deleted_at IS NULL AND t.status NOT IN ('done', 'cancelled') AND t.due_at IS NOT NULL
 				AND t.due_at < (now() AT TIME ZONE 'UTC')::date + 1
-				AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.org_id = t.org_id AND n.task_id = t.id
-					AND n.kind = 'due' AND n.excerpt = to_char(t.due_at, 'YYYY-MM-DD'))`); err != nil {
+				AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.org_id = t.org_id AND n.task_id = t.id AND n.kind = 'due'
+					AND n.member_id = t.assignee_id AND n.excerpt = to_char(t.due_at, 'YYYY-MM-DD'))
+			ON CONFLICT (org_id, member_id, task_id, excerpt) WHERE kind = 'due' DO NOTHING`); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO webhook_deliveries (org_id, notification_id, agent_id)
+		_, err := tx.Exec(ctx, `INSERT INTO webhook_deliveries (org_id, notification_id, agent_id)
 			SELECT n.org_id, n.id, n.member_id FROM notifications n
 			JOIN agent_webhooks w ON w.org_id = n.org_id AND w.agent_id = n.member_id
 			WHERE n.created_at >= w.since
 				AND NOT EXISTS (SELECT 1 FROM webhook_deliveries d WHERE d.org_id = n.org_id AND d.notification_id = n.id)
-			ON CONFLICT DO NOTHING`); err != nil {
-			return err
-		}
-		// Claim a batch: the lease keeps other servers off it while it's being sent.
-		rows, err := tx.Query(ctx, `UPDATE webhook_deliveries d SET next_attempt_at = now() + interval '2 minutes', attempts = d.attempts + 1
-			WHERE (d.org_id, d.notification_id) IN (
-				SELECT org_id, notification_id FROM webhook_deliveries
-				WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= now()
-				ORDER BY next_attempt_at LIMIT 20 FOR UPDATE SKIP LOCKED)
-			RETURNING d.notification_id, d.agent_id::text, d.attempts`)
-		if err != nil {
-			return err
-		}
-		type claim struct {
-			id       int64
-			agent    string
-			attempts int
-		}
-		claims, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (claim, error) {
-			var c claim
-			return c, r.Scan(&c.id, &c.agent, &c.attempts)
-		})
-		if err != nil {
-			return err
-		}
-		for _, cl := range claims {
-			d := pendingDelivery{notification: cl.id, attempts: cl.attempts}
-			var sealed []byte
-			var kind, actor, actorName, actorKind, agentName, excerpt string
-			var created time.Time
-			var task webhookTask
-			var due *time.Time
-			err := tx.QueryRow(ctx, `SELECT w.url, w.secret, n.kind, n.actor_id::text, a.name, a.kind, g.name, n.excerpt, n.created_at,
-				t.id, t.title, t.status, t.due_at, coalesce(p.name, '')
-				FROM notifications n
-				JOIN agent_webhooks w ON w.org_id = n.org_id AND w.agent_id = n.member_id
-				JOIN members a ON a.org_id = n.org_id AND a.id = n.actor_id
-				JOIN members g ON g.org_id = n.org_id AND g.id = n.member_id
-				JOIN tasks t ON t.org_id = n.org_id AND t.id = n.task_id
-				LEFT JOIN projects p ON p.org_id = t.org_id AND p.id = t.project_id
-				WHERE n.id = $1`, cl.id).Scan(&d.hook.url, &sealed, &kind, &actor, &actorName, &actorKind, &agentName, &excerpt, &created,
-				&task.ID, &task.Title, &task.Status, &due, &task.Project)
-			if errors.Is(err, pgx.ErrNoRows) {
-				// The webhook was removed or the notification is gone: nothing to send.
-				if _, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET failed_at = now(), last_error = 'webhook removed' WHERE notification_id = $1`, cl.id); err != nil {
-					return err
-				}
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if d.hook.secret, err = s.unseal(sealed); err != nil {
-				continue
-			}
-			d.hook.agentID = cl.agent
-			if due != nil {
-				task.Due = due.UTC().Format("2006-01-02")
-			}
-			task.URL = s.Cfg.OrgURL(slug) + "/tasks/" + task.ID
-			d.payload = webhookPayload{
-				ID: strconv.FormatInt(cl.id, 10), Type: webhookTypes[kind], Workspace: slug,
-				Agent: &MemberRef{ID: cl.agent, Name: agentName, Kind: "agent"}, Task: &task,
-				Actor: &MemberRef{ID: actor, Name: actorName, Kind: actorKind}, CreatedAt: created.UTC().Format(time.RFC3339),
-			}
-			if kind != "due" {
-				d.payload.Excerpt = excerpt
-			}
-			batch = append(batch, d)
-		}
-		return nil
+			ON CONFLICT DO NOTHING`)
+		return err
 	})
 	if err != nil {
 		slog.Error("webhooks", "org", slug, "err", err)
 		return
 	}
-	for _, d := range batch {
+	for range 20 {
+		d, ok := s.claimDelivery(ctx, org, slug)
+		if !ok {
+			return
+		}
 		body, _ := json.Marshal(d.payload)
 		status, derr := s.post(ctx, d.hook, body)
 		s.recordWebhook(ctx, org, d.hook.agentID, status, derr)
-		err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
-			if derr == nil {
-				_, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET delivered_at = now(), last_error = '' WHERE notification_id = $1`, d.notification)
-				return err
-			}
-			if d.attempts >= webhookAttempts {
-				_, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET failed_at = now(), last_error = $2 WHERE notification_id = $1`, d.notification, derr.Error())
-				return err
-			}
-			// 30s, 1m, 2m, 4m... up to an hour.
-			wait := min(30*time.Second<<(d.attempts-1), time.Hour)
-			_, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET next_attempt_at = now() + make_interval(secs => $2), last_error = $3 WHERE notification_id = $1`,
-				d.notification, wait.Seconds(), derr.Error())
-			return err
-		})
-		if err != nil {
-			slog.Error("webhooks: record", "org", slug, "err", err)
+		s.finishDelivery(ctx, org, d, derr)
+	}
+}
+
+type pendingDelivery struct {
+	notification int64
+	attempts     int // also the claim token: the result is only recorded if nobody claimed it since
+	hook         webhookTarget
+	payload      webhookPayload
+}
+
+// claimDelivery takes the next due delivery for 2 minutes, which comfortably covers one 15-second post.
+func (s *Service) claimDelivery(ctx context.Context, org, slug string) (pendingDelivery, bool) {
+	var d pendingDelivery
+	found := false
+	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
+		var agent string
+		err := tx.QueryRow(ctx, `UPDATE webhook_deliveries d SET next_attempt_at = now() + interval '2 minutes', attempts = d.attempts + 1
+			WHERE (d.org_id, d.notification_id) IN (
+				SELECT org_id, notification_id FROM webhook_deliveries
+				WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= now()
+				ORDER BY next_attempt_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+			RETURNING d.notification_id, d.agent_id::text, d.attempts`).Scan(&d.notification, &agent, &d.attempts)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
 		}
+		if err != nil {
+			return err
+		}
+		found = true
+		var sealed []byte
+		var kind, actor, actorName, actorKind, agentName, excerpt string
+		var created time.Time
+		var task webhookTask
+		var due *time.Time
+		err = tx.QueryRow(ctx, `SELECT w.url, w.secret, n.kind, n.actor_id::text, a.name, a.kind, g.name, n.excerpt, n.created_at,
+			t.id, t.title, t.status, t.due_at, coalesce(p.name, '')
+			FROM notifications n
+			JOIN agent_webhooks w ON w.org_id = n.org_id AND w.agent_id = n.member_id
+			JOIN members a ON a.org_id = n.org_id AND a.id = n.actor_id
+			JOIN members g ON g.org_id = n.org_id AND g.id = n.member_id
+			JOIN tasks t ON t.org_id = n.org_id AND t.id = n.task_id
+			LEFT JOIN projects p ON p.org_id = t.org_id AND p.id = t.project_id
+			WHERE n.id = $1`, d.notification).Scan(&d.hook.url, &sealed, &kind, &actor, &actorName, &actorKind, &agentName, &excerpt, &created,
+			&task.ID, &task.Title, &task.Status, &due, &task.Project)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The webhook was removed or the notification is gone: nothing to send.
+			found = false
+			_, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET failed_at = now(), last_error = 'webhook removed' WHERE notification_id = $1`, d.notification)
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if d.hook.secret, err = s.unseal(sealed); err != nil {
+			found = false
+			_, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET failed_at = now(), last_error = 'secret unreadable; rotate it' WHERE notification_id = $1`, d.notification)
+			return err
+		}
+		d.hook.agentID = agent
+		if due != nil {
+			task.Due = due.UTC().Format("2006-01-02")
+		}
+		task.URL = s.Cfg.OrgURL(slug) + "/tasks/" + task.ID
+		d.payload = webhookPayload{
+			ID: strconv.FormatInt(d.notification, 10), Type: webhookTypes[kind], Workspace: slug,
+			Agent: &MemberRef{ID: agent, Name: agentName, Kind: "agent"}, Task: &task,
+			Actor: &MemberRef{ID: actor, Name: actorName, Kind: actorKind}, CreatedAt: created.UTC().Format(time.RFC3339),
+		}
+		if kind != "due" {
+			d.payload.Excerpt = excerpt
+		}
+		return nil
+	})
+	if err != nil {
+		slog.Error("webhooks: claim", "org", slug, "err", err)
+		return d, false
+	}
+	return d, found
+}
+
+// finishDelivery records the outcome, unless another worker claimed the delivery since (attempts moved on).
+func (s *Service) finishDelivery(ctx context.Context, org string, d pendingDelivery, derr error) {
+	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
+		if derr == nil {
+			_, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET delivered_at = now(), last_error = ''
+				WHERE notification_id = $1 AND attempts = $2`, d.notification, d.attempts)
+			return err
+		}
+		if d.attempts >= webhookAttempts {
+			_, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET failed_at = now(), last_error = $3
+				WHERE notification_id = $1 AND attempts = $2`, d.notification, d.attempts, derr.Error())
+			return err
+		}
+		// 30s, 1m, 2m, 4m... up to an hour.
+		wait := min(30*time.Second<<(d.attempts-1), time.Hour)
+		_, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET next_attempt_at = now() + make_interval(secs => $3), last_error = $4
+			WHERE notification_id = $1 AND attempts = $2`, d.notification, d.attempts, wait.Seconds(), derr.Error())
+		return err
+	})
+	if err != nil {
+		slog.Error("webhooks: record", "err", err)
 	}
 }

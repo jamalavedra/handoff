@@ -42,6 +42,8 @@ BEGIN
     END LOOP;
 END $$;
 
--- due: a task assigned to an agent has come due (recurring tasks make this a schedule).
+-- due: a task assigned to an agent has come due (recurring tasks make this a schedule); once per
+-- agent, task and due date, however many servers look at the same time.
+CREATE UNIQUE INDEX notifications_due_once ON notifications (org_id, member_id, task_id, excerpt) WHERE kind = 'due';
 ALTER TABLE notifications DROP CONSTRAINT notifications_kind_check;
 ALTER TABLE notifications ADD CONSTRAINT notifications_kind_check CHECK (kind IN ('mention', 'assigned', 'approval', 'due'));

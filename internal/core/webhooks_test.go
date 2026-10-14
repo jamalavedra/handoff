@@ -149,3 +149,84 @@ func TestWebhooks(t *testing.T) {
 		t.Fatalf("delivered after removal: %v", inbox.types())
 	}
 }
+
+func TestWebhookEdgeCases(t *testing.T) {
+	inbox := &hookInbox{t: t}
+	srv := httptest.NewServer(inbox)
+	t.Cleanup(srv.Close)
+	base, _ := url.Parse("http://handoff.test")
+	s := core.New(testutil.DB(t), &config.Config{BaseURL: base, Secret: []byte("s")})
+	s.OutboundHTTP = srv.Client()
+	e := &env{s: s, ctx: context.Background()}
+	admin := e.org(t, "hookedge")
+	bot := e.agent(t, admin, "Bot A", nil)
+	e.agent(t, admin, "Bot B", nil)
+
+	if _, err := s.SetWebhook(e.ctx, admin, core.SetWebhookIn{Agent: "Bot A", URL: "https://user:pass@example.com/hook"}); !core.IsCode(err, core.ErrInvalid) {
+		t.Fatalf("credentials in url accepted: %v", err)
+	}
+	ha, err := s.SetWebhook(e.ctx, admin, core.SetWebhookIn{Agent: "Bot A", URL: srv.URL + "/a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hb, err := s.SetWebhook(e.ctx, admin, core.SetWebhookIn{Agent: "Bot B", URL: srv.URL + "/b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both bots sign with their own secret; the inbox checks against one, so give them the same view.
+	_ = hb
+	inbox.secret = ha.Secret
+
+	// The agent hears back about its approval request.
+	task := e.create(t, admin, core.NewTask{Title: "Old draft"})[0]
+	req, err := s.Trash(e.ctx, bot, core.TrashIn{ID: task.ID})
+	if err != nil || req.ApprovalID == "" {
+		t.Fatalf("trash request: %+v %v", req, err)
+	}
+	// Two workers at once: nothing is sent twice.
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.DeliverWebhooks(e.ctx) }()
+	}
+	wg.Wait()
+	if _, err := s.DecideApproval(e.ctx, admin, core.DecideIn{ID: req.ApprovalID, Approve: true}); err != nil {
+		t.Fatal(err)
+	}
+	s.DeliverWebhooks(e.ctx)
+	found := false
+	for _, m := range inbox.got {
+		if m["type"] == "approval" && m["excerpt"] == "approved: trash" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no approval decision delivered: %v", inbox.got)
+	}
+
+	// Reassigning a due task: the new agent gets its own due alert.
+	due := e.create(t, admin, core.NewTask{Title: "Due thing", Assignee: "Bot A", Due: "2000-01-01"})[0]
+	s.DeliverWebhooks(e.ctx)
+	to := "Bot B"
+	if _, err := s.UpdateTask(e.ctx, admin, core.UpdateTaskIn{ID: due.ID, Assignee: &to}); err != nil {
+		t.Fatal(err)
+	}
+	inbox.secret = hb.Secret
+	s.DeliverWebhooks(e.ctx)
+	var dueFor []string
+	seen := map[string]int{}
+	for _, m := range inbox.got {
+		seen[m["id"].(string)]++
+		if m["type"] == "task.due" {
+			dueFor = append(dueFor, m["agent"].(map[string]any)["name"].(string))
+		}
+	}
+	if len(dueFor) != 2 || dueFor[0] != "Bot A" || dueFor[1] != "Bot B" {
+		t.Fatalf("due alerts: %v", dueFor)
+	}
+	for id, n := range seen {
+		if n > 1 {
+			t.Fatalf("delivery %s sent %d times", id, n)
+		}
+	}
+}

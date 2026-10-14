@@ -159,7 +159,7 @@ func (s *Service) DisableTriage(ctx context.Context, p *Principal, _ struct{}) (
 
 func triageBaseURL(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
 		return "", errf(ErrInvalid, "base_url must be an http(s) URL such as https://api.openai.com/v1")
 	}
 	u.RawQuery, u.Fragment = "", ""
