@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Columns3, List } from "lucide-react";
 import { api, cn, type Task } from "../lib";
-import { Card, Empty, ErrorText } from "../components/ui";
+import { Card, Empty, ErrorText } from "../components/app";
 import { boardColumn, type BoardColumn } from "../quickadd";
 import { TaskRow, useInvalidate } from "./tasks";
 
@@ -34,10 +34,10 @@ export function ViewToggle({ view, onChange }: { view: View; onChange: (v: View)
     { v: "board" as const, icon: Columns3, label: "Board" },
   ];
   return (
-    <div role="radiogroup" aria-label="View" className="inline-flex rounded-full bg-zinc-100 p-0.5">
+    <div role="radiogroup" aria-label="View" className="inline-flex rounded-full bg-accent p-0.5">
       {opts.map(({ v, icon: Icon, label }) => (
         <button key={v} role="radio" aria-checked={view === v} aria-label={label} title={label} onClick={() => onChange(v)}
-          className={cn("flex size-8 items-center justify-center rounded-full text-zinc-500 transition-colors", view === v && "bg-white text-zinc-900 shadow-sm")}>
+          className={cn("flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors", view === v && "bg-card text-foreground shadow-sm")}>
           <Icon className="size-4" />
         </button>
       ))}
@@ -88,10 +88,10 @@ export function Board({ tasks, done }: { tasks?: Task[]; done?: Task[] }) {
                 const t = byId.get(e.dataTransfer.getData("application/x-handoff-task"));
                 if (t && boardColumn(t) !== c.key) move.mutate({ t, to: c.key });
               }}
-              className={cn("flex w-[82vw] max-w-sm shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-zinc-100 p-2 transition-colors md:w-auto md:max-w-none", over === c.key && "bg-accent-soft ring-2 ring-accent")}
+              className={cn("flex w-[82vw] max-w-sm shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-accent p-2 transition-colors md:w-auto md:max-w-none", over === c.key && "bg-accent ring-2 ring-ring")}
             >
-              <h2 className="flex items-baseline gap-2 px-2 pt-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                {c.title}<span className="font-normal text-zinc-400">{items.length}</span>
+              <h2 className="flex items-baseline gap-2 px-2 pt-1 text-[13px] font-medium text-muted-foreground">
+                {c.title}<span className="font-normal text-muted-foreground/70">{items.length}</span>
               </h2>
               {items.map((t) => (
                 <div
@@ -103,7 +103,7 @@ export function Board({ tasks, done }: { tasks?: Task[]; done?: Task[] }) {
                   <TaskRow t={t} />
                 </div>
               ))}
-              {items.length === 0 && <div className="px-2 py-6 text-center text-sm text-zinc-400">{c.empty}</div>}
+              {items.length === 0 && <div className="px-2 py-6 text-center text-sm text-muted-foreground/70">{c.empty}</div>}
             </section>
           );
         })}

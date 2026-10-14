@@ -1,4 +1,4 @@
-import { StrictMode, useEffect } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
@@ -16,7 +16,8 @@ import { usePanelTask, useWide } from "./components/tasklink";
 import { AgentsPage } from "./pages/agents";
 import { AdminPage } from "./pages/admin";
 import { QuickAddProvider, useQuickAdd } from "./components/quickadd";
-import { PageHeader } from "./components/ui";
+import { PageHeader } from "./components/app";
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
 
@@ -40,8 +41,8 @@ function Shell() {
 
 function NavLink({ to, icon: Icon, children }: { to: string; icon: typeof Inbox; children: React.ReactNode }) {
   return (
-    <Link to={to} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100" activeProps={{ className: "bg-accent-soft font-medium text-accent" }} activeOptions={{ exact: to === "/" }}>
-      <Icon className="size-4" />
+    <Link to={to} className="group flex min-h-8 items-center gap-2 rounded-[10px] px-2 py-1 text-[14px] font-medium text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]" activeOptions={{ exact: to === "/" }}>
+      <Icon className="size-4 text-foreground/50 transition-colors group-hover:text-foreground/80 group-data-[status=active]:text-foreground" />
       {children}
     </Link>
   );
@@ -74,12 +75,12 @@ function Layout({ me }: { me: Me }) {
   return (
     <QuickAddProvider>
       <div className="min-h-dvh md:flex">
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-zinc-200 bg-white p-3 md:flex">
-          <div className="mb-4 px-2">
-            <div className="text-sm font-semibold">{me.org?.name}</div>
-            <div className="text-xs text-zinc-500">Handoff</div>
+        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-3 text-sidebar-foreground md:flex">
+          <div className="mb-5 px-2 pt-1">
+            <div className="truncate font-display text-[17px] font-semibold tracking-tight">{me.org?.name}</div>
+            <div className="text-xs text-muted-foreground">Handoff</div>
           </div>
-          <nav className="flex flex-col gap-0.5">
+          <nav className="flex flex-col gap-1">
             <NavLink to="/" icon={CheckSquare}>My tasks</NavLink>
             <NavLink to="/notifications" icon={Bell}>
               <span className="flex-1">Notifications</span>
@@ -96,30 +97,30 @@ function Layout({ me }: { me: Me }) {
             <NavLink to="/trash" icon={Trash2}>Trash</NavLink>
             {me.member?.role === "admin" && <NavLink to="/admin" icon={Settings}>Admin</NavLink>}
           </nav>
-          <div className="mt-5 px-2 text-xs font-medium uppercase tracking-wide text-zinc-400">Projects</div>
+          <div className="mt-6 px-2 text-[13px] font-medium text-muted-foreground">Projects</div>
           <div className="mt-1 flex flex-col gap-0.5 overflow-y-auto">
             {projects.map((p) => (
-              <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex items-center justify-between rounded-md px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-100" activeProps={{ className: "bg-zinc-100 text-zinc-900" }}>
+              <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex min-h-8 items-center justify-between rounded-[10px] px-2 py-1 text-[14px] text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
                 <span className="truncate">{projectName(p)}</span>
-                <span className="text-xs text-zinc-400">{p.open_tasks}</span>
+                <span className="text-xs text-foreground/40 tabular-nums">{p.open_tasks}</span>
               </Link>
             ))}
           </div>
           <div className="mt-auto px-2 pb-3"><ThemeToggle /></div>
-          <div className="flex items-center justify-between border-t border-zinc-100 px-2 pt-3 text-sm">
+          <div className="flex items-center justify-between border-t border-border px-2 pt-3 text-sm">
             <div className="min-w-0">
               <div className="truncate font-medium">{me.member?.name}</div>
-              <div className="truncate text-xs text-zinc-500">{me.member?.email}</div>
+              <div className="truncate text-xs text-muted-foreground">{me.member?.email}</div>
             </div>
-            <button onClick={logout} className="rounded p-1 text-zinc-500 hover:bg-zinc-100" title="Sign out" aria-label="Sign out">
+            <button onClick={logout} className="rounded p-1 text-muted-foreground hover:bg-accent" title="Sign out" aria-label="Sign out">
               <LogOut className="size-4" />
             </button>
           </div>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
           <MobileTopBar me={me} unread={unread} />
-          <main className="min-w-0 flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-6 lg:px-10">
-            <div className="mx-auto max-w-5xl">
+          <main className="min-w-0 flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:px-8 md:pt-8 lg:px-16">
+            <div className="mx-auto max-w-[800px]">
               <Outlet />
             </div>
           </main>
@@ -153,7 +154,7 @@ function TaskPanel() {
   }, [open, navigate]);
   if (!open || !wide) return null;
   return (
-    <aside key={task} aria-label="Task" className="sticky top-0 h-dvh w-[30rem] shrink-0 overflow-y-auto border-l border-zinc-200 bg-zinc-50 xl:w-[34rem]">
+    <aside key={task} aria-label="Task" className="sticky top-0 h-dvh w-[30rem] shrink-0 overflow-y-auto border-l border-border bg-background xl:w-[34rem]">
       <TaskView id={task} panel />
     </aside>
   );
@@ -164,15 +165,15 @@ function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const project = path.match(/^\/projects\/([^/]+)/)?.[1];
   return (
-    <header className="sticky top-0 z-20 border-b border-zinc-200/70 bg-zinc-50/90 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
+    <header className="sticky top-0 z-20 border-b border-border bg-background/90 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
       <div className="flex h-14 items-center justify-between px-4">
-        <span className="truncate rounded-full border border-zinc-200 bg-white px-3 py-1 text-sm font-semibold">{me.org?.name}</span>
+        <span className="truncate rounded-full border border-border bg-card px-3 py-1 text-sm font-semibold">{me.org?.name}</span>
         <div className="flex items-center gap-2">
-          <Link to="/notifications" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"} className="relative flex size-10 items-center justify-center rounded-full border border-zinc-200 bg-white">
+          <Link to="/notifications" aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"} className="relative flex size-10 items-center justify-center rounded-full border border-border bg-card">
             <Bell className="size-5" />
             {unread > 0 && <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold text-white">{unread > 9 ? "9+" : unread}</span>}
           </Link>
-          <button onClick={() => quick.open(project)} className="flex size-10 items-center justify-center rounded-full border border-zinc-200 bg-white" aria-label="New task">
+          <button onClick={() => quick.open(project)} className="flex size-10 items-center justify-center rounded-full border border-border bg-card" aria-label="New task">
             <Plus className="size-5" />
           </button>
         </div>
@@ -183,9 +184,11 @@ function MobileTopBar({ me, unread }: { me: Me; unread: number }) {
 
 const moreRoutes = ["/more", "/team", "/projects", "/activity", "/trash", "/admin"];
 
+const tabClass = (active: boolean) => cn("relative flex flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-medium text-foreground/50", active && "bg-accent text-foreground");
+
 function Tab({ to, icon: Icon, label, active, badge }: { to: string; icon: typeof Inbox; label: string; active: boolean; badge?: number }) {
   return (
-    <Link to={to} className={cn("relative flex flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-medium text-zinc-500", active && "bg-accent-soft text-accent")}>
+    <Link to={to} className={tabClass(active)}>
       <Icon className="size-5" />
       {label}
       {!!badge && <span className="absolute top-1 right-[calc(50%-1.25rem)] rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 text-white">{badge}</span>}
@@ -196,22 +199,34 @@ function Tab({ to, icon: Icon, label, active, badge }: { to: string; icon: typeo
 function MobileTabBar({ pending }: { pending: number }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const more = moreRoutes.some((r) => path === r || path.startsWith(r + "/"));
+  const [open, setOpen] = useState(false);
   return (
-    <nav aria-label="Main" className="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-30 grid grid-cols-4 gap-1 rounded-2xl border border-zinc-200 bg-white/95 p-1 shadow-lg backdrop-blur md:hidden">
+    <nav aria-label="Main" className="fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-30 grid grid-cols-4 gap-1 rounded-2xl border border-border bg-background/95 p-1 shadow-lg backdrop-blur md:hidden">
       <Tab to="/" icon={CheckSquare} label="Tasks" active={path === "/" || path.startsWith("/tasks/")} />
       <Tab to="/ready" icon={Zap} label="Ready" active={path === "/ready"} />
       <Tab to="/agents" icon={Bot} label="Agents" active={path === "/agents"} badge={pending} />
-      <Tab to="/more" icon={MoreHorizontal} label="More" active={more} />
+      <Drawer open={open} onOpenChange={setOpen}>
+        <button type="button" onClick={() => setOpen(true)} className={tabClass(more || open)}>
+          <MoreHorizontal className="size-5" />
+          More
+        </button>
+        <DrawerContent className="px-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+          <DrawerTitle className="sr-only">More</DrawerTitle>
+          <div className="max-h-[75dvh] overflow-y-auto pt-4">
+            <MoreContent onNavigate={() => setOpen(false)} />
+          </div>
+        </DrawerContent>
+      </Drawer>
     </nav>
   );
 }
 
-function MoreRow({ to, icon: Icon, children }: { to: string; icon: typeof Inbox; children: React.ReactNode }) {
+function MoreRow({ to, icon: Icon, children, onNavigate }: { to: string; icon: typeof Inbox; children: React.ReactNode; onNavigate?: () => void }) {
   return (
-    <Link to={to} className="flex min-h-12 items-center gap-3 border-b border-zinc-100 px-4 text-[15px] last:border-0 active:bg-zinc-50">
-      <Icon className="size-5 text-zinc-500" />
+    <Link to={to} onClick={onNavigate} className="flex min-h-12 items-center gap-3 border-b border-border px-4 text-[15px] last:border-0 active:bg-muted">
+      <Icon className="size-5 text-muted-foreground" />
       <span className="flex-1">{children}</span>
-      <ChevronRight className="size-4 text-zinc-300" />
+      <ChevronRight className="size-4 text-muted-foreground/50" />
     </Link>
   );
 }
@@ -225,9 +240,9 @@ const themes: { t: Theme; icon: typeof Sun; label: string }[] = [
 function ThemeToggle() {
   const theme = useTheme();
   return (
-    <div role="radiogroup" aria-label="Theme" className="inline-flex rounded-full bg-zinc-100 p-0.5">
+    <div role="radiogroup" aria-label="Theme" className="inline-flex rounded-full bg-accent p-0.5">
       {themes.map(({ t, icon: Icon, label }) => (
-        <button key={t} role="radio" aria-checked={theme === t} aria-label={label} title={label} onClick={() => setTheme(t)} className={cn("flex size-8 items-center justify-center rounded-full text-zinc-500 transition-colors md:size-7", theme === t && "bg-white text-zinc-900 shadow-sm")}>
+        <button key={t} role="radio" aria-checked={theme === t} aria-label={label} title={label} onClick={() => setTheme(t)} className={cn("flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors md:size-7", theme === t && "bg-card text-foreground shadow-sm")}>
           <Icon className="size-4" />
         </button>
       ))}
@@ -236,42 +251,51 @@ function ThemeToggle() {
 }
 
 function MorePage() {
+  return (
+    <>
+      <PageHeader title="More" />
+      <MoreContent />
+    </>
+  );
+}
+
+// MoreContent is the overflow menu: the /more page on direct visits, and the tab bar's drawer.
+function MoreContent({ onNavigate }: { onNavigate?: () => void }) {
   const me = useMe();
   const { projects } = useLayoutData();
   const logout = useLogout();
   return (
     <>
-      <PageHeader title="More" />
-      <div className="mb-6 overflow-hidden rounded-xl border border-zinc-200 bg-white">
-        <MoreRow to="/team" icon={Users}>Team</MoreRow>
-        <MoreRow to="/projects" icon={FolderKanban}>Projects</MoreRow>
-        <MoreRow to="/activity" icon={Activity}>Activity</MoreRow>
-        <MoreRow to="/trash" icon={Trash2}>Trash</MoreRow>
-        {me.data?.member?.role === "admin" && <MoreRow to="/admin" icon={Settings}>Admin</MoreRow>}
+      <div className="mb-6 overflow-hidden rounded-xl border border-border bg-card">
+        <MoreRow to="/team" icon={Users} onNavigate={onNavigate}>Team</MoreRow>
+        <MoreRow to="/projects" icon={FolderKanban} onNavigate={onNavigate}>Projects</MoreRow>
+        <MoreRow to="/activity" icon={Activity} onNavigate={onNavigate}>Activity</MoreRow>
+        <MoreRow to="/trash" icon={Trash2} onNavigate={onNavigate}>Trash</MoreRow>
+        {me.data?.member?.role === "admin" && <MoreRow to="/admin" icon={Settings} onNavigate={onNavigate}>Admin</MoreRow>}
       </div>
       {projects.length > 0 && (
         <>
-          <h2 className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-zinc-400">Projects</h2>
-          <div className="mb-6 overflow-hidden rounded-xl border border-zinc-200 bg-white">
+          <h2 className="mb-2 px-1 text-[13px] font-medium text-muted-foreground">Projects</h2>
+          <div className="mb-6 overflow-hidden rounded-xl border border-border bg-card">
             {projects.map((p) => (
-              <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex min-h-12 items-center justify-between border-b border-zinc-100 px-4 text-[15px] last:border-0 active:bg-zinc-50">
+              <Link key={p.id} to="/projects/$id" params={{ id: p.id }} onClick={onNavigate} className="flex min-h-12 items-center justify-between border-b border-border px-4 text-[15px] last:border-0 active:bg-muted">
                 <span className="truncate">{projectName(p)}</span>
-                <span className="text-sm text-zinc-400">{p.open_tasks}</span>
+                <span className="text-sm text-muted-foreground/70">{p.open_tasks}</span>
               </Link>
             ))}
           </div>
         </>
       )}
-      <div className="mb-6 flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-3">
+      <div className="mb-6 flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
         <span className="text-[15px]">Appearance</span>
         <ThemeToggle />
       </div>
-      <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-3">
+      <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
         <div className="min-w-0">
           <div className="truncate font-medium">{me.data?.member?.name}</div>
-          <div className="truncate text-sm text-zinc-500">{me.data?.member?.email}</div>
+          <div className="truncate text-sm text-muted-foreground">{me.data?.member?.email}</div>
         </div>
-        <button onClick={logout} className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100"><LogOut className="size-4" />Sign out</button>
+        <button onClick={logout} className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-foreground/70 hover:bg-accent"><LogOut className="size-4" />Sign out</button>
       </div>
     </>
   );

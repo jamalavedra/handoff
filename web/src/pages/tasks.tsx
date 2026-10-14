@@ -4,7 +4,10 @@ import { Link, useParams } from "@tanstack/react-router";
 import { Flag, Lock, Plus, RotateCcw } from "lucide-react";
 import { ago, api, cn, projectName, type Event, type Project, type Task } from "../lib";
 import { EmojiPicker } from "../components/emoji";
-import { Avatar, Button, Card, DuePill, Empty, ErrorText, Input, PageHeader, Select, TaskCheck, Who } from "../components/ui";
+import { Avatar, Card, DuePill, Empty, ErrorText, PageHeader, TaskCheck, Who } from "../components/app";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { useQuickAdd } from "../components/quickadd";
 import { groupByDue } from "../quickadd";
 import { useMe } from "../main";
@@ -29,16 +32,16 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   const selected = usePanelTask() === t.id;
   return (
     <div>
-    <div className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-zinc-200/70 bg-white px-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:border-zinc-300 sm:min-h-12", selected && "border-accent ring-1 ring-accent hover:border-accent")}>
+    <div className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:min-h-11 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted", selected && "border-ring ring-1 ring-ring md:bg-accent md:ring-0 md:hover:bg-accent")}>
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate()} />
       <TaskLink id={t.id} className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch py-2">
-        {t.unseen && !closed && !selected && <span role="img" aria-label="Changed by someone else" title="Changed by someone else since you last opened it" className="size-2 shrink-0 rounded-full bg-accent" />}
-        <span className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-zinc-400 line-through")}>{t.title}</span>
+        {t.unseen && !closed && !selected && <span role="img" aria-label="Changed by someone else" title="Changed by someone else since you last opened it" className="size-2 shrink-0 rounded-full bg-unseen" />}
+        <span className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-muted-foreground/70 line-through")}>{t.title}</span>
         {t.priority < 2 && !closed && <Flag aria-label={t.priority === 0 ? "Urgent" : "High priority"} className={cn("size-3.5 shrink-0", t.priority === 0 ? "fill-red-500 text-red-500" : "text-orange-500")} />}
       </TaskLink>
       <div className="flex shrink-0 items-center gap-1.5">
         {t.claimed_by && !closed && (
-          <span title={`${t.claimed_by.name} is working on it`} className="flex items-center gap-1.5 rounded-full bg-zinc-100 py-0.5 pr-1 pl-2 text-xs font-medium text-zinc-700 sm:pr-2">
+          <span title={`${t.claimed_by.name} is working on it`} className="flex items-center gap-1.5 rounded-full bg-accent py-0.5 pr-1 pl-2 text-xs font-medium text-foreground/80 sm:pr-2">
             <span className="relative flex size-2"><span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", t.claimed_by.kind === "agent" ? "bg-violet-400" : "bg-amber-400")} /><span className={cn("relative inline-flex size-2 rounded-full", t.claimed_by.kind === "agent" ? "bg-violet-500" : "bg-amber-500")} /></span>
             <span className="hidden max-w-32 truncate sm:inline">{t.claimed_by.name}</span>
             <Avatar m={t.claimed_by} className="size-5 sm:hidden" />
@@ -58,14 +61,14 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
 export function TaskList({ tasks, empty, action }: { tasks?: Task[]; empty: string; action?: (t: Task) => React.ReactNode }) {
   if (!tasks) return <Card><Empty>Loading…</Empty></Card>;
   if (tasks.length === 0) return <Card><Empty>{empty}</Empty></Card>;
-  return <div className="flex flex-col gap-2">{tasks.map((t) => <TaskRow key={t.id} t={t} action={action?.(t)} />)}</div>;
+  return <div className="flex flex-col gap-2 md:gap-0.5">{tasks.map((t) => <TaskRow key={t.id} t={t} action={action?.(t)} />)}</div>;
 }
 
 export function NewTask({ project }: { project?: string }) {
   const quick = useQuickAdd();
   return (
-    <Button className="hidden md:inline-flex" onClick={() => quick.open(project)}>
-      <Plus className="size-4" />New task<kbd className="ml-1 rounded border border-white/30 px-1 font-sans text-[10px] text-white/70">N</kbd>
+    <Button variant="secondary" size="sm" className="hidden text-[13px] md:inline-flex" onClick={() => quick.open(project)}>
+      <Plus className="size-4" />New task<kbd className="ml-0.5 rounded border border-border px-1 font-sans text-[10px] text-muted-foreground">N</kbd>
     </Button>
   );
 }
@@ -106,8 +109,8 @@ export function MyTasksPage() {
       ) : (
         groupByDue(shown).map((s) => (
           <section key={s.key} className="mb-6" aria-label={s.title}>
-            <h2 className={cn("mb-2 flex items-baseline gap-2 px-1 text-xs font-semibold uppercase tracking-wide", s.key === "overdue" ? "text-red-600" : "text-zinc-500")}>
-              {s.title}<span className="font-normal text-zinc-400">{s.tasks.length}</span>
+            <h2 className={cn("mb-2 flex items-baseline gap-2 px-1 text-[13px] font-medium", s.key === "overdue" ? "text-red-600" : "text-muted-foreground")}>
+              {s.title}<span className="text-foreground/35 tabular-nums">{s.tasks.length}</span>
             </h2>
             <TaskList tasks={s.tasks} empty="" />
           </section>
@@ -115,7 +118,7 @@ export function MyTasksPage() {
       )}
       {view === "list" && !!recentShown?.length && (
         <section className="mt-8" aria-label="Recently done">
-          <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">Recently done</h2>
+          <h2 className="mb-2 px-1 text-[13px] font-medium text-muted-foreground">Recently done</h2>
           <TaskList tasks={recentShown.slice(0, 5)} empty="" />
         </section>
       )}
@@ -140,9 +143,9 @@ function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: (
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-colors md:h-8 md:px-3", active ? "border-accent bg-accent text-on-accent" : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300")}
+      className={cn("flex h-9 shrink-0 select-none items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[15px] font-medium transition-colors", active ? "bg-accent text-foreground" : "text-foreground/50 hover:text-foreground/80")}
     >
-      {name}<span className={cn("text-xs", active ? "text-white/70" : "text-zinc-400")}>{n}</span>
+      {name}<span className={cn("tabular-nums", active ? "text-foreground/40" : "text-foreground/35")}>{n}</span>
     </button>
   );
 }
@@ -152,7 +155,7 @@ export function ReadyPage() {
   return (
     <>
       <PageHeader title="Ready to start"><NewTask /></PageHeader>
-      <p className="mb-3 text-sm text-zinc-500">Open, unclaimed, and nothing they wait on is unfinished. This is what agents see when they call <code>list_ready</code>.</p>
+      <p className="mb-3 text-sm text-muted-foreground">Open, unclaimed, and nothing they wait on is unfinished. This is what agents see when they call <code>list_ready</code>.</p>
       <TaskList tasks={q.data?.tasks} empty="Nothing is ready right now." />
     </>
   );
@@ -170,22 +173,22 @@ export function ProjectsPage() {
         <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
           <EmojiPicker value={f.emoji} onChange={(emoji) => setF({ ...f, emoji })} label="New project emoji" />
           <Input required placeholder="New project name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-          <Select value={f.visibility} onChange={(e) => setF({ ...f, visibility: e.target.value })} aria-label="Visibility">
+          <NativeSelect value={f.visibility} onChange={(e) => setF({ ...f, visibility: e.target.value })} aria-label="Visibility">
             <option value="company">Whole company</option>
             <option value="private">Private</option>
-          </Select>
+          </NativeSelect>
           <Button type="submit">Create</Button>
         </form>
         <ErrorText error={m.error} />
       </Card>
       <Card>
         {q.data?.projects.map((p) => (
-          <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 last:border-0 hover:bg-zinc-50">
+          <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex items-center justify-between border-b border-border px-4 py-3 last:border-0 hover:bg-muted">
             <div>
-              <div className="flex items-center gap-1.5 text-sm font-medium">{p.visibility === "private" && <Lock className="size-3.5 text-zinc-400" />}{projectName(p)}</div>
-              {p.members && <div className="text-xs text-zinc-500">{p.members.join(", ")}</div>}
+              <div className="flex items-center gap-1.5 text-sm font-medium">{p.visibility === "private" && <Lock className="size-3.5 text-muted-foreground/70" />}{projectName(p)}</div>
+              {p.members && <div className="text-xs text-muted-foreground">{p.members.join(", ")}</div>}
             </div>
-            <span className="text-sm text-zinc-500">{p.open_tasks} open</span>
+            <span className="text-sm text-muted-foreground">{p.open_tasks} open</span>
           </Link>
         ))}
       </Card>
@@ -207,7 +210,7 @@ export function ProjectPage() {
     <>
       <PageHeader title={p ? projectName(p) : "Project"}>
         {p && <EmojiPicker value={p.emoji ?? ""} onChange={(emoji) => setEmoji.mutate(emoji)} label="Project emoji" />}
-        {view === "list" && <label className="flex items-center gap-1.5 text-sm text-zinc-600"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
+        {view === "list" && <label className="flex items-center gap-1.5 text-sm text-foreground/70"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
         <ViewToggle view={view} onChange={setView} />
         <NewTask project={id} />
       </PageHeader>
@@ -242,12 +245,12 @@ export function EventLine({ e, showTask = true }: { e: Event; showTask?: boolean
   const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).filter((k) => k !== "from_project_id").join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : "";
   return (
     <div className="flex gap-3 py-1.5 text-sm">
-      <span className="w-14 shrink-0 text-xs leading-5 text-zinc-400 sm:w-20">{ago(e.at)}</span>
+      <span className="w-14 shrink-0 text-xs leading-5 text-muted-foreground/70 sm:w-20">{ago(e.at)}</span>
       <div className="min-w-0">
-        <Who m={e.actor} by={e.on_behalf_of} /> <span className="text-zinc-500">{verbs[e.kind] ?? e.kind}</span>{" "}
+        <Who m={e.actor} by={e.on_behalf_of} /> <span className="text-muted-foreground">{verbs[e.kind] ?? e.kind}</span>{" "}
         {showTask && e.task_id && <TaskLink id={e.task_id} className="font-medium hover:underline">{e.task_title || e.task_id}</TaskLink>}
-        {detail && <span className="text-zinc-500"> — {detail}</span>}
-        <span className="ml-2 hidden text-xs text-zinc-400 sm:inline">via {e.via}</span>
+        {detail && <span className="text-muted-foreground"> — {detail}</span>}
+        <span className="ml-2 hidden text-xs text-muted-foreground/70 sm:inline">via {e.via}</span>
       </div>
     </div>
   );

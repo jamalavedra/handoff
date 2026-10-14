@@ -20,7 +20,7 @@ let current = read();
 function apply() {
   const dark = current === "dark" || (current === "system" && media.matches);
   document.documentElement.classList.toggle("dark", dark);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#09090b" : "#fafafa");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0a0a0a" : "#ffffff");
 }
 
 media.addEventListener("change", apply);

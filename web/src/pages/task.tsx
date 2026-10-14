@@ -5,7 +5,10 @@ import { ArrowUp, Bot, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folde
 import { TaskLink } from "../components/tasklink";
 import { ago, api, cn, type Comment, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
 import { dueLabel, mentionQuery, splitMentions } from "../quickadd";
-import { Avatar, Button, ErrorText, Input, TaskCheck, Textarea, Who } from "../components/ui";
+import { Avatar, ErrorText, TaskCheck, Who } from "../components/app";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
 
 type Here = { member: MemberRef; typing?: boolean };
@@ -14,17 +17,17 @@ type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] 
 const names = (h: Here[]) => (h.length <= 2 ? h.map((x) => x.member.name).join(" and ") : `${h[0].member.name} and ${h.length - 1} others`);
 
 const statusTone: Record<Task["status"], string> = {
-  open: "bg-zinc-100 text-zinc-700",
+  open: "bg-accent text-foreground/80",
   in_progress: "bg-amber-50 text-amber-800",
   blocked: "bg-red-50 text-red-700",
   done: "bg-green-50 text-green-700",
-  cancelled: "bg-zinc-100 text-zinc-500",
+  cancelled: "bg-accent text-muted-foreground",
 };
 const priorityText = ["Urgent", "High", "Normal", "Low", "Someday"];
 
 function Pill({ icon: Icon, children, className, label, select }: { icon?: typeof Flag; children: React.ReactNode; className?: string; label: string; select?: React.ReactNode }) {
   return (
-    <span className={cn("relative inline-flex h-8 max-w-full items-center gap-1.5 rounded-full bg-zinc-100 px-3 text-sm font-medium text-zinc-700 focus-within:ring-2 focus-within:ring-zinc-400 hover:bg-zinc-200/70", className)}>
+    <span className={cn("relative inline-flex h-8 max-w-full items-center gap-1.5 rounded-full bg-accent px-3 text-sm font-medium text-foreground/80 focus-within:ring-2 focus-within:ring-foreground/40 hover:bg-foreground/10", className)}>
       {Icon && <Icon className="size-3.5 shrink-0" />}
       <span className="truncate">{children}</span>
       {select && <ChevronDown className="size-3.5 shrink-0 opacity-50" />}
@@ -40,13 +43,13 @@ function Menu({ children }: { children: (close: () => void) => React.ReactNode }
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)} aria-label="More actions" aria-expanded={open} className="flex size-9 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100">
+      <button onClick={() => setOpen(!open)} aria-label="More actions" aria-expanded={open} className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent">
         <MoreHorizontal className="size-5" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div role="menu" className="absolute right-0 z-40 mt-1 w-48 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg">{children(() => setOpen(false))}</div>
+          <div role="menu" className="absolute right-0 z-40 mt-1 w-48 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg">{children(() => setOpen(false))}</div>
         </>
       )}
     </div>
@@ -55,7 +58,7 @@ function Menu({ children }: { children: (close: () => void) => React.ReactNode }
 
 function MenuItem({ icon: Icon, onClick, children, danger }: { icon: typeof Flag; onClick: () => void; children: React.ReactNode; danger?: boolean }) {
   return (
-    <button role="menuitem" onClick={onClick} className={cn("flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm hover:bg-zinc-50", danger ? "text-red-600" : "text-zinc-700")}>
+    <button role="menuitem" onClick={onClick} className={cn("flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm hover:bg-muted", danger ? "text-red-600" : "text-foreground/80")}>
       <Icon className="size-4" />{children}
     </button>
   );
@@ -83,7 +86,7 @@ function TitleEditor({ t, onSave, disabled }: { t: Task; onSave: (title: string)
         if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
         if (e.key === "Escape") { discard.current = true; setV(t.title); e.currentTarget.blur(); }
       }}
-      className={cn("-mx-1 min-w-0 flex-1 resize-none rounded-md bg-transparent px-1 text-2xl leading-tight font-semibold outline-none [field-sizing:content] focus:bg-white focus:ring-2 focus:ring-zinc-300", (t.status === "done" || t.status === "cancelled") && "text-zinc-400")}
+      className={cn("-mx-1 min-w-0 flex-1 resize-none rounded-md bg-transparent px-1 text-2xl leading-tight font-semibold outline-none [field-sizing:content] focus:bg-card focus:ring-2 focus:ring-input", (t.status === "done" || t.status === "cancelled") && "text-muted-foreground/70")}
     />
   );
 }
@@ -101,9 +104,9 @@ function BodyEditor({ t, onSave, disabled }: { t: Task; onSave: (body: string) =
         </div>
       </form>
     );
-  if (!t.body) return disabled ? null : <button className="text-sm text-zinc-400 hover:text-zinc-700" onClick={() => { setV(""); setEditing(true); }}>Add details…</button>;
+  if (!t.body) return disabled ? null : <button className="text-sm text-muted-foreground/70 hover:text-foreground/80" onClick={() => { setV(""); setEditing(true); }}>Add details…</button>;
   return (
-    <button disabled={disabled} className="block w-full rounded-lg text-left text-[15px] leading-relaxed whitespace-pre-wrap text-zinc-700 enabled:hover:bg-zinc-100/60 sm:text-sm" onClick={() => { setV(t.body ?? ""); setEditing(true); }}>
+    <button disabled={disabled} className="block w-full rounded-lg text-left text-[15px] leading-relaxed whitespace-pre-wrap text-foreground/80 enabled:hover:bg-muted sm:text-sm" onClick={() => { setV(t.body ?? ""); setEditing(true); }}>
       {t.body}
     </button>
   );
@@ -166,7 +169,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     if (!panel) return <ErrorText error={q.error} />;
     return (
       <div className="px-5 pt-4">
-        <button onClick={closePanel} className="-ml-2 mb-3 flex size-9 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100" aria-label="Close panel" title="Close (Esc)"><X className="size-5" /></button>
+        <button onClick={closePanel} className="-ml-2 mb-3 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)"><X className="size-5" /></button>
         <ErrorText error={q.error} />
       </div>
     );
@@ -201,33 +204,33 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-13rem-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)]")}>
       <div className="mb-3 flex items-center gap-1">
         {panel ? (
-          <button onClick={closePanel} className="-ml-2 flex size-9 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100" aria-label="Close panel" title="Close (Esc)">
+          <button onClick={closePanel} className="-ml-2 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)">
             <X className="size-5" />
           </button>
         ) : (
-          <button onClick={() => window.history.length > 1 ? window.history.back() : navigate({ to: "/" })} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-zinc-500 hover:bg-zinc-100" aria-label="Back">
+          <button onClick={() => window.history.length > 1 ? window.history.back() : navigate({ to: "/" })} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent" aria-label="Back">
             <ChevronLeft className="size-5" /><span className="hidden sm:inline">Back</span>
           </button>
         )}
-        <span className="min-w-0 flex-1 truncate text-sm text-zinc-400">
-          <Link to="/projects/$id" params={{ id: t.project_id }} className="hover:text-zinc-700 hover:underline">{t.project}</Link>
+        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground/70">
+          <Link to="/projects/$id" params={{ id: t.project_id }} className="hover:text-foreground/80 hover:underline">{t.project}</Link>
           {t.deleted_at && <span className="ml-2 font-medium text-red-600">In trash</span>}
         </span>
         {here.length > 0 && (
           <div role="group" aria-label={`${names(here)} ${here.length === 1 ? "is" : "are"} here`} title={`${names(here)} ${here.length === 1 ? "is" : "are"} looking at this`} className="mr-1 flex items-center -space-x-1.5">
-            {here.slice(0, 3).map((h) => <Avatar key={h.member.id} m={h.member} className="ring-2 ring-zinc-50" />)}
-            {here.length > 3 && <span className="inline-flex size-6 items-center justify-center rounded-full bg-zinc-100 text-[10px] font-semibold text-zinc-600 ring-2 ring-zinc-50">+{here.length - 3}</span>}
+            {here.slice(0, 3).map((h) => <Avatar key={h.member.id} m={h.member} className="ring-2 ring-background" />)}
+            {here.length > 3 && <span className="inline-flex size-6 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-foreground/70 ring-2 ring-background">+{here.length - 3}</span>}
           </div>
         )}
         {panel && (
-          <Link to="/tasks/$id" params={{ id }} className="flex size-9 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100" aria-label="Open full page" title="Open full page">
+          <Link to="/tasks/$id" params={{ id }} className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Open full page" title="Open full page">
             <Maximize2 className="size-4" />
           </Link>
         )}
         <Menu>
           {(done) => (
             <>
-              <MenuItem icon={Copy} onClick={() => { navigator.clipboard?.writeText(t.id); done(); }}>Copy ID <span className="ml-auto font-mono text-xs text-zinc-400">{t.id}</span></MenuItem>
+              <MenuItem icon={Copy} onClick={() => { navigator.clipboard?.writeText(t.id); done(); }}>Copy ID <span className="ml-auto font-mono text-xs text-muted-foreground/70">{t.id}</span></MenuItem>
               {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
             </>
@@ -249,7 +252,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <Pill label="Due" icon={CalendarDays} className={cn(due?.tone === "overdue" && !closed && "bg-red-50 text-red-700", due?.tone === "today" && !closed && "bg-blue-50 text-blue-700")} select={!locked && (
           <input ref={dueRef} type="date" className={overlay} value={t.due ?? ""} onClick={() => { try { dueRef.current?.showPicker(); } catch { /* not supported */ } }} onChange={(e) => update.mutate({ due: e.target.value })} aria-label="Due" />
         )}>{due ? due.text : "No date"}</Pill>
-        {t.due && !locked && <button onClick={() => update.mutate({ due: "" })} aria-label="Clear due date" className="-ml-1.5 flex size-8 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100"><X className="size-3.5" /></button>}
+        {t.due && !locked && <button onClick={() => update.mutate({ due: "" })} aria-label="Clear due date" className="-ml-1.5 flex size-8 items-center justify-center rounded-full text-muted-foreground/70 hover:bg-accent"><X className="size-3.5" /></button>}
         <Pill label="Assignee" icon={t.assignee?.kind === "agent" ? Bot : User} className={t.assignee?.kind === "agent" ? "bg-violet-50 text-violet-700" : ""} select={!locked && (
           <select className={overlay} value={t.assignee?.id ?? ""} onChange={(e) => update.mutate({ assignee: e.target.value })} aria-label="Assignee">
             <option value="">Unassigned</option>
@@ -276,8 +279,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </div>
       )}
       {!t.claimed_by && t.ready && !closed && !locked && (
-        <button onClick={() => claim.mutate()} className="mb-5 flex w-full items-center gap-2 rounded-xl border border-dashed border-zinc-300 px-3 py-2.5 text-left text-sm text-zinc-600 hover:border-zinc-400 hover:bg-white">
-          Ready to start — <span className="font-medium text-zinc-900">I'm on it</span>
+        <button onClick={() => claim.mutate()} className="mb-5 flex w-full items-center gap-2 rounded-xl border border-dashed border-input px-3 py-2.5 text-left text-sm text-foreground/70 hover:border-foreground/40 hover:bg-card">
+          Ready to start — <span className="font-medium text-foreground">I'm on it</span>
         </button>
       )}
 
@@ -295,7 +298,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
               </div>
             ))}
             {t.blocks.map((b) => (
-              <div key={b} className="flex items-center gap-2 rounded-lg bg-zinc-100 px-3 py-2 text-sm text-zinc-600">
+              <div key={b} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-foreground/70">
                 Blocks <TaskLink id={b} className="font-mono text-xs underline-offset-2 hover:underline">{b}</TaskLink>
               </div>
             ))}
@@ -314,10 +317,10 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           {comments.map((c) => (
             <div key={c.id} className="flex gap-2.5">
               <Avatar m={c.author} className="mt-0.5" />
-              <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md bg-white px-3 py-2 text-[15px] shadow-[0_0_0_1px_rgba(0,0,0,0.06)] sm:text-sm">
-                <div className="mb-0.5 text-xs text-zinc-500"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>
+              <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md bg-card px-3 py-2 text-[15px] shadow-[0_0_0_1px_rgba(0,0,0,0.06)] sm:text-sm">
+                <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>
                 <div className="whitespace-pre-wrap">
-                  {splitMentions(c.body, memberNames).map((part, i) => (part.mention ? <span key={i} className="rounded bg-accent-soft px-0.5 font-medium text-accent">{part.text}</span> : part.text))}
+                  {splitMentions(c.body, memberNames).map((part, i) => (part.mention ? <span key={i} className="rounded bg-accent px-0.5 font-medium text-foreground">{part.text}</span> : part.text))}
                 </div>
               </div>
             </div>
@@ -325,26 +328,26 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </section>
       )}
 
-      <details className="group mb-4 rounded-xl border border-zinc-200 bg-white">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm text-zinc-500 [&::-webkit-details-marker]:hidden">
-          <ChevronDown className="size-4 -rotate-90 transition-transform group-open:rotate-0" />Activity<span className="text-zinc-400">{activity.length}</span>
-          <span className="ml-auto truncate text-xs text-zinc-400">Created by {t.created_by?.name ?? "someone"}{t.on_behalf_of ? ` for ${t.on_behalf_of.name}` : ""} · {ago(t.created_at)}</span>
+      <details className="group mb-4 rounded-xl border border-border bg-card">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm text-muted-foreground [&::-webkit-details-marker]:hidden">
+          <ChevronDown className="size-4 -rotate-90 transition-transform group-open:rotate-0" />Activity<span className="text-muted-foreground/70">{activity.length}</span>
+          <span className="ml-auto truncate text-xs text-muted-foreground/70">Created by {t.created_by?.name ?? "someone"}{t.on_behalf_of ? ` for ${t.on_behalf_of.name}` : ""} · {ago(t.created_at)}</span>
         </summary>
-        <div className="border-t border-zinc-100 px-4 py-2">
+        <div className="border-t border-border px-4 py-2">
           {activity.map((e) => <EventLine key={e.id} e={e} showTask={false} />)}
         </div>
       </details>
 
       {!locked && (
         <form
-          className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-zinc-200 bg-white p-1.5 pl-3 shadow-lg md:bottom-4"
+          className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-lg md:bottom-4"
           onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(); }}
         >
           {suggestions.length > 0 && (
-            <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg">
+            <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg">
               {suggestions.map((m, i) => (
                 <li key={m.id} role="option" aria-selected={i === picked}>
-                  <button type="button" onMouseDown={(e) => { e.preventDefault(); insertMention(m.name); }} className={cn("flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-zinc-50", i === picked && "bg-zinc-100")}>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); insertMention(m.name); }} className={cn("flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted", i === picked && "bg-accent")}>
                     <Avatar m={{ id: m.id, name: m.name, kind: m.kind }} />
                     <span className="truncate">{m.name}</span>
                   </button>
@@ -352,7 +355,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
               ))}
             </ul>
           )}
-          {typers.length > 0 && <span aria-live="polite" className="absolute -top-6 left-3 animate-pulse text-xs text-zinc-500">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</span>}
+          {typers.length > 0 && <span aria-live="polite" className="absolute -top-6 left-3 animate-pulse text-xs text-muted-foreground">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</span>}
           <textarea
             rows={1}
             ref={commentRef}
@@ -368,9 +371,9 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
               }
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
             aria-label="Comment"
-            className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-zinc-400 sm:text-sm"
+            className="max-h-40 min-h-9 flex-1 resize-none bg-transparent py-1.5 text-base outline-none [field-sizing:content] placeholder:text-muted-foreground/70 sm:text-sm"
           />
-          <button disabled={!comment.trim() || addComment.isPending} aria-label="Send comment" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white disabled:bg-zinc-200 disabled:text-zinc-400">
+          <button disabled={!comment.trim() || addComment.isPending} aria-label="Send comment" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:bg-foreground/10 disabled:text-muted-foreground/70">
             <ArrowUp className="size-4" />
           </button>
         </form>
