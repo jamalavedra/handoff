@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { undoable } from "../components/feedback";
 import { api, cn, type Member, type Task } from "../lib";
 import { Avatar, Card, Empty, ErrorText, PageHeader } from "../components/app";
 import { TaskRow, useInvalidate } from "./tasks";
@@ -21,12 +22,18 @@ export function TeamPage() {
   const tasks = useQuery({ queryKey: ["tasks", "team"], queryFn: allOpenTasks });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const invalidate = useInvalidate();
+  const qc = useQueryClient();
   const [over, setOver] = useState<string | null>(null);
   const move = useMutation({ mutationFn: async (v: { t: Task; to: string }) => {
       // A handoff ends the previous worker's claim so the new assignee can start.
       if (v.t.claimed_by && v.t.claimed_by.id !== v.to) await api.tool("release_task", { id: v.t.id });
       return api.tool("update_task", { id: v.t.id, assignee: v.to });
-    }, onSettled: invalidate });
+    },
+    onSuccess: (_r, v) => {
+      const to = members.data?.members.find((m) => m.id === v.to)?.name ?? "Unassigned";
+      undoable(qc, `Handed “${v.t.title}” to ${to}`, () => api.tool("update_task", { id: v.t.id, assignee: v.t.assignee?.id ?? "" }));
+    },
+    onSettled: invalidate });
   const open = tasks.data?.filter((t) => t.status !== "done" && t.status !== "cancelled");
   if (!open || !members.data) {
     return (

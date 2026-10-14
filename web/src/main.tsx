@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bell, Bot, CheckSquare, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
+import { Activity, Bell, Bot, CheckSquare, ChevronDown, ChevronRight, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
 import "./index.css";
@@ -18,6 +18,9 @@ import { AdminPage } from "./pages/admin";
 import { QuickAddProvider, useQuickAdd } from "./components/quickadd";
 import { PageHeader } from "./components/app";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
+import { Toaster } from "@/components/ui/sonner";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useNotificationToasts } from "./components/feedback";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
 
@@ -41,10 +44,54 @@ function Shell() {
 
 function NavLink({ to, icon: Icon, children }: { to: string; icon: typeof Inbox; children: React.ReactNode }) {
   return (
-    <Link to={to} className="group flex min-h-8 items-center gap-2 rounded-[10px] px-2 py-1 text-[14px] font-medium text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]" activeOptions={{ exact: to === "/" }}>
+    <Link to={to} className="group flex min-h-8 items-center gap-2 rounded-[10px] px-2 py-1 text-[14px] font-medium text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]" activeOptions={{ exact: to === "/" || to === "/projects" }}>
       <Icon className="size-4 text-foreground/50 transition-colors group-hover:text-foreground/80 group-data-[status=active]:text-foreground" />
       {children}
     </Link>
+  );
+}
+
+const projectsOpenKey = "handoff-sidebar-projects";
+
+function readProjectsOpen() {
+  try {
+    return localStorage.getItem(projectsOpenKey) !== "closed";
+  } catch {
+    return true;
+  }
+}
+
+// ProjectsNav is the sidebar's Projects entry: the label opens the Projects page, the chevron folds the list.
+function ProjectsNav({ projects }: { projects: Project[] }) {
+  const [open, setOpen] = useState(readProjectsOpen);
+  const toggle = (o: boolean) => {
+    setOpen(o);
+    try {
+      localStorage.setItem(projectsOpenKey, o ? "open" : "closed");
+    } catch {
+      // private mode: remember for this tab only
+    }
+  };
+  return (
+    <Collapsible open={open} onOpenChange={toggle}>
+      <div className="relative">
+        <NavLink to="/projects" icon={FolderKanban}><span className="flex-1">Projects</span></NavLink>
+        <CollapsibleTrigger
+          aria-label={open ? "Hide projects" : "Show projects"}
+          className="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-foreground"
+        >
+          <ChevronDown className={cn("size-3.5 transition-transform", !open && "-rotate-90")} />
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent className="mt-0.5 ml-[1.125rem] flex flex-col gap-0.5 border-l border-sidebar-border pl-2">
+        {projects.map((p) => (
+          <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex min-h-7 items-center justify-between gap-2 rounded-[10px] px-2 py-1 text-[13px] text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
+            <span className="truncate">{projectName(p)}</span>
+            <span className="text-xs text-foreground/40 tabular-nums">{p.open_tasks}</span>
+          </Link>
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -70,6 +117,7 @@ function Badge({ n }: { n: number }) {
 
 function Layout({ me }: { me: Me }) {
   useLive(true);
+  useNotificationToasts();
   const { projects, pending, unread } = useLayoutData();
   const logout = useLogout();
   return (
@@ -80,7 +128,7 @@ function Layout({ me }: { me: Me }) {
             <div className="truncate font-display text-[17px] font-semibold tracking-tight">{me.org?.name}</div>
             <div className="text-xs text-muted-foreground">Handoff</div>
           </div>
-          <nav className="flex flex-col gap-1">
+          <nav className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto px-1 pb-2">
             <NavLink to="/" icon={CheckSquare}>My tasks</NavLink>
             <NavLink to="/notifications" icon={Bell}>
               <span className="flex-1">Notifications</span>
@@ -88,7 +136,7 @@ function Layout({ me }: { me: Me }) {
             </NavLink>
             <NavLink to="/ready" icon={Zap}>Ready</NavLink>
             <NavLink to="/team" icon={Users}>Team</NavLink>
-            <NavLink to="/projects" icon={FolderKanban}>Projects</NavLink>
+            <ProjectsNav projects={projects} />
             <NavLink to="/activity" icon={Activity}>Activity</NavLink>
             <NavLink to="/agents" icon={Bot}>
               <span className="flex-1">Agents</span>
@@ -97,15 +145,6 @@ function Layout({ me }: { me: Me }) {
             <NavLink to="/trash" icon={Trash2}>Trash</NavLink>
             {me.member?.role === "admin" && <NavLink to="/admin" icon={Settings}>Admin</NavLink>}
           </nav>
-          <div className="mt-6 px-2 text-[13px] font-medium text-muted-foreground">Projects</div>
-          <div className="mt-1 flex flex-col gap-0.5 overflow-y-auto">
-            {projects.map((p) => (
-              <Link key={p.id} to="/projects/$id" params={{ id: p.id }} className="flex min-h-8 items-center justify-between rounded-[10px] px-2 py-1 text-[14px] text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
-                <span className="truncate">{projectName(p)}</span>
-                <span className="text-xs text-foreground/40 tabular-nums">{p.open_tasks}</span>
-              </Link>
-            ))}
-          </div>
           <div className="mt-auto px-2 pb-3"><ThemeToggle /></div>
           <div className="flex items-center justify-between border-t border-border px-2 pt-3 text-sm">
             <div className="min-w-0">
@@ -127,6 +166,7 @@ function Layout({ me }: { me: Me }) {
         </div>
         <TaskPanel />
         <MobileTabBar pending={pending} />
+        <Toaster />
       </div>
     </QuickAddProvider>
   );
