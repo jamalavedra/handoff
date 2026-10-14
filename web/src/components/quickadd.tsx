@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { typing } from "./shortcuts";
+import { inJump, typing } from "./shortcuts";
 
 type Ctx = { open: (project?: string) => void };
 const QuickAddContext = createContext<Ctx>({ open: () => {} });
@@ -26,6 +26,7 @@ export function QuickAddProvider({ children }: { children: React.ReactNode }) {
   const ctx = useMemo<Ctx>(() => ({ open: (project) => setState({ project }) }), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || inJump()) return;
       if ((e.key === "n" || e.key === "c") && !e.metaKey && !e.ctrlKey && !e.altKey && !typing(e.target)) {
         e.preventDefault();
         setState((s) => s ?? { project: currentProject });

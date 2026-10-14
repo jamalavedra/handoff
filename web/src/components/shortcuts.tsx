@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
@@ -8,6 +8,11 @@ export function typing(t: EventTarget | null) {
 }
 
 const jumps: Record<string, string> = { t: "/", n: "/notifications", r: "/ready", p: "/projects", a: "/agents" };
+
+// When G was last pressed. Other single-key handlers (N for new task) stand down during a jump,
+// whichever listener happens to run first.
+let gAt = 0;
+export const inJump = () => Date.now() - gAt < 1000;
 
 // Rows opt in with data-task-row; the focused one carries data-kbd-focus.
 function rows() {
@@ -24,13 +29,12 @@ function focusRow(next: HTMLElement | undefined) {
 // useShortcuts wires list navigation (j/k, Enter, x), "g then a letter" jumps, and ? for help.
 export function useShortcuts(onHelp: () => void) {
   const navigate = useNavigate();
-  const pendingG = useRef(0);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || typing(e.target)) return;
       if (document.querySelector("[role=dialog], [role=menu]")) return;
-      if (Date.now() - pendingG.current < 1000 && jumps[e.key]) {
-        pendingG.current = 0;
+      if (inJump() && jumps[e.key]) {
+        gAt = 0;
         e.preventDefault();
         return void navigate({ to: jumps[e.key] });
       }
@@ -38,7 +42,7 @@ export function useShortcuts(onHelp: () => void) {
       const current = list.findIndex((el) => el.hasAttribute("data-kbd-focus"));
       switch (e.key) {
         case "g":
-          pendingG.current = Date.now();
+          gAt = Date.now();
           return;
         case "?":
           e.preventDefault();

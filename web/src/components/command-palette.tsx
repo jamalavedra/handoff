@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
 import { api, projectName, type Me, type Project, type Task } from "../lib";
 import { setTheme } from "../theme";
@@ -45,6 +45,8 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
   const navigate = useNavigate();
   const quick = useQuickAdd();
   const wide = useWide();
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const currentProject = path.match(/^\/projects\/([^/]+)/)?.[1];
   const q = query.trim().toLowerCase();
   const [debounced, setDebounced] = useState(q);
   useEffect(() => {
@@ -61,7 +63,7 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
   const go = (fn: () => void) => () => { close(); fn(); };
   const to = (path: string) => go(() => navigate({ to: path }));
   const actions: Item[] = [
-    { id: "new", label: "New task", icon: Plus, keys: "N", run: go(() => quick.open()) },
+    { id: "new", label: "New task", icon: Plus, keys: "N", run: go(() => quick.open(currentProject)) },
     { id: "light", label: "Theme: light", icon: Sun, run: go(() => setTheme("light")) },
     { id: "dark", label: "Theme: dark", icon: Moon, run: go(() => setTheme("dark")) },
     { id: "system", label: "Theme: match device", icon: Monitor, run: go(() => setTheme("system")) },
@@ -83,7 +85,8 @@ function Palette({ me, query, setQuery, close, onShortcuts }: { me: Me; query: s
   const shownPages = pages.filter((p) => match(p.label));
   const shownProjects = (projects.data?.projects ?? []).filter((p) => match(p.name)).slice(0, q ? 6 : 4);
   const found = debounced.length > 1 ? tasks.data?.tasks ?? [] : [];
-  const openTask = (id: string) => go(() => (wide ? navigate({ to: ".", search: (p) => ({ ...p, task: id }) }) : navigate({ to: "/tasks/$id", params: { id } })));
+  // Same rule as TaskLink: the side panel on wide list pages, the full page otherwise (including from a task page).
+  const openTask = (id: string) => go(() => (wide && !path.startsWith("/tasks/") ? navigate({ to: ".", search: (p) => ({ ...p, task: id }) }) : navigate({ to: "/tasks/$id", params: { id } })));
   return (
     <>
       <CommandInput placeholder="Search tasks, pages and actions…" value={query} onValueChange={setQuery} />
