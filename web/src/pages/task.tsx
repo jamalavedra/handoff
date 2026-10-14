@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Sparkles, Trash2, User, X, XCircle } from "lucide-react";
+import { ArrowUp, Bot, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { Markdown } from "../components/markdown";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -13,7 +13,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { EventLine, useInvalidate } from "./tasks";
 import { completedText, markLocal, undoable, undoClose } from "../components/feedback";
 import { toast } from "sonner";
-import { useAssistant } from "../components/assistant";
 
 type Here = { member: MemberRef; typing?: boolean };
 type Detail = { task: Task; comments: Comment[]; events: Event[]; here?: Here[] };
@@ -139,7 +138,6 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const invalidate = useInvalidate();
-  const assistant = useAssistant();
   const [comment, setComment] = useState("");
   const [caret, setCaret] = useState(0);
   const [pick, setPick] = useState(0);
@@ -258,7 +256,6 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           {(done) => (
             <>
               <MenuItem icon={Copy} onClick={() => { navigator.clipboard?.writeText(t.id); done(); }}>Copy ID <span className="ml-auto font-mono text-xs text-muted-foreground/70">{t.id}</span></MenuItem>
-              <MenuItem icon={Sparkles} onClick={() => { assistant.setOpen(true); done(); }}>Ask the assistant</MenuItem>
               {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
             </>

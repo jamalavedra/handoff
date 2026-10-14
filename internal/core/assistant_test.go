@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -239,6 +240,82 @@ func TestAssistantOnlyAllowlistedTools(t *testing.T) {
 	if err != nil || len(res.Tasks) != 1 || res.Tasks[0].Title != "keep me" {
 		t.Fatalf("tasks after refused calls: %+v %v", res.Tasks, err)
 	}
+}
+
+func TestAssistantWritesWorkIntoTheTask(t *testing.T) {
+	var people, own string
+	srv, reqs := scriptedModel(t,
+		calls(
+			toolCall("c1", "update_task", map[string]any{"id": "PEOPLE", "body": "## Venues\n- Hall A: 120 seats"}),
+			toolCall("c2", "update_task", map[string]any{"id": "PEOPLE", "body": "gone", "body_mode": "replace", "confirm": true}),
+			toolCall("c3", "update_task", map[string]any{"id": "OWN", "body": "v1"}),
+			toolCall("c4", "update_task", map[string]any{"id": "OWN", "body": "v2", "body_mode": "replace", "confirm": true}),
+		),
+		say("Added the venue comparison to the task."),
+	)
+	e, admin, _ := assistantEnv(t, srv, "asstbody")
+	people = e.create(t, admin, core.NewTask{Title: "Pick a venue", Body: "Budget 5k"})[0].ID
+	own = e.create(t, admin, core.NewTask{Title: "Draft agenda"})[0].ID
+	// The fake can't know ids up front, so it uses placeholders the test swaps in.
+	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"PEOPLE": people, "OWN": own}, srv.Client().Transport}}
+
+	out, err := e.s.AssistantChat(e.ctx, admin, ask("compare venues"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(reqs()[0].Messages[0]["content"].(string), "The task is the artifact") {
+		t.Fatal("system prompt doesn't steer work into the task")
+	}
+	if len(out.Steps) != 4 || out.Steps[0].Summary != "Updated “Pick a venue” details" || out.Steps[1].Error == "" ||
+		out.Steps[2].Error != "" || out.Steps[3].Error != "" {
+		t.Fatalf("steps: %+v", out.Steps)
+	}
+	d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: people})
+	if d.Task.Body != "Budget 5k\n\n## Venues\n- Hall A: 120 seats" {
+		t.Fatalf("a person's details were not kept: %q", d.Task.Body)
+	}
+	d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: own})
+	if d.Task.Body != "v2" {
+		t.Fatalf("the assistant couldn't rewrite its own details: %q", d.Task.Body)
+	}
+
+	// Once a person adds to them, they're no longer the assistant's to replace.
+	if _, err := e.s.UpdateTask(e.ctx, admin, core.UpdateTaskIn{ID: own, Body: ptr("Joan's note")}); err != nil {
+		t.Fatal(err)
+	}
+	srv2, _ := scriptedModel(t, calls(toolCall("c1", "update_task", map[string]any{"id": "OWN", "body": "v3", "body_mode": "replace", "confirm": true})), say("ok"))
+	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"OWN": own}, srv2.Client().Transport}}
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err = e.s.AssistantChat(e.ctx, admin, ask("rewrite it")); err != nil || len(out.Steps) != 1 || out.Steps[0].Error == "" {
+		t.Fatalf("replaced details a person added to: %+v %v", out.Steps, err)
+	}
+	if d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: own}); d.Task.Body != "v2\n\nJoan's note" {
+		t.Fatalf("details: %q", d.Task.Body)
+	}
+}
+
+// rewrite swaps placeholders in requests to the fake model's responses.
+type rewrite struct {
+	m    map[string]string
+	next http.RoundTripper
+}
+
+func (r rewrite) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := r.next.RoundTrip(req)
+	if err != nil {
+		return resp, err
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	s := string(b)
+	for k, v := range r.m {
+		s = strings.ReplaceAll(s, k, v)
+	}
+	resp.Body = io.NopCloser(strings.NewReader(s))
+	resp.ContentLength = int64(len(s))
+	return resp, nil
 }
 
 func TestAssistantStopsLooping(t *testing.T) {
