@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import { Bot, CircleAlert, Flag, Lock, Plus, RotateCcw } from "lucide-react";
+import { Bot, CircleAlert, Flag, Lock, Plus, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
 import { ago, api, cn, projectName, type Event, type Project, type Task } from "../lib";
 import { EmojiPicker } from "../components/emoji";
 import { Avatar, Card, DuePill, Empty, ErrorText, PageHeader, TaskCheck, Who } from "../components/app";
@@ -13,7 +13,7 @@ import { groupByDue } from "../quickadd";
 import { useMe } from "../main";
 import { Board, useView, ViewToggle } from "./board";
 import { TaskLink, usePanelTask } from "../components/tasklink";
-import { patchTask, reopen, undoable, useChangeFlash, useTriageReveal } from "../components/feedback";
+import { completedText, patchTask, reopen, undoable, undoClose, useChangeFlash, useTriageReveal } from "../components/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function useInvalidate() {
@@ -29,10 +29,14 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   // The checkbox answers immediately; the server catches up, and Undo reopens.
   // `wasClosed` is the state at click time: the optimistic patch flips `closed` before onSuccess runs.
   const toggle = useMutation({
-    mutationFn: (wasClosed: boolean) => (wasClosed ? reopen(t.id) : api.tool("close_task", { id: t.id, status: "done" })),
+    mutationFn: (wasClosed: boolean) => (wasClosed ? reopen(t.id) : api.tool<{ next?: Task }>("close_task", { id: t.id, status: "done" })),
     onMutate: (wasClosed) => patchTask(qc, t.id, { status: wasClosed ? "open" : "done" }),
     onError: (_e, _v, rollback) => rollback?.(),
-    onSuccess: (_r, wasClosed) => { if (!wasClosed) undoable(qc, `Completed “${t.title}”`, () => reopen(t.id)); },
+    onSuccess: (r, wasClosed) => {
+      if (wasClosed) return;
+      const next = (r as { next?: Task }).next;
+      undoable(qc, completedText(`Completed “${t.title}”`, next), () => undoClose(t.id, next));
+    },
     onSettled: invalidate,
   });
   const flash = useChangeFlash(t.id, t.updated_at);
@@ -69,6 +73,7 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
         )}
         {waiting && <span title={`Waits on ${t.blocked_by.join(", ")}`} className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"><Lock className="size-3" /><span className="hidden sm:inline">Waiting</span></span>}
         {showAssignee && <Avatar m={t.assignee!} />}
+        {t.repeat && !closed && <RepeatIcon aria-label={`Repeats: ${t.repeat}`} className="size-3.5 shrink-0 text-muted-foreground" />}
         {t.due && <DuePill due={t.due} done={closed} />}
         {action}
       </div>
@@ -260,7 +265,7 @@ const verbs: Record<string, string> = {
   approval_requested: "asked to delete", approval_approved: "approved deleting", approval_rejected: "rejected deleting",
   agent_added: "added an agent", agent_revoked: "revoked an agent", agent_permissions_changed: "changed an agent's permissions",
   api_key_created: "created an API key", api_key_revoked: "revoked an API key", project_created: "created a project",
-  triaged: "triaged", triage_failed: "couldn't triage",
+  triaged: "triaged", triage_failed: "couldn't triage", repeat_ended: "ended the repeating series of",
   member_invited: "invited someone", member_changed: "changed a member", org_changed: "changed workspace settings", project_changed: "changed a project",
 };
 

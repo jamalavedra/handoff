@@ -1,9 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
-import { Bot, CalendarDays, Flag, Folder, User } from "lucide-react";
+import { Bot, CalendarDays, Flag, Folder, Repeat as RepeatIcon, User } from "lucide-react";
 import { api, cn, type Member, type Project } from "../lib";
-import { dueLabel, parseQuickAdd } from "../quickadd";
+import { dueLabel, parseQuickAdd, repeatLabel } from "../quickadd";
 import { ErrorText } from "./app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,7 +100,7 @@ function QuickAddForm({ project, draft, onDraft, onClose }: { project?: string; 
   const assignee = people.find((m) => m.id === final.assignee);
   const m = useMutation({
     mutationFn: () =>
-      api.tool("create_tasks", { tasks: [{ title: parsed.title, body: body || undefined, assignee: final.assignee || undefined, priority: o.priority !== undefined || parsed.priority !== undefined ? final.priority : undefined, due: final.due || undefined, project: final.project || undefined }] }),
+      api.tool("create_tasks", { tasks: [{ title: parsed.title, body: body || undefined, assignee: final.assignee || undefined, repeat: parsed.repeat, priority: o.priority !== undefined || parsed.priority !== undefined ? final.priority : undefined, due: final.due || undefined, project: final.project || undefined }] }),
     onSuccess: () => {
       qc.invalidateQueries();
       onClose();
@@ -123,6 +123,7 @@ function QuickAddForm({ project, draft, onDraft, onClose }: { project?: string; 
         <Chip icon={Folder}>{projectName}</Chip>
         {assignee && <Chip icon={assignee.kind === "agent" ? Bot : User} tone={assignee.kind === "agent" ? "bg-violet-50 text-violet-700" : ""}>{assignee.name}</Chip>}
         {final.due && <Chip icon={CalendarDays} tone={dueLabel(final.due).tone === "overdue" ? "bg-red-50 text-red-700" : ""}>{dueLabel(final.due).text}</Chip>}
+        {parsed.repeat && <Chip icon={RepeatIcon}>{repeatLabel[parsed.repeat]}</Chip>}
         {final.priority < 2 && <Chip icon={Flag} tone={final.priority === 0 ? "bg-red-50 text-red-700" : "bg-orange-50 text-orange-700"}>{final.priority === 0 ? "Urgent" : "High"}</Chip>}
       </div>
       <p className="mt-2 text-xs text-muted-foreground">Type @person, #project, a date like “friday” or “Oct 14”, and !0 or !1 for urgent.</p>
