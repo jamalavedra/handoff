@@ -10,10 +10,17 @@ export function transcript(results: ResultList): { final: string; interim: strin
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     if (!r.length) continue;
-    if (r.isFinal) final += r[0].transcript;
-    else interim += r[0].transcript;
+    if (r.isFinal) final = joinWords(final, r[0].transcript);
+    else interim = joinWords(interim, r[0].transcript);
   }
   return { final: final.replace(/\s+/g, " ").trim(), interim: interim.replace(/\s+/g, " ").trim() };
+}
+
+// joinWords glues two recognizer segments. Chrome usually leads later segments with a space, but not
+// every engine does, so add one only when neither side already has whitespace at the seam.
+export function joinWords(a: string, b: string): string {
+  if (!a || !b) return a + b;
+  return /\s$/.test(a) || /^\s/.test(b) ? a + b : a + " " + b;
 }
 
 // appendSpoken adds dictated words after what was already typed, with exactly one space between.

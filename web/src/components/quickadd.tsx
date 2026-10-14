@@ -113,7 +113,7 @@ function QuickAddForm({ project, draft, onDraft, onClose }: { project?: string; 
   return (
     <form
       className="pt-3 sm:pt-0"
-      onSubmit={(e) => { e.preventDefault(); if (parsed.title) m.mutate(); }}
+      onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (parsed.title) m.mutate(); }}
     >
       <div className="flex items-center gap-2">
         <input

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { appendSpoken, dictationError, level, speechLang, transcript } from "./dictation.ts";
+import { appendSpoken, dictationError, joinWords, level, speechLang, transcript } from "./dictation.ts";
 
 const result = (text: string, isFinal: boolean) => Object.assign([{ transcript: text }], { isFinal });
 
@@ -12,6 +12,19 @@ test("splits settled words from the live guess", () => {
   });
   assert.deepEqual(transcript([result("one", true), result(" two", true)]), { final: "one two", interim: "" });
   assert.deepEqual(transcript([Object.assign([], { isFinal: true })]), { final: "", interim: "" });
+});
+
+test("keeps word boundaries between adjacent segments", () => {
+  assert.deepEqual(transcript([result("call", true), result("Marta", true)]), { final: "call Marta", interim: "" });
+  assert.deepEqual(transcript([result("call ", true), result(" Marta", true)]), { final: "call Marta", interim: "" });
+  assert.deepEqual(transcript([result("call", true), result(" Marta", true), result("tomorrow ", true)]), { final: "call Marta tomorrow", interim: "" });
+  assert.deepEqual(transcript([result("send", false), result("contract", false)]), { final: "", interim: "send contract" });
+  assert.deepEqual(transcript([result("send ", false), result(" contract", false)]), { final: "", interim: "send contract" });
+  assert.deepEqual(transcript([result("ok", true), result("send", false), result(" it", false)]), { final: "ok", interim: "send it" });
+  assert.equal(joinWords("", "a"), "a");
+  assert.equal(joinWords("a", ""), "a");
+  assert.equal(joinWords("a", "b"), "a b");
+  assert.equal(joinWords("a ", "b"), "a b");
 });
 
 test("appends spoken words after typed text", () => {

@@ -182,6 +182,9 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     return () => { clearInterval(beat); watch({ leave: true }); };
   }, [id]);
   const dictation = useDictation((text) => { setComment(text); setCaret(text.length); typing(); });
+  // The view is reused when the panel or route switches tasks: drop the dictation and draft with the old one.
+  const { cancel: cancelDictation } = dictation;
+  useEffect(() => () => { cancelDictation(); setComment(""); setCaret(0); }, [id, cancelDictation]);
   const addComment = useMutation({ mutationFn: () => api.tool("comment", { id, body: comment }), onSuccess: () => { setComment(""); lastTyping.current = 0; watch(); invalidate(); } });
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: invalidate });
 
@@ -366,7 +369,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       {!locked && (
         <form
           className="sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 mt-auto flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-lg md:bottom-4"
-          onSubmit={(e) => { e.preventDefault(); if (comment.trim()) addComment.mutate(); }}
+          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim()) addComment.mutate(); }}
         >
           {suggestions.length > 0 && (
             <ul role="listbox" aria-label="Mention someone" className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-lg">
