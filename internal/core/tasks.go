@@ -1174,8 +1174,20 @@ func (c *call) addComment(taskID, body string) error {
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, taskID); err != nil {
 		return err
 	}
-	for _, m := range c.mentioned(body) {
+	mentioned := c.mentioned(body)
+	for _, m := range mentioned {
 		if err := c.notify(m, "mention", taskID, body); err != nil {
+			return err
+		}
+	}
+	// The task's chat is a conversation with the agent that owns it: a message there reaches the agent
+	// (its inbox and webhook) without an @mention. People are only notified when mentioned.
+	var assignee string
+	if err := c.tx.QueryRow(c.ctx, `SELECT coalesce(assignee_id::text, '') FROM tasks WHERE id = $1`, taskID).Scan(&assignee); err != nil {
+		return err
+	}
+	if a := c.members[assignee]; a != nil && a.IsAgent() && !slices.Contains(mentioned, a) {
+		if err := c.notify(a, "mention", taskID, body); err != nil {
 			return err
 		}
 	}
