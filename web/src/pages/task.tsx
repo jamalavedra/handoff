@@ -27,6 +27,9 @@ const statusTone: Record<Task["status"], string> = {
   cancelled: "bg-accent text-muted-foreground",
 };
 const priorityText = ["Urgent", "High", "Normal", "Low", "Someday"];
+// Every workspace starts with this project (core.DefaultProject); tasks land there unless filed elsewhere.
+const defaultProject = "Inbox";
+type Extra = "assignee" | "priority" | "repeat" | "project";
 
 function Pill({ icon: Icon, children, className, label, select }: { icon?: typeof Flag; children: React.ReactNode; className?: string; label: string; select?: React.ReactNode }) {
   return (
@@ -127,6 +130,19 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     return () => document.removeEventListener("visibilitychange", read);
   }, [id, loaded, commentCount, qc]);
   const dueRef = useRef<HTMLInputElement>(null);
+  // Assignee, priority, repeat and project show as pills only when set; the ⋯ menu reveals one and opens its picker.
+  const pickers = useRef<Partial<Record<Extra, HTMLSelectElement | null>>>({});
+  const [revealed, setRevealed] = useState<Extra[]>([]);
+  const [picking, setPicking] = useState<Extra | null>(null);
+  useEffect(() => setRevealed([]), [id]);
+  useEffect(() => {
+    if (!picking) return;
+    const el = pickers.current[picking];
+    setPicking(null);
+    if (!el) return;
+    el.focus();
+    try { el.showPicker(); } catch { /* not supported: focused, so arrows and Space still open it */ }
+  }, [picking]);
   const [activityOpen, setActivityOpen] = useState(false);
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
   // A patch can name its task: a body draft saved as the view switches tasks still belongs to the old one.
@@ -176,6 +192,14 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const activity = events.filter((e) => e.kind !== "commented");
   const here = q.data.here ?? [];
   const typers = here.filter((h) => h.typing);
+  const configured: Record<Extra, boolean> = {
+    assignee: !!t.assignee && t.assignee.id !== meId,
+    priority: t.priority !== 2,
+    repeat: !!t.repeat,
+    project: t.project !== defaultProject,
+  };
+  const shows = (k: Extra) => configured[k] || revealed.includes(k);
+  const pick = (k: Extra) => { setRevealed((r) => (r.includes(k) ? r : [...r, k])); setPicking(k); };
 
   return (
     <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:animate-none")}>
@@ -213,6 +237,16 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
               {panel && tabs && <MenuItem icon={AppWindow} onClick={() => { tabs.openInTab(taskHref(t.id)); done(); }}>Open in new tab</MenuItem>}
               <MenuItem icon={History} onClick={() => { setActivityOpen(true); done(); }}>Activity <span className="ml-auto text-xs text-muted-foreground/70 tabular-nums">{activity.length}</span></MenuItem>
               <MenuItem icon={Link2} onClick={() => { copyTaskLink(t.id); done(); }}>Copy link</MenuItem>
+              {!locked && (
+                <>
+                  <div role="separator" className="my-1 h-px bg-border" />
+                  <MenuItem icon={User} onClick={() => { done(); pick("assignee"); }}>Assign…</MenuItem>
+                  <MenuItem icon={Flag} onClick={() => { done(); pick("priority"); }}>Priority…</MenuItem>
+                  <MenuItem icon={RepeatIcon} onClick={() => { done(); pick("repeat"); }}>Repeat…</MenuItem>
+                  <MenuItem icon={Folder} onClick={() => { done(); pick("project"); }}>Move to project…</MenuItem>
+                  <div role="separator" className="my-1 h-px bg-border" />
+                </>
+              )}
               {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
             </>
@@ -231,28 +265,28 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           <input ref={dueRef} type="date" className={overlay} value={t.due ?? ""} onClick={() => { try { dueRef.current?.showPicker(); } catch { /* not supported */ } }} onChange={(e) => update.mutate({ due: e.target.value })} aria-label="Due" />
         )}>{due ? due.text : "No date"}</Pill>
         {t.due && !locked && <button onClick={() => update.mutate({ due: "" })} aria-label="Clear due date" className="-ml-1.5 flex size-7 items-center justify-center rounded-full text-muted-foreground/70 hover:bg-accent"><X className="size-3.5" /></button>}
-        <Pill label="Assignee" icon={t.assignee?.kind === "agent" ? Bot : User} className={t.assignee?.kind === "agent" ? "bg-violet-50 text-violet-700" : ""} select={!locked && (
-          <select className={overlay} value={t.assignee?.id ?? ""} onChange={(e) => update.mutate({ assignee: e.target.value })} aria-label="Assignee">
+        {shows("assignee") && <Pill label="Assignee" icon={t.assignee?.kind === "agent" ? Bot : User} className={t.assignee?.kind === "agent" ? "bg-violet-50 text-violet-700" : ""} select={!locked && (
+          <select ref={(el) => { pickers.current.assignee = el; }} className={overlay} value={t.assignee?.id ?? ""} onChange={(e) => update.mutate({ assignee: e.target.value })} aria-label="Assignee">
             <option value="">Unassigned</option>
             {people.map((m) => <option key={m.id} value={m.id}>{m.name}{m.kind === "agent" ? " (agent)" : ""}</option>)}
           </select>
-        )}>{t.assignee?.name ?? "Unassigned"}</Pill>
-        <Pill label="Priority" icon={Flag} className={cn(t.priority === 0 && "bg-red-50 text-red-700", t.priority === 1 && "bg-orange-50 text-orange-700")} select={!locked && (
-          <select className={overlay} value={t.priority} onChange={(e) => update.mutate({ priority: Number(e.target.value) })} aria-label="Priority">
+        )}>{t.assignee?.name ?? "Unassigned"}</Pill>}
+        {shows("priority") && <Pill label="Priority" icon={Flag} className={cn(t.priority === 0 && "bg-red-50 text-red-700", t.priority === 1 && "bg-orange-50 text-orange-700")} select={!locked && (
+          <select ref={(el) => { pickers.current.priority = el; }} className={overlay} value={t.priority} onChange={(e) => update.mutate({ priority: Number(e.target.value) })} aria-label="Priority">
             {priorityText.map((p, i) => <option key={i} value={i}>{p}</option>)}
           </select>
-        )}>{priorityText[t.priority]}</Pill>
-        <Pill label="Repeat" icon={RepeatIcon} select={!locked && (
-          <select className={overlay} value={t.repeat ?? ""} onChange={(e) => update.mutate({ repeat: e.target.value })} aria-label="Repeat">
+        )}>{priorityText[t.priority]}</Pill>}
+        {shows("repeat") && <Pill label="Repeat" icon={RepeatIcon} select={!locked && (
+          <select ref={(el) => { pickers.current.repeat = el; }} className={overlay} value={t.repeat ?? ""} onChange={(e) => update.mutate({ repeat: e.target.value })} aria-label="Repeat">
             <option value="">Doesn't repeat</option>
             {(Object.keys(repeatLabel) as (keyof typeof repeatLabel)[]).map((r) => <option key={r} value={r}>{repeatLabel[r]}</option>)}
           </select>
-        )}>{t.repeat ? repeatLabel[t.repeat] : "Doesn't repeat"}</Pill>
-        <Pill label="Project" icon={Folder} select={!locked && (
-          <select className={overlay} value={t.project_id} onChange={(e) => update.mutate({ project: e.target.value })} aria-label="Project">
+        )}>{t.repeat ? repeatLabel[t.repeat] : "Doesn't repeat"}</Pill>}
+        {shows("project") && <Pill label="Project" icon={Folder} select={!locked && (
+          <select ref={(el) => { pickers.current.project = el; }} className={overlay} value={t.project_id} onChange={(e) => update.mutate({ project: e.target.value })} aria-label="Project">
             {projects.data?.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-        )}>{t.project}</Pill>
+        )}>{t.project}</Pill>}
       </div>
 
       <div className="mb-4 flex items-start gap-3">
