@@ -123,11 +123,19 @@ func (s *Service) SetTriage(ctx context.Context, p *Principal, in SetTriageIn) (
 			if sealed, err = s.seal([]byte(cred)); err != nil {
 				return err
 			}
-		} else if err := c.tx.QueryRow(c.ctx, `SELECT credential FROM triage_settings`).Scan(&sealed); err != nil {
+		} else {
+			// A saved key is only kept for the endpoint it was given for; it never follows a new base URL.
+			var savedURL string
+			err := c.tx.QueryRow(c.ctx, `SELECT credential, base_url FROM triage_settings`).Scan(&sealed, &savedURL)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errf(ErrInvalid, "an API key or OAuth token is required")
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			if savedURL != base {
+				return errf(ErrInvalid, "enter the API key or OAuth token for %s", base)
+			}
 		}
 		_, err = c.tx.Exec(c.ctx, `INSERT INTO triage_settings (org_id, agent_id, base_url, model, credential, updated_by, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, now())
@@ -182,7 +190,7 @@ func (s *Service) TestTriage(ctx context.Context, p *Principal, in TestTriageIn)
 			return err
 		}
 		st = triageSettings{BaseURL: base, Model: strings.TrimSpace(in.Model)}
-		if st.Model == "" {
+		if st.Model == "" || len(st.Model) > 200 {
 			return errf(ErrInvalid, "model is required")
 		}
 		if cred := strings.TrimSpace(in.Credential); cred != "" {
@@ -190,11 +198,16 @@ func (s *Service) TestTriage(ctx context.Context, p *Principal, in TestTriageIn)
 			return nil
 		}
 		var sealed []byte
-		if err := c.tx.QueryRow(c.ctx, `SELECT credential FROM triage_settings`).Scan(&sealed); err != nil {
+		var savedURL string
+		if err := c.tx.QueryRow(c.ctx, `SELECT credential, base_url FROM triage_settings`).Scan(&sealed, &savedURL); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errf(ErrInvalid, "enter an API key or OAuth token")
 			}
 			return err
+		}
+		// The saved key only goes to the endpoint it was saved for.
+		if savedURL != base {
+			return errf(ErrInvalid, "enter the API key or OAuth token for %s", base)
 		}
 		st.Credential, err = s.unseal(sealed)
 		return err
@@ -209,6 +222,11 @@ func (s *Service) TestTriage(ctx context.Context, p *Principal, in TestTriageIn)
 	out := TestTriageOut{Seconds: fmt.Sprintf("%.1f", time.Since(start).Seconds())}
 	if err != nil {
 		out.Error = err.Error()
+		return out, nil
+	}
+	// It has to produce what triage needs, not just valid JSON.
+	if strings.TrimSpace(sugg.Title) == "" {
+		out.Error = "the model answered, but without a task title; try another model"
 		return out, nil
 	}
 	out.OK, out.Reply = true, sugg.Title

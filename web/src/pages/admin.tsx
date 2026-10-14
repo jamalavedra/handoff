@@ -97,17 +97,18 @@ function TriageSettings({ agents }: { agents: Member[] }) {
     if (!f.agent && agents.length === 1) setF((x) => ({ ...x, agent: agents[0].id }));
   }, [agents, f.agent]);
   const provider = providers.find((p) => p.url === f.base_url);
-  const pick = (name: string) => {
-    const p = providers.find((x) => x.name === name);
-    if (p) { setF({ ...f, base_url: p.url, model: p.model }); if (!p.model) setAdvanced(true); }
-    else { setF({ ...f, base_url: "" }); setAdvanced(true); }
-  };
+
   const makeAgent = useMutation({
     mutationFn: () => api.tool<{ id: string }>("create_agent", { name: "Triage" }),
     onSuccess: (m) => { setF((x) => ({ ...x, agent: m.id })); invalidate(); },
   });
   const test = useMutation({ mutationFn: () => api.tool<{ ok: boolean; reply?: string; error?: string; seconds: string }>("test_triage", { base_url: f.base_url, model: f.model, credential: f.credential }) });
-  const save = useMutation({ mutationFn: () => api.tool<Triage>("set_triage", f), onSuccess: () => { setF((x) => ({ ...x, credential: "" })); test.reset(); invalidate(); toast("Triage is on. Create a task to see it work."); } });
+  const pick = (name: string) => {
+    test.reset();
+    const p = providers.find((x) => x.name === name);
+    if (p) { setF({ ...f, base_url: p.url, model: p.model }); if (!p.model) setAdvanced(true); }
+    else { setF({ ...f, base_url: "" }); setAdvanced(true); }
+  };  const save = useMutation({ mutationFn: () => api.tool<Triage>("set_triage", f), onSuccess: () => { setF((x) => ({ ...x, credential: "" })); test.reset(); invalidate(); toast("Triage is on. Create a task to see it work."); } });
   const off = useMutation({ mutationFn: () => api.tool("disable_triage"), onSuccess: () => { invalidate(); toast("Triage is off"); } });
   const t = q.data;
   const canTest = !!f.base_url && !!f.model && (!!f.credential || !!t?.has_credential);
