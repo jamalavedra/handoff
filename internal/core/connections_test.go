@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -277,5 +278,46 @@ func TestLoopbackCallback(t *testing.T) {
 	prod, _ := url.Parse("https://handoff.example")
 	if _, ok := core.New(nil, &config.Config{BaseURL: prod}).LoopbackCallback("localhost", url.Values{"state": {"acme~abc"}}); ok {
 		t.Fatal("bounce outside local development")
+	}
+}
+
+func TestChatReplyLooksUpAndReacts(t *testing.T) {
+	search := fakeSearchServer(t)
+	model, _ := scriptedModel(t,
+		calls(toolCall("c1", "ext_web_search__web_search", map[string]any{"query": "pixel 9 ram"})),
+		say("12GB, per the store page."),
+	)
+	e, admin, bot := assistantEnv(t, model, "lookreact")
+	task := e.create(t, admin, core.NewTask{Title: "phone specs"})[0]
+	waitTriage(t, e, admin, task.ID)
+	// Connected after triage, so only the chat reply uses it.
+	if _, err := e.s.AddConnection(e.ctx, admin, core.AddConnectionIn{Name: "Web search", URL: search.URL, Auth: "bearer", Secret: "sk-mcp"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot how much ram?"}); err != nil {
+		t.Fatal(err)
+	}
+	var d core.TaskDetailOut
+	for range 200 {
+		d, _ = e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if n := len(d.Comments); n > 0 && d.Comments[n-1].Author.ID == bot.Member.ID && len(d.Comments[n-1].Lookups) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	n := len(d.Comments)
+	reply, asked := d.Comments[n-1], d.Comments[n-2]
+	if len(reply.Lookups) != 1 || reply.Lookups[0] != (core.Lookup{Source: "Web search", Tool: "web_search", Query: "pixel 9 ram"}) {
+		t.Fatalf("lookups on the reply: %+v", reply)
+	}
+	// The question it answered ends with its ✅, the 👀 gone.
+	var emojis []string
+	for _, r := range asked.Reactions {
+		if slices.Contains(r.By, "Acme Bot") {
+			emojis = append(emojis, r.Emoji)
+		}
+	}
+	if !slices.Equal(emojis, []string{"✅"}) {
+		t.Fatalf("agent reactions on the question: %+v", asked.Reactions)
 	}
 }

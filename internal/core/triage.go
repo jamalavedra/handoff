@@ -558,6 +558,8 @@ type triageSuggestion struct {
 	Plan      string   `json:"plan"`
 	Work      string   `json:"work"`
 	Questions []string `json:"questions"`
+
+	lookups []Lookup // what it looked up in connected services first
 }
 
 const triagePrompt = `You triage new tasks in a shared task list used by a team of people and AI agents, and you do the work yourself when you can.
@@ -786,7 +788,7 @@ func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageC
 			if qs := cleanQuestions(sugg.Questions); len(qs) > 0 {
 				note += "\n\nA few questions to make it better:\n- " + strings.Join(qs, "\n- ")
 			}
-			if err := c.addComment(r.ID, note); err != nil {
+			if err := c.addComment(r.ID, note, sugg.lookups...); err != nil {
 				return err
 			}
 		}
@@ -860,6 +862,7 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 	var sugg triageSuggestion
 	sessions := extSessions{}
 	defer sessions.close()
+	var looked []Lookup
 	msgs := []map[string]any{
 		{"role": "system", "content": triagePrompt + "\n\n" + triageResearchNote},
 		{"role": "user", "content": triageUserMessage(org, t, projects, members)},
@@ -880,7 +883,9 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 				msgs = append(msgs, map[string]any{"role": "assistant", "content": msg.Content})
 			}
 			msgs = append(msgs, map[string]any{"role": "user", "content": "Now reply with the JSON object only, using what you found."})
-			return s.completeJSON(ctx, st, cred, msgs)
+			sugg, err := s.completeJSON(ctx, st, cred, msgs)
+			sugg.lookups = looked
+			return sugg, err
 		}
 		calls := msg.ToolCalls
 		if len(calls) > 4 {
@@ -901,7 +906,11 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 				if strings.TrimSpace(tc.Function.Arguments) == "" {
 					args = json.RawMessage("{}")
 				}
-				if text, err := s.callExternal(ctx, sessions, ext[i], args); err != nil {
+				lk := extLookup(ext[i], args)
+				text, err := s.callExternal(ctx, sessions, ext[i], args)
+				lk.Failed = err != nil
+				looked = append(looked, lk)
+				if err != nil {
 					b, _ := json.Marshal(map[string]string{"error": clip(err.Error(), 200)})
 					out = string(b)
 				} else {

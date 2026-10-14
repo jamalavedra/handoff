@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -445,6 +446,15 @@ type CommentOut struct {
 	Body       string        `json:"body"`
 	CreatedAt  string        `json:"created_at"`
 	Reactions  []ReactionOut `json:"reactions"`
+	Lookups    []Lookup      `json:"lookups,omitempty"`
+}
+
+// Lookup is one call the agent made to a connected service while working on a message.
+type Lookup struct {
+	Source string `json:"source"`
+	Tool   string `json:"tool"`
+	Query  string `json:"query,omitempty"`
+	Failed bool   `json:"failed,omitempty"`
 }
 
 // ReactionOut is one emoji on a comment: how many reacted, whether the caller did, and who.
@@ -492,7 +502,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 		if out.Here, err = c.here(r.ID); err != nil {
 			return err
 		}
-		rows, err := c.tx.Query(c.ctx, `SELECT id, author_id::text, coalesce(on_behalf_of::text, ''), body, created_at
+		rows, err := c.tx.Query(c.ctx, `SELECT id, author_id::text, coalesce(on_behalf_of::text, ''), body, created_at, lookups
 			FROM comments WHERE task_id = $1 ORDER BY created_at`, r.ID)
 		if err != nil {
 			return err
@@ -501,7 +511,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 			var co CommentOut
 			var author, obo string
 			var at time.Time
-			if err := rows.Scan(&co.ID, &author, &obo, &co.Body, &at); err != nil {
+			if err := rows.Scan(&co.ID, &author, &obo, &co.Body, &at, &co.Lookups); err != nil {
 				rows.Close()
 				return err
 			}
@@ -1180,6 +1190,8 @@ func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (
 type CommentIn struct {
 	ID   string `json:"id"`
 	Body string `json:"body"`
+
+	lookups []Lookup // set by the agent's own replies
 }
 
 func (s *Service) Comment(ctx context.Context, p *Principal, in CommentIn) (TaskDetailOut, error) {
@@ -1191,7 +1203,7 @@ func (s *Service) Comment(ctx context.Context, p *Principal, in CommentIn) (Task
 		if err != nil {
 			return err
 		}
-		return c.addComment(r.ID, in.Body)
+		return c.addComment(r.ID, in.Body, in.lookups...)
 	})
 	if err != nil {
 		return TaskDetailOut{}, err
@@ -1199,14 +1211,18 @@ func (s *Service) Comment(ctx context.Context, p *Principal, in CommentIn) (Task
 	return s.GetTask(ctx, p, TaskIDIn{ID: in.ID})
 }
 
-func (c *call) addComment(taskID, body string) error {
+func (c *call) addComment(taskID, body string, lookups ...Lookup) error {
 	body = strings.TrimSpace(body)
 	if body == "" || len(body) > 20000 {
 		return errf(ErrInvalid, "comment must be 1-20000 characters")
 	}
 	var commentID string
-	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body) VALUES ($1, $2, $3, $4, $5)
-		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body).Scan(&commentID); err != nil {
+	var lk []byte
+	if len(lookups) > 0 {
+		lk, _ = json.Marshal(lookups)
+	}
+	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body, lookups) VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body, lk).Scan(&commentID); err != nil {
 		return err
 	}
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, taskID); err != nil {
