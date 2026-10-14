@@ -47,21 +47,27 @@ export function QuickAddProvider({ children }: { children: React.ReactNode }) {
 }
 
 type Overrides = { project?: string; assignee?: string; priority?: string; due?: string };
+type Draft = { text: string; body: string; details: boolean; o: Overrides };
+const emptyDraft: Draft = { text: "", body: "", details: false, o: {} };
 
 function Chip({ icon: Icon, children, tone }: { icon: typeof Flag; children: React.ReactNode; tone?: string }) {
   return <span className={cn("inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-foreground/80", tone)}><Icon className="size-3" />{children}</span>;
 }
 
 // QuickAddOverlay is a centred dialog on desktop and a bottom drawer on phones; both wrap the same form.
+// The draft lives here, above the Dialog/Drawer switch, so crossing the breakpoint keeps what was typed.
 function QuickAddOverlay({ state, onClose }: { state: { project?: string } | null; onClose: () => void }) {
   const isMobile = useIsMobile();
-  const onOpenChange = (open: boolean) => { if (!open) onClose(); };
+  const [draft, setDraft] = useState<Draft>(emptyDraft);
+  const close = () => { setDraft(emptyDraft); onClose(); };
+  const onOpenChange = (open: boolean) => { if (!open) close(); };
+  const form = state && <QuickAddForm project={state.project} draft={draft} onDraft={(d) => setDraft((cur) => ({ ...cur, ...d }))} onClose={close} />;
   if (isMobile) {
     return (
       <Drawer open={!!state} onOpenChange={onOpenChange}>
         <DrawerContent className="px-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           <DrawerTitle className="sr-only">New task</DrawerTitle>
-          {state && <QuickAddForm project={state.project} onClose={onClose} />}
+          <div className="min-h-0 overflow-y-auto">{form}</div>
         </DrawerContent>
       </Drawer>
     );
@@ -70,20 +76,21 @@ function QuickAddOverlay({ state, onClose }: { state: { project?: string } | nul
     <Dialog open={!!state} onOpenChange={onOpenChange}>
       <DialogContent showCloseButton={false} aria-describedby={undefined} className="top-24 translate-y-0 gap-0 rounded-2xl p-4 sm:max-w-lg">
         <DialogTitle className="sr-only">New task</DialogTitle>
-        {state && <QuickAddForm project={state.project} onClose={onClose} />}
+        {form}
       </DialogContent>
     </Dialog>
   );
 }
 
-function QuickAddForm({ project, onClose }: { project?: string; onClose: () => void }) {
+function QuickAddForm({ project, draft, onDraft, onClose }: { project?: string; draft: Draft; onDraft: (d: Partial<Draft>) => void; onClose: () => void }) {
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const qc = useQueryClient();
-  const [text, setText] = useState("");
-  const [body, setBody] = useState("");
-  const [details, setDetails] = useState(false);
-  const [o, setO] = useState<Overrides>({});
+  const { text, body, details, o } = draft;
+  const setText = (text: string) => onDraft({ text });
+  const setBody = (body: string) => onDraft({ body });
+  const setDetails = (details: boolean) => onDraft({ details });
+  const setO = (o: Overrides) => onDraft({ o });
   const people = members.data?.members.filter((m) => m.status === "active" || m.status === "invited") ?? [];
   const parsed = parseQuickAdd(text, { members: people, projects: projects.data?.projects ?? [] });
   const final = {
