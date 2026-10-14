@@ -341,8 +341,22 @@ func (s *Service) RunTriage(ctx context.Context) {
 			return
 		case j := <-s.triageJobs:
 			start(j)
+		case j := <-s.replyJobs:
+			// Chat replies share the worker slots with triage.
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			go func() {
+				defer func() { <-sem }()
+				s.replyOne(ctx, j)
+			}()
 		case <-tick.C:
 			sweep(time.Minute)
+			for _, j := range s.pendingReplies(ctx) {
+				s.enqueueReply(j)
+			}
 		}
 	}
 }
@@ -536,20 +550,22 @@ type triageSuggestion struct {
 	Labels   []string `json:"labels"`
 	Assignee string   `json:"assignee"`
 	Plan     string   `json:"plan"`
+	Work     string   `json:"work"`
 }
 
-const triagePrompt = `You triage new tasks in a shared task list used by a team of people and AI agents.
+const triagePrompt = `You triage new tasks in a shared task list used by a team of people and AI agents, and you do the work yourself when you can.
 Read the task and reply with one JSON object and nothing else:
-{"title": string, "due": "YYYY-MM-DD" or null, "priority": 0-4 or null, "project": string or null, "labels": [string], "assignee": string or null, "plan": string}
+{"title": string, "due": "YYYY-MM-DD" or null, "priority": 0-4 or null, "project": string or null, "labels": [string], "assignee": string or null, "work": string, "plan": string}
 
-- title: the task as a short imperative (at most 80 characters), in the same language, keeping every specific detail (names, amounts, places). Drop filler like "can you", "I need to", and drop words that only state the due date. If it is already clean, return it unchanged.
+- title: the task as a short imperative (at most 80 characters), in the same language, keeping every specific detail (names, products, amounts, places). Drop greetings and filler like "hey", "hi", "pls", "can you", "I need to", and words that only state the due date. Example: "hey can u compare pixel 8 vs pixel 9" -> "Compare Pixel 8 and Pixel 9".
 - due: only if the text implies a date or deadline. Resolve relative dates ("friday", "tomorrow", "end of month") against today's date.
 - priority: only if the text signals urgency (0 urgent, 1 high) or that it can wait (3 low, 4 someday). Otherwise null.
 - project: only if one of the listed projects clearly fits; use its exact name. Otherwise null.
 - labels: up to 3 short lowercase labels, preferring ones already used. Empty if none fit.
-- assignee: only if the text names or clearly implies one of the listed members; use the exact name. Otherwise null.
-- plan: markdown, at most 600 characters: one line starting "Done when", then 2-5 short steps, then any open questions. Be concrete; no preamble.
-Never invent facts that are not in the task.`
+- assignee: only if the text explicitly names one of the listed members as the person to do it; use the exact name. Never infer an assignee from greetings or other words. Otherwise null.
+- work: if you can complete the task yourself right now from your own knowledge (research, a comparison, an explanation, a summary, a draft, a list of options, a checklist), do it and put the finished result here as markdown: a short intro line, then the substance (use a table for comparisons, headings and lists otherwise), then a one-line recommendation or next step if it helps. Be specific and accurate; say when a fact may be out of date. At most 5000 characters. If the task needs things you can't do (book, buy, call, attend, access private systems or recent data you don't have), leave work empty.
+- plan: only when work is empty: markdown, at most 600 characters: one line starting "Done when", then 2-5 short steps, then any open questions. Empty when you did the work.
+Never invent facts that are not in the task or that you don't know.`
 
 func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string, org *Org, t triageTask, projects []ProjectOut, members []MemberOut) (triageSuggestion, error) {
 	var sugg triageSuggestion
@@ -582,7 +598,7 @@ func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string,
 			{"role": "system", "content": triagePrompt},
 			{"role": "user", "content": b.String()},
 		},
-		"max_tokens":      4000, // thinking models (Gemini, o-series) spend part of this before answering
+		"max_tokens":      12000, // room for the work itself, and thinking models spend part of it before answering
 		"response_format": map[string]string{"type": "json_object"},
 	})
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, st.BaseURL+"/chat/completions", bytes.NewReader(req))
@@ -725,8 +741,16 @@ func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageC
 				}
 			}
 		}
-		// The plan is part of the task's document; the chat gets a short note of what changed.
-		if plan := strings.TrimSpace(sugg.Plan); plan != "" {
+		// The work (or, when it can't be done here, a plan) is the task's document; the chat gets a short note.
+		if work := strings.TrimSpace(sugg.Work); work != "" {
+			if len(work) > 8000 {
+				work = work[:8000]
+			}
+			if strings.TrimSpace(r.Body) != "" {
+				work = "---\n\n" + work
+			}
+			upd.Body, changed = &work, append(changed, "work")
+		} else if plan := strings.TrimSpace(sugg.Plan); plan != "" {
 			if len(plan) > 2000 {
 				plan = plan[:2000]
 			}
@@ -777,6 +801,8 @@ func triageNote(changed []string, upd UpdateTaskIn, c *call) string {
 			}
 		case "plan":
 			parts = append(parts, "wrote a plan in the details")
+		case "work":
+			parts = append(parts, "did it: the result is in the details")
 		}
 	}
 	if len(parts) == 0 {
@@ -786,5 +812,9 @@ func triageNote(changed []string, upd UpdateTaskIn, c *call) string {
 		parts[len(parts)-2] += " and " + parts[len(parts)-1]
 		parts = parts[:len(parts)-1]
 	}
-	return "I " + strings.Join(parts, ", ") + "."
+	note := "I " + strings.Join(parts, ", ") + "."
+	if slices.Contains(changed, "work") || slices.Contains(changed, "plan") {
+		note += " Mention me here if you want changes."
+	}
+	return note
 }

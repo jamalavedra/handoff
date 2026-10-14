@@ -160,6 +160,7 @@ type Service struct {
 	// OutboundHTTP, when set, replaces the client for triage models and agent webhooks (tests).
 	OutboundHTTP *http.Client
 	triageJobs   chan triageJob
+	replyJobs    chan replyJob
 	// outboundHTTP is the shared guarded client, built on first use.
 	outboundHTTP *http.Client
 	outboundOnce sync.Once
@@ -169,7 +170,7 @@ type Service struct {
 }
 
 func New(d *db.DB, cfg *config.Config) *Service {
-	return &Service{DB: d, Cfg: cfg, triageJobs: make(chan triageJob, 1024)}
+	return &Service{DB: d, Cfg: cfg, triageJobs: make(chan triageJob, 1024), replyJobs: make(chan replyJob, 256)}
 }
 
 // call wraps a principal-scoped transaction and loads the per-call view of the org.
@@ -184,14 +185,20 @@ type call struct {
 	projects map[string]*Project
 	// triage is set while creating tasks that the workspace's triage agent should evaluate.
 	triage bool
+	// mine is set while a person creates tasks in the web app: unassigned ones go to them.
+	mine bool
+	// after runs once the transaction has committed (e.g. waking a background worker).
+	after []func()
 }
 
 func (s *Service) run(ctx context.Context, p *Principal, fn func(c *call) error) error {
 	if p == nil || p.Org == nil || p.Member == nil {
 		return errf(ErrForbidden, "not authenticated")
 	}
-	return s.DB.InOrg(ctx, p.Org.ID, func(tx pgx.Tx) error {
+	var after []func()
+	err := s.DB.InOrg(ctx, p.Org.ID, func(tx pgx.Tx) error {
 		c := &call{ctx: ctx, tx: tx, p: p, s: s}
+		defer func() { after = c.after }()
 		if _, err := tx.Exec(ctx, `SELECT set_config('app.member_id', $1, true)`, p.Member.ID); err != nil {
 			return err
 		}
@@ -203,6 +210,13 @@ func (s *Service) run(ctx context.Context, p *Principal, fn func(c *call) error)
 		}
 		return fn(c)
 	})
+	// Only once the changes are committed.
+	if err == nil {
+		for _, f := range after {
+			f()
+		}
+	}
+	return err
 }
 
 const memberCols = `id, kind, name, coalesce(email, ''), role, status, coalesce(owner_id::text, ''), coalesce(oauth_client_id, ''), permissions, created_at`
