@@ -629,22 +629,50 @@ func nextDue(repeat string, due *time.Time, today time.Time) time.Time {
 	return d
 }
 
-// nextOccurrence creates the next task in a repeating series, carrying its fields over.
-func (c *call) nextOccurrence(r *taskRow) (TaskOut, error) {
+// nextOccurrence creates the next task in a repeating series, carrying its fields over. The series
+// belongs to whoever created it, so the new task is created as them while they're still active (or
+// else as the closer, if allowed to create tasks); when neither can, the series ends with an event.
+// Nothing about the next occurrence can stop the current task from closing: an assignee who left
+// or a parent that's gone are simply not carried over.
+func (c *call) nextOccurrence(r *taskRow) (*TaskOut, error) {
+	maker := c.p
+	if m := c.members[r.CreatedBy]; m != nil && m.Status == "active" && m.ID != c.p.Member.ID {
+		mp := &Principal{Org: c.p.Org, Member: m, Via: c.p.Via}
+		if m.IsAgent() {
+			mp.Owner = c.members[m.OwnerID]
+		}
+		if !m.IsAgent() || (mp.Owner != nil && mp.Owner.Status == "active" && mp.can(ActCreate)) {
+			maker = mp
+		}
+	}
+	if maker == c.p && c.p.Member.IsAgent() && !c.p.can(ActCreate) {
+		return nil, c.event(r.ID, "repeat_ended", map[string]any{"reason": "nobody who may create tasks is left to continue the series"})
+	}
 	prio := r.Priority
 	nt := NewTask{
-		Title: r.Title, Body: r.Body, Project: r.ProjectID, Priority: &prio, Assignee: r.AssigneeID,
+		Title: r.Title, Body: r.Body, Project: r.ProjectID, Priority: &prio,
 		Due: nextDue(r.Repeat, r.Due, time.Now().UTC()).Format("2006-01-02"), Labels: r.Labels, Repeat: r.Repeat,
 	}
-	id, _, err := c.createOne(nt)
+	if m := c.members[r.AssigneeID]; m != nil && m.Status == "active" {
+		nt.Assignee = m.ID
+	}
+	if r.Parent != "" {
+		if _, err := c.getTask(r.Parent, false, false); err == nil {
+			nt.Parent = r.Parent
+		}
+	}
+	mc := *c
+	mc.p = maker
+	id, _, err := mc.createOne(nt)
 	if err != nil {
-		return TaskOut{}, err
+		return nil, err
 	}
 	n, err := c.getTask(id, false, false)
 	if err != nil {
-		return TaskOut{}, err
+		return nil, err
 	}
-	return c.out(n, true), nil
+	o := c.out(n, true)
+	return &o, nil
 }
 
 // explicitFields lists what the creator set on purpose, so triage never second-guesses it.
@@ -1065,6 +1093,8 @@ func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (
 		if p.Member.IsAgent() && claimActive(r) && r.ClaimedBy != p.Member.ID {
 			return errf(ErrConflict, "task %s is claimed by %s", r.ID, c.ref(r.ClaimedBy).Name)
 		}
+		// Only a real transition to done continues a series, so a retried close can't spawn twice.
+		continues := st == "done" && r.Status != "done" && r.Repeat != ""
 		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET status = $2, close_reason = $3, closed_at = now(),
 			claimed_by = NULL, claim_expires_at = NULL, updated_at = now() WHERE id = $1`, r.ID, st, in.Reason); err != nil {
 			return err
@@ -1078,12 +1108,12 @@ func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (
 		}
 		out.Task = c.out(r, true)
 		// Done with a repeating task: the next one is due one interval later. Cancelling ends the series.
-		if st == "done" && r.Repeat != "" {
+		if continues {
 			next, err := c.nextOccurrence(r)
 			if err != nil {
 				return err
 			}
-			out.Next = &next
+			out.Next = next
 		}
 		if len(r.Blocks) > 0 {
 			rs, err := c.queryTasks(readyCond+" AND t.id = ANY($1) AND t.project_id::text = ANY($2)", r.Blocks, c.visible)

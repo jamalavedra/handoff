@@ -265,7 +265,7 @@ const verbs: Record<string, string> = {
   approval_requested: "asked to delete", approval_approved: "approved deleting", approval_rejected: "rejected deleting",
   agent_added: "added an agent", agent_revoked: "revoked an agent", agent_permissions_changed: "changed an agent's permissions",
   api_key_created: "created an API key", api_key_revoked: "revoked an API key", project_created: "created a project",
-  triaged: "triaged", triage_failed: "couldn't triage",
+  triaged: "triaged", triage_failed: "couldn't triage", repeat_ended: "ended the repeating series of",
   member_invited: "invited someone", member_changed: "changed a member", org_changed: "changed workspace settings", project_changed: "changed a project",
 };
 

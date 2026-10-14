@@ -24,6 +24,18 @@ func TestRepeatingTask(t *testing.T) {
 		!slices.Equal(n.Labels, []string{"ops"}) || n.Assignee == nil || n.Assignee.ID != admin.Member.ID || n.Status != "open" {
 		t.Fatalf("next occurrence: %+v", n)
 	}
+	// Closing it again (a retry) doesn't make another one.
+	again, err := e.s.CloseTask(e.ctx, admin, core.CloseTaskIn{ID: task.ID})
+	if err != nil || again.Next != nil {
+		t.Fatalf("retried close created another occurrence: %+v %v", again.Next, err)
+	}
+	// An agent that may only close still continues the series, as the series' creator.
+	closer := e.agent(t, admin, "Closer", &core.Permissions{Projects: []string{"*"}, Actions: []string{core.ActRead, core.ActClose}})
+	byAgent, err := e.s.CloseTask(e.ctx, closer, core.CloseTaskIn{ID: n.ID})
+	if err != nil || byAgent.Next == nil || byAgent.Next.CreatedBy.ID != admin.Member.ID {
+		t.Fatalf("close-only agent: next %+v err %v", byAgent.Next, err)
+	}
+	n = byAgent.Next
 	// Cancelling ends the series; turning repeat off means done is just done.
 	out, err = e.s.CloseTask(e.ctx, admin, core.CloseTaskIn{ID: n.ID, Status: "cancelled"})
 	if err != nil || out.Next != nil {
@@ -39,5 +51,19 @@ func TestRepeatingTask(t *testing.T) {
 	}
 	if _, err := e.s.CreateTasks(e.ctx, admin, core.CreateTasksIn{Tasks: []core.NewTask{{Title: "x", Repeat: "hourly"}}}); !core.IsCode(err, core.ErrInvalid) {
 		t.Fatalf("bad repeat accepted: %v", err)
+	}
+}
+
+func TestRepeatingTaskWithRevokedAssignee(t *testing.T) {
+	e := setup(t)
+	admin := e.org(t, "reprev")
+	bot := e.agent(t, admin, "Weekly bot", nil)
+	task := e.create(t, admin, core.NewTask{Title: "Weekly digest", Repeat: "weekly", Assignee: "Weekly bot"})[0]
+	if _, err := e.s.UpdateAgent(e.ctx, admin, core.UpdateAgentIn{ID: bot.Member.ID, Revoke: true}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.s.CloseTask(e.ctx, admin, core.CloseTaskIn{ID: task.ID})
+	if err != nil || out.Task.Status != "done" || out.Next == nil || out.Next.Assignee != nil {
+		t.Fatalf("close with revoked assignee: %+v next %+v err %v", out.Task.Status, out.Next, err)
 	}
 }
