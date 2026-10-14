@@ -6,7 +6,7 @@ import { ago, api, cn, type Comment, type Event, type Lookup, type Member, type 
 import { mentionQuery } from "../quickadd";
 import { useMe } from "../main";
 import { Markdown } from "./markdown";
-import { Avatar, Who } from "./app";
+import { Avatar, ErrorText, Who } from "./app";
 import { MicButton } from "./dictation";
 import { useDictation } from "@/hooks/use-dictation";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -22,7 +22,7 @@ export const names = (h: Here[]) => (h.length <= 2 ? h.map((x) => x.member.name)
 export const taskQuery = (id: string) => ({ queryKey: ["task", id], queryFn: () => api.tool<Detail>("get_task", { id }) });
 
 // TaskChat is the thread and its composer, filling the panel it's in.
-export function TaskChat({ id, focus, drawer }: { id: string; focus?: number; drawer?: boolean }) {
+export function TaskChat({ id, focus, drawer, active = true }: { id: string; focus?: number; drawer?: boolean; active?: boolean }) {
   const qc = useQueryClient();
   const q = useQuery({ ...taskQuery(id), refetchInterval: 10000 });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
@@ -42,7 +42,7 @@ export function TaskChat({ id, focus, drawer }: { id: string; focus?: number; dr
   // Switching tasks drops the draft and dictation that belonged to the old one.
   const { cancel: cancelDictation } = dictation;
   useEffect(() => () => { cancelDictation(); setComment(""); setCaret(0); }, [id, cancelDictation]);
-  useEffect(() => { if (focus || !drawer) ref.current?.focus(); }, [focus, id, drawer]);
+  useEffect(() => { if (active && (focus || !drawer)) ref.current?.focus(); }, [focus, id, drawer, active]);
   const count = q.data?.comments.length ?? 0;
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
   const send = useMutation({
@@ -69,11 +69,13 @@ export function TaskChat({ id, focus, drawer }: { id: string; focus?: number; dr
   const t = q.data?.task;
   const comments = q.data?.comments ?? [];
   const typers = (q.data?.here ?? []).filter((h) => h.typing);
-  const locked = !!t?.deleted_at;
+  // Nothing to write into until the task has loaded, and never into the trash.
+  const locked = !t || !!t.deleted_at;
 
   return (
     <>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
+        {q.error && <ErrorText error={q.error} />}
         {q.data && comments.length === 0 && (
           <div className="mt-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
             <MessageSquare className="size-5 opacity-60" />

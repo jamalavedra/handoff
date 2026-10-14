@@ -221,14 +221,17 @@ function Chat({ me, onClose, drawer }: { me: Me; onClose: () => void; drawer?: b
       className="flex min-h-0 flex-1 flex-col"
       onKeyDown={(e) => { if (e.key === "Escape" && !drawer && !e.defaultPrevented) { e.stopPropagation(); onClose(); } }}
     >
-      {taskMode ? (
-        <>
+      {/* Both stay mounted while the panel is open, so switching never drops a reply on its way or
+          a draft; only the one in view shows. */}
+      {page.kind === "task" && (
+        <div className={cn("flex min-h-0 flex-1 flex-col", !taskMode && "hidden")}>
           <PanelHeader drawer={drawer} onClose={onClose} page={page} taskMode />
-          <TaskChat key={page.task} id={page.task!} focus={a.focus} drawer={drawer} />
-        </>
-      ) : (
-        <AssistantChat me={me} onClose={onClose} drawer={drawer} page={page} />
+          <TaskChat key={page.task} id={page.task!} focus={a.focus} drawer={drawer} active={taskMode} />
+        </div>
       )}
+      <div className={cn("flex min-h-0 flex-1 flex-col", taskMode && "hidden")}>
+        <AssistantChat me={me} onClose={onClose} drawer={drawer} page={page} active={!taskMode} />
+      </div>
     </div>
   );
 }
@@ -277,7 +280,7 @@ function ModeItem({ icon: Icon, active, disabled, onClick, title, hint }: { icon
   );
 }
 
-function AssistantChat({ me, onClose, drawer, page }: { me: Me; onClose: () => void; drawer?: boolean; page: ReturnType<typeof usePageContext> }) {
+function AssistantChat({ me, onClose, drawer, page, active }: { me: Me; onClose: () => void; drawer?: boolean; page: ReturnType<typeof usePageContext>; active: boolean }) {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["assistant"], queryFn: () => api.tool<Status>("get_assistant"), refetchInterval: false });
   const org = me.org?.slug ?? "";
@@ -290,7 +293,7 @@ function AssistantChat({ me, onClose, drawer, page }: { me: Me; onClose: () => v
   const chatId = useRef(0);
   const withContext = dropped !== page.key;
   useEffect(() => save(org, member, msgs), [org, member, msgs]);
-  useEffect(() => { if (!drawer) inputRef.current?.focus(); }, [drawer]);
+  useEffect(() => { if (!drawer && active) inputRef.current?.focus(); }, [drawer, active]);
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [msgs.length]);
 
   const send = useMutation({
