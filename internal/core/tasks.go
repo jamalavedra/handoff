@@ -522,6 +522,7 @@ type NewTask struct {
 	Assignee   string   `json:"assignee,omitempty" jsonschema:"'me', 'owner', a name, email or id"`
 	Due        string   `json:"due,omitempty" jsonschema:"YYYY-MM-DD"`
 	Repeat     string   `json:"repeat,omitempty" jsonschema:"daily, weekdays, weekly, biweekly, monthly or yearly"`
+	Unassigned bool     `json:"unassigned,omitempty" jsonschema:"leave it unassigned on purpose (in the web app, new tasks otherwise go to their creator)"`
 	Labels     []string `json:"labels,omitempty"`
 	Parent     string   `json:"parent,omitempty" jsonschema:"parent task id"`
 	BlockedBy  []string `json:"blocked_by,omitempty" jsonschema:"ids of tasks that must finish first; may reference external_ids from this batch"`
@@ -751,7 +752,7 @@ func (c *call) createOne(nt NewTask) (string, bool, error) {
 			return "", false, err
 		}
 		assignee = &m.ID
-	} else if c.mine {
+	} else if c.mine && !nt.Unassigned {
 		// A task someone adds for themselves in the app is theirs unless they say otherwise.
 		assignee = &c.p.Member.ID
 	}
@@ -1183,8 +1184,9 @@ func (c *call) addComment(taskID, body string) error {
 	if body == "" || len(body) > 20000 {
 		return errf(ErrInvalid, "comment must be 1-20000 characters")
 	}
-	if _, err := c.tx.Exec(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body) VALUES ($1, $2, $3, $4, $5)`,
-		c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body); err != nil {
+	var commentID string
+	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body) VALUES ($1, $2, $3, $4, $5)
+		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body).Scan(&commentID); err != nil {
 		return err
 	}
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, taskID); err != nil {
@@ -1216,7 +1218,12 @@ func (c *call) addComment(taskID, body string) error {
 			return err
 		}
 		if a := c.members[agentID]; a != nil && (slices.Contains(mentioned, a) || assignee == agentID) {
-			job := replyJob{org: c.p.Org.ID, task: taskID, author: c.p.Member.ID}
+			// Stored with the comment, so the request outlives a full queue or a restart.
+			if _, err := c.tx.Exec(c.ctx, `INSERT INTO chat_replies (org_id, comment_id, task_id, author_id) VALUES ($1, $2, $3, $4)`,
+				c.p.Org.ID, commentID, taskID, c.p.Member.ID); err != nil {
+				return err
+			}
+			job := replyJob{org: c.p.Org.ID, comment: commentID}
 			c.after = append(c.after, func() { c.s.enqueueReply(job) })
 		}
 	}

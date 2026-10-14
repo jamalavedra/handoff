@@ -354,6 +354,9 @@ func (s *Service) RunTriage(ctx context.Context) {
 			}()
 		case <-tick.C:
 			sweep(time.Minute)
+			for _, j := range s.pendingReplies(ctx) {
+				s.enqueueReply(j)
+			}
 		}
 	}
 }

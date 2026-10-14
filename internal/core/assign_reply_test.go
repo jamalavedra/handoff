@@ -76,3 +76,47 @@ func TestAgentAnswersInTaskChat(t *testing.T) {
 		t.Fatalf("answered an unaddressed message: %d comments", len(d.Comments))
 	}
 }
+
+func TestUnassignedOnPurpose(t *testing.T) {
+	e := setup(t)
+	admin := e.org(t, "unassigned")
+	if got := e.create(t, admin, core.NewTask{Title: "nobody's yet", Unassigned: true})[0]; got.Assignee != nil {
+		t.Fatalf("explicitly unassigned task got %+v", got.Assignee)
+	}
+}
+
+func TestChatReplyPerRequest(t *testing.T) {
+	// Each question gets its own answer, even past 20 messages, and a request whose task the person
+	// can no longer see is dropped without reaching the model.
+	var calls atomic.Int32
+	srv := fakeModel(t, http.StatusOK, map[string]any{"title": "x"}, new(atomic.Value), func() { calls.Add(1) })
+	e := triageEnv(t, srv)
+	admin := e.org(t, "chatmany")
+	e.agent(t, admin, "Acme Bot", nil)
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	task := e.create(t, admin, core.NewTask{Title: "long thread"})[0]
+	waitTriage(t, e, admin, task.ID)
+	for i := 0; i < 22; i++ {
+		if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "note " + strings.Repeat("x", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ask := func(n int) {
+		t.Helper()
+		before := calls.Load()
+		if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot question " + strings.Repeat("?", n)}); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 200 && calls.Load() == before; i++ {
+			time.Sleep(25 * time.Millisecond)
+		}
+		if calls.Load() == before {
+			t.Fatalf("question %d never reached the model (an old answer was reused?)", n)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	ask(1)
+	ask(2)
+}
