@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { AppWindow, ArrowUp, Bot, History, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Copy, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { AppWindow, ArrowUp, Bot, History, Link2, Repeat as RepeatIcon, ShieldQuestion, SmilePlus, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { useTabs } from "../components/tabs";
 import { taskHref } from "../tabs";
@@ -232,6 +232,9 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             {here.length > 3 && <span className="inline-flex size-6 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-foreground/70 ring-2 ring-background">+{here.length - 3}</span>}
           </div>
         )}
+        <button onClick={() => copyTaskLink(id)} className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Copy link" title="Copy link">
+          <Link2 className="size-4" />
+        </button>
         {panel && (
           <Link to="/tasks/$id" params={{ id }} className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Open full page" title="Open full page">
             <Maximize2 className="size-4" />
@@ -242,7 +245,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
             <>
               {panel && tabs && <MenuItem icon={AppWindow} onClick={() => { tabs.openInTab(taskHref(t.id)); done(); }}>Open in new tab</MenuItem>}
               <MenuItem icon={History} onClick={() => { setActivityOpen(true); done(); }}>Activity <span className="ml-auto text-xs text-muted-foreground/70 tabular-nums">{activity.length}</span></MenuItem>
-              <MenuItem icon={Copy} onClick={() => { navigator.clipboard?.writeText(t.id); done(); }}>Copy ID <span className="ml-auto font-mono text-xs text-muted-foreground/70">{t.id}</span></MenuItem>
+              <MenuItem icon={Link2} onClick={() => { copyTaskLink(t.id); done(); }}>Copy link</MenuItem>
               {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
             </>
@@ -347,7 +350,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-2xl sm:max-w-lg">
           <DialogTitle>Activity</DialogTitle>
           <DialogDescription>Created by {t.created_by?.name ?? "someone"}{t.on_behalf_of ? ` for ${t.on_behalf_of.name}` : ""} · {ago(t.created_at)}</DialogDescription>
-          <div>{activity.map((e) => <EventLine key={e.id} e={e} showTask={false} />)}</div>
+          <div>{activity.map((e) => <EventLine key={e.id} e={e} showTask={false} onRestore={locked ? undefined : (body) => update.mutate({ body, body_mode: "replace", confirm: true }, { onSuccess: () => { toast("Previous version restored"); setActivityOpen(false); } })} />)}</div>
         </DialogContent>
       </Dialog>
 
@@ -470,4 +473,10 @@ function Reactions({ c, disabled }: { c: Comment; disabled: boolean }) {
       )}
     </div>
   );
+}
+
+// copyTaskLink puts the task's address on the clipboard, to paste anywhere.
+function copyTaskLink(id: string) {
+  const url = `${window.location.origin}/tasks/${id}`;
+  navigator.clipboard?.writeText(url).then(() => toast("Link copied", { description: url }), () => toast.error("Couldn't copy the link"));
 }

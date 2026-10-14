@@ -270,8 +270,9 @@ const verbs: Record<string, string> = {
   member_invited: "invited someone", member_changed: "changed a member", org_changed: "changed workspace settings", project_changed: "changed a project",
 };
 
-export function EventLine({ e, showTask = true }: { e: Event; showTask?: boolean }) {
-  const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).filter((k) => k !== "from_project_id").join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "triaged" ? ((e.data.changed as string[] | undefined) ?? []).join(", ") : e.kind === "triage_failed" ? String(e.data.error ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : "";
+export function EventLine({ e, showTask = true, onRestore }: { e: Event; showTask?: boolean; onRestore?: (body: string) => void }) {
+  const previous = e.kind === "updated" && typeof e.data.previous_body === "string" ? (e.data.previous_body as string) : undefined;
+  const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).filter((k) => k !== "from_project_id" && k !== "previous_body").map((k) => (k === "body" ? "details" : k)).join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "triaged" ? ((e.data.changed as string[] | undefined) ?? []).join(", ") : e.kind === "triage_failed" ? String(e.data.error ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : "";
   return (
     <div className="flex gap-3 py-1.5 text-sm">
       <span className="w-14 shrink-0 text-xs leading-5 text-muted-foreground/70 sm:w-20">{ago(e.at)}</span>
@@ -280,6 +281,7 @@ export function EventLine({ e, showTask = true }: { e: Event; showTask?: boolean
         {showTask && e.task_id && <TaskLink id={e.task_id} className="font-medium hover:underline">{e.task_title || e.task_id}</TaskLink>}
         {detail && <span className="text-muted-foreground"> — {detail}</span>}
         <span className="ml-2 hidden text-xs text-muted-foreground/70 sm:inline">via {e.via}</span>
+        {previous && onRestore && <button onClick={() => onRestore(previous)} className="ml-2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">Restore previous version</button>}
       </div>
     </div>
   );
