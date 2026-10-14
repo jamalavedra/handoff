@@ -15,6 +15,23 @@ export const repeatLabel: Record<Repeat, string> = {
   daily: "Every day", weekdays: "Every weekday", weekly: "Every week", biweekly: "Every 2 weeks", monthly: "Every month", yearly: "Every year",
 };
 
+// scheduleLabel says when a repeating task runs, anchored on its due date: "Every Friday", "Every month on the 14th".
+export function scheduleLabel(repeat: Repeat, due?: string): string {
+  if (!due || repeat === "daily" || repeat === "weekdays") return repeatLabel[repeat];
+  const [y, m, d] = due.split("-").map(Number);
+  const at = new Date(y, m - 1, d);
+  const weekday = at.toLocaleDateString("en-US", { weekday: "long" });
+  if (repeat === "weekly") return `Every ${weekday}`;
+  if (repeat === "biweekly") return `Every other ${weekday}`;
+  if (repeat === "monthly") return `Every month on the ${ordinal(d)}`;
+  return `Every year on ${at.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
+
+function ordinal(n: number) {
+  const s = n % 100 >= 11 && n % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th";
+  return `${n}${s}`;
+}
+
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const MONTH = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";

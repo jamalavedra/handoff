@@ -352,6 +352,7 @@ type SearchTasksIn struct {
 	IncludeDone bool     `json:"include_done,omitempty"`
 	DueBefore   string   `json:"due_before,omitempty" jsonschema:"YYYY-MM-DD: only tasks due before this day, e.g. today's date for overdue tasks"`
 	Trashed     bool     `json:"trashed,omitempty" jsonschema:"list trashed tasks instead"`
+	Repeating   bool     `json:"repeating,omitempty" jsonschema:"only repeating tasks (the workspace's automations)"`
 	IncludeBody bool     `json:"include_body,omitempty" jsonschema:"return each task's full body"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"default 50, max 500"`
 	Offset      int      `json:"offset,omitempty"`
@@ -394,6 +395,9 @@ func (s *Service) SearchTasks(ctx context.Context, p *Principal, in SearchTasksI
 		}
 		if in.Label != "" {
 			add(" AND $%d = ANY(t.labels)", in.Label)
+		}
+		if in.Repeating {
+			where += " AND t.repeat <> ''"
 		}
 		if in.DueBefore != "" {
 			before, err := time.Parse("2006-01-02", strings.TrimSpace(in.DueBefore))

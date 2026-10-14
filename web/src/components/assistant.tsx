@@ -9,6 +9,7 @@ import { TaskLink } from "./tasklink";
 import { Avatar } from "./app";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // The assistant is a chat with the workspace's triage agent: it answers questions about tasks and
 // makes changes as that agent, for the person asking. The conversation lives in this tab only.
@@ -91,22 +92,44 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   return <AssistantContext.Provider value={ctx}>{children}</AssistantContext.Provider>;
 }
 
-// AssistantButton is the sidebar entry.
-export function AssistantButton() {
+// useFab says where the floating assistant button sits. Phones: above the tab bar, and gone on a
+// task page (a pushed screen with its own composer). Desktop: bottom-right, lifted above the
+// comment composer while a task is open beside the list or as a page.
+export function useFab() {
   const a = useAssistant();
+  const isDesktop = useDesktop();
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const panelTask = useSearch({ strict: false }).task;
+  const onTask = path.startsWith("/tasks/");
+  return { shown: !a.open && (isDesktop || !onTask), lifted: isDesktop && (onTask || !!panelTask) };
+}
+
+// AssistantFab is the round button that opens the assistant from any page.
+export function AssistantFab() {
+  const a = useAssistant();
+  const fab = useFab();
+  if (!fab.shown) return null;
   return (
-    <button
-      onClick={a.toggle}
-      aria-pressed={a.open}
-      className={cn(
-        "group flex min-h-8 items-center gap-2 rounded-[10px] px-2 py-1 text-[14px] font-medium text-foreground/70 transition-colors hover:bg-sidebar-accent/60",
-        a.open && "bg-sidebar-accent text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]",
-      )}
-    >
-      <Sparkles className={cn("size-4 text-foreground/50 transition-colors group-hover:text-foreground/80", a.open && "text-violet-600 group-hover:text-violet-600")} />
-      <span className="flex-1 text-left">Assistant</span>
-      <kbd className="rounded border border-border px-1 font-sans text-[10px] text-muted-foreground">⌘J</kbd>
-    </button>
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={() => a.setOpen(true)}
+            aria-label="Assistant"
+            aria-keyshortcuts="Meta+J"
+            className={cn(
+              "fixed right-4 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] z-30 flex size-12 items-center justify-center rounded-full border border-border bg-card text-violet-600 shadow-lg transition-[transform,bottom] hover:scale-105 hover:bg-accent active:scale-95 md:right-6 md:size-11",
+              fab.lifted ? "md:bottom-20" : "md:bottom-6",
+            )}
+          >
+            <Sparkles className="size-5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="left" sideOffset={8}>
+          Assistant <kbd className="ml-1 font-sans opacity-70">⌘J</kbd>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -119,7 +142,7 @@ function usePageContext() {
   const t = useQuery({ queryKey: ["task", task], queryFn: () => api.tool<{ task: Task }>("get_task", { id: task }), enabled: !!task, refetchInterval: false });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const p = projects.data?.projects.find((x) => x.id === project);
-  const pages: Record<string, string> = { "/": "My tasks", "/notifications": "Notifications", "/team": "Team", "/projects": "Projects", "/settings/activity": "Activity", "/settings/agents": "Agents", "/settings": "Settings", "/trash": "Trash", "/admin": "Admin" };
+  const pages: Record<string, string> = { "/": "My tasks", "/notifications": "Notifications", "/team": "Team", "/projects": "Projects", "/automations": "Automations", "/settings/activity": "Activity", "/settings/agents": "Agents", "/settings": "Settings", "/trash": "Trash", "/admin": "Admin" };
   if (task) return { key: `task:${task}`, kind: "task" as const, task, label: t.data?.task.title ?? task };
   if (project) return { key: `project:${project}`, kind: "project" as const, project, label: p ? projectName(p) : "Project" };
   return { key: `page:${path}`, kind: "page" as const, label: pages[path] ?? "Handoff" };
