@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pause, Plus, Repeat as RepeatIcon, Webhook, Zap } from "lucide-react";
 import { toast } from "sonner";
@@ -21,7 +21,7 @@ import { useInvalidate } from "./tasks";
 const repeats = Object.keys(repeatLabel) as Repeat[];
 
 export function AutomationsPage() {
-  const q = useQuery({ queryKey: ["tasks", "automations"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { repeating: true, limit: 500 }) });
+  const q = useQuery({ queryKey: ["tasks", "automations"], queryFn: allAutomations });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const [creating, setCreating] = useState(false);
   // Paused rows drop out at once (the optimistic patch clears repeat); soonest first.
@@ -144,9 +144,16 @@ function NewAutomation({ open, onOpenChange }: { open: boolean; onOpenChange: (o
   const list = projects.data?.projects ?? [];
   const project = f.project || list.find((p) => p.name === "Inbox")?.id || list[0]?.id || "";
   const close = (o: boolean) => { if (!o) setF(blank()); onOpenChange(o); };
+  // One id per submission: a repeated submit or retry returns the same automation instead of a second one.
+  const submission = useRef<string | null>(null);
   const create = useMutation({
-    mutationFn: () => api.tool("create_tasks", { tasks: [{ title: f.title.trim(), repeat: f.repeat, due: f.due || undefined, assignee: assignee || undefined, project: project || undefined }] }),
+    mutationFn: () => {
+      submission.current ??= `automation-${crypto.randomUUID()}`;
+      const due = f.repeat === "weekdays" && f.due ? nextWeekday(f.due) : f.due;
+      return api.tool("create_tasks", { tasks: [{ title: f.title.trim(), repeat: f.repeat, due: due || undefined, assignee: assignee || undefined, project: project || undefined, external_id: submission.current }] });
+    },
     onSuccess: () => {
+      submission.current = null;
       toast(`Scheduled “${f.title.trim()}”`, { description: scheduleLabel(f.repeat, f.due) });
       qc.invalidateQueries();
       close(false);
@@ -159,7 +166,7 @@ function NewAutomation({ open, onOpenChange }: { open: boolean; onOpenChange: (o
           <DialogTitle>New automation</DialogTitle>
           <DialogDescription>A task that repeats. Finishing one schedules the next.</DialogDescription>
         </DialogHeader>
-        <form id="new-automation" className="flex flex-col gap-3 text-sm" onSubmit={(e) => { e.preventDefault(); if (f.title.trim()) create.mutate(); }}>
+        <form id="new-automation" className="flex flex-col gap-3 text-sm" onSubmit={(e) => { e.preventDefault(); if (f.title.trim() && !create.isPending) create.mutate(); }}>
           <label className="flex flex-col gap-1.5 font-medium">What
             <Input required autoFocus placeholder="Write the weekly summary" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
           </label>
@@ -196,4 +203,23 @@ function NewAutomation({ open, onOpenChange }: { open: boolean; onOpenChange: (o
       </DialogContent>
     </Dialog>
   );
+}
+
+// Every repeating task the person can see, a page at a time.
+async function allAutomations() {
+  const page = 500;
+  const tasks: Task[] = [];
+  for (;;) {
+    const r = await api.tool<{ tasks: Task[] }>("search_tasks", { repeating: true, limit: page, offset: tasks.length });
+    tasks.push(...r.tasks);
+    if (r.tasks.length < page) return { tasks };
+  }
+}
+
+// A weekday series that would start on a weekend starts on the Monday after.
+function nextWeekday(due: string) {
+  const [y, m, d] = due.split("-").map(Number);
+  const at = new Date(y, m - 1, d);
+  while (at.getDay() === 0 || at.getDay() === 6) at.setDate(at.getDate() + 1);
+  return isoDate(at);
 }
