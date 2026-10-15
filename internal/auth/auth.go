@@ -242,11 +242,14 @@ func (s *Store) ExchangeCode(ctx context.Context, orgID, clientID, code, redirec
 		if err != nil {
 			return err
 		}
+		if cid != clientID {
+			return ErrInvalid
+		}
 		if used != nil {
 			replayed.member, replayed.client = member, cid
 			return ErrInvalid
 		}
-		if cid != clientID || redirect != redirectURI || time.Now().After(expires) || !VerifyPKCE(verifier, challenge) {
+		if redirect != redirectURI || time.Now().After(expires) || !VerifyPKCE(verifier, challenge) {
 			return ErrInvalid
 		}
 		if _, err := tx.Exec(ctx, `UPDATE oauth_codes SET used_at = now() WHERE code_hash = $1`, Hash(code)); err != nil {
