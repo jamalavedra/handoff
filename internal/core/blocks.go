@@ -2,6 +2,9 @@ package core
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,7 +121,7 @@ var imagesPlugin = blockPlugin{
 					return
 				}
 				if src := s.pageImage(ctx, page); src != "" {
-					out[i] = imageOut{Src: src, Page: page.String(), Host: strings.TrimPrefix(page.Hostname(), "www."), Caption: clip(strings.TrimSpace(p.Caption), 80)}
+					out[i] = imageOut{Src: s.imageProxy(src), Page: page.String(), Host: strings.TrimPrefix(page.Hostname(), "www."), Caption: clip(strings.TrimSpace(p.Caption), 80)}
 				}
 			}()
 		}
@@ -161,10 +164,11 @@ func (s *Service) pageImage(ctx context.Context, page *url.URL) string {
 	return imageFromHTML(string(b), page)
 }
 
-// imageFromHTML picks og:image (or twitter:image) from a page's meta tags, made absolute, https only.
+// imageFromHTML picks the page's picture from its meta tags: the first usable (absolute, https) of
+// og:image:secure_url, og:image, og:image:url, twitter:image.
 func imageFromHTML(html string, page *url.URL) string {
-	best := ""
-tags:
+	rank := map[string]int{"og:image:secure_url": 0, "og:image": 1, "og:image:url": 2, "twitter:image": 3, "twitter:image:src": 3}
+	var found [4][]string
 	for _, tag := range metaTag.FindAllString(html, 200) {
 		var key, content string
 		for _, m := range metaAttr.FindAllStringSubmatch(tag, -1) {
@@ -178,24 +182,19 @@ tags:
 		if content == "" {
 			continue
 		}
-		switch key {
-		case "og:image", "og:image:secure_url":
-			best = content
-			break tags // the page's own choice
-		case "og:image:url", "twitter:image", "twitter:image:src":
-			if best == "" {
-				best = content
+		if r, ok := rank[key]; ok {
+			found[r] = append(found[r], content)
+		}
+	}
+	for _, cands := range found {
+		for _, c := range cands {
+			u, err := page.Parse(strings.ReplaceAll(strings.TrimSpace(c), "&amp;", "&"))
+			if err == nil && u.Scheme == "https" && u.Host != "" {
+				return u.String()
 			}
 		}
 	}
-	if best == "" {
-		return ""
-	}
-	u, err := page.Parse(strings.ReplaceAll(strings.TrimSpace(best), "&amp;", "&"))
-	if err != nil || u.Scheme != "https" || u.Host == "" {
-		return ""
-	}
-	return u.String()
+	return ""
 }
 
 // ---- map: places, located by a geocoder ----
@@ -268,8 +267,16 @@ type geo struct {
 var geocoder = struct {
 	sync.Mutex
 	last  time.Time
-	cache map[string]*geo
-}{cache: map[string]*geo{}}
+	cache map[string]geoHit
+}{cache: map[string]geoHit{}}
+
+// A place found is kept; one not found is asked again after a while (the index changes).
+type geoHit struct {
+	g  *geo
+	at time.Time
+}
+
+const geoMissFor = 10 * time.Minute
 
 func geocoderURL() string {
 	if u := os.Getenv("HANDOFF_GEOCODER_URL"); u != "" {
@@ -282,8 +289,8 @@ func (s *Service) geocode(ctx context.Context, q string) (*geo, error) {
 	key := strings.ToLower(q)
 	geocoder.Lock()
 	defer geocoder.Unlock()
-	if g, ok := geocoder.cache[key]; ok {
-		return g, nil
+	if h, ok := geocoder.cache[key]; ok && (h.g != nil || time.Since(h.at) < geoMissFor) {
+		return h.g, nil
 	}
 	if wait := time.Second - time.Since(geocoder.last); wait > 0 {
 		select {
@@ -316,12 +323,12 @@ func (s *Service) geocode(ctx context.Context, q string) (*geo, error) {
 	if len(rows) > 0 {
 		lat, err1 := strconv.ParseFloat(fmt.Sprint(rows[0]["lat"]), 64)
 		lng, err2 := strconv.ParseFloat(fmt.Sprint(rows[0]["lon"]), 64)
-		if err1 == nil && err2 == nil {
+		if err1 == nil && err2 == nil && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 {
 			addr, _ := rows[0]["display_name"].(string)
 			g = &geo{lat: lat, lng: lng, address: addr}
 		}
 	}
-	geocoder.cache[key] = g
+	geocoder.cache[key] = geoHit{g: g, at: time.Now()}
 	return g, nil
 }
 
@@ -330,4 +337,55 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// ---- the image proxy ----
+
+// Pictures are served through this server, so people viewing a chat never contact the sites they
+// come from. Only URLs a block put there are served: each carries a signature of its address.
+
+func (s *Service) imageKey() []byte {
+	k := sha256.Sum256(append([]byte("handoff block image\x00"), s.Cfg.Secret...))
+	return k[:]
+}
+
+func (s *Service) imageSig(src string) string {
+	m := hmac.New(sha256.New, s.imageKey())
+	m.Write([]byte(src))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+func (s *Service) imageProxy(src string) string {
+	return "/api/image?" + url.Values{"u": {src}, "s": {s.imageSig(src)}}.Encode()
+}
+
+const maxProxiedImage = 8 << 20
+
+// ProxyImage fetches a signed picture for a viewer: images only, at most 8MB.
+func (s *Service) ProxyImage(ctx context.Context, src, sig string) (string, []byte, error) {
+	if !hmac.Equal([]byte(sig), []byte(s.imageSig(src))) {
+		return "", nil, errf(ErrNotFound, "no such image")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
+	if err != nil {
+		return "", nil, errf(ErrNotFound, "no such image")
+	}
+	req.Header.Set("Accept", "image/*")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Handoff/1; +https://github.com/joalavedra/handoff)")
+	resp, err := s.outbound().Do(req)
+	if err != nil {
+		return "", nil, errf(ErrNotFound, "the image couldn't be loaded")
+	}
+	defer resp.Body.Close()
+	ct := resp.Header.Get("Content-Type")
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(ct, "image/") || strings.Contains(ct, "svg") {
+		return "", nil, errf(ErrNotFound, "the image couldn't be loaded")
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxProxiedImage+1))
+	if err != nil || len(b) > maxProxiedImage {
+		return "", nil, errf(ErrNotFound, "the image is too big")
+	}
+	return ct, b, nil
 }

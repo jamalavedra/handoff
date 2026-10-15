@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -50,7 +52,8 @@ func TestAssistantBlocks(t *testing.T) {
 		Images []struct{ Src, Page, Caption string }
 	}
 	_ = json.Unmarshal(out.Blocks[0].Data, &imgs)
-	if len(imgs.Images) != 1 || imgs.Images[0].Src != "https://cdn.example/dolly.jpg" || imgs.Images[0].Caption != "Dolly Parton" {
+	// Pictures are served through the server's signed image proxy.
+	if len(imgs.Images) != 1 || !strings.HasPrefix(imgs.Images[0].Src, "/api/image?") || !strings.Contains(imgs.Images[0].Src, url.QueryEscape("https://cdn.example/dolly.jpg")) || imgs.Images[0].Caption != "Dolly Parton" {
 		t.Fatalf("images: %+v", imgs)
 	}
 	var places struct {

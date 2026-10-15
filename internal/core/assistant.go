@@ -210,7 +210,7 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 	if t.finished {
 		return AssistantChatOut{Reply: t.reply, Steps: slices.Clone(t.steps), Agent: out.Agent, Changed: t.changed, asked: t.asked, Blocks: slices.Clone(t.blocks)}, nil
 	}
-	out.Steps, out.Changed = append(out.Steps, t.steps...), t.changed
+	out.Steps, out.Changed, out.Blocks = append(out.Steps, t.steps...), t.changed, slices.Clone(t.blocks)
 	a := &assistantRun{s: s, p: p, agent: agent, out: &out, turn: t, turnID: turnID, sessions: extSessions{}}
 	if in.shared {
 		a.task = strings.TrimSpace(in.Task)
@@ -226,7 +226,7 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 	if a.ext, err = s.externalTools(ctx, p.Org.ID); err != nil {
 		return out, err
 	}
-	defer func() { t.steps, t.changed = slices.Clone(out.Steps), out.Changed }()
+	defer func() { t.steps, t.changed, t.blocks = slices.Clone(out.Steps), out.Changed, slices.Clone(out.Blocks) }()
 	system, err := a.systemPrompt(ctx, in)
 	if err != nil {
 		return out, err
