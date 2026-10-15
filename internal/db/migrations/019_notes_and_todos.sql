@@ -123,14 +123,31 @@ BEGIN
     rest := btrim(regexp_replace(array_to_string(kept, E'\n'), E'\n{3,}', E'\n\n', 'g'), E' \t\n');
 END $$;
 
--- Existing tasks are converted in place: their checklists become todos, the rest stays their text.
-CREATE TEMP TABLE converted ON COMMIT DROP AS
-    SELECT t.org_id, t.id, s.todos, s.rest FROM tasks t, checklist_split(t.body) s
-    WHERE t.body ~ '\[[ xX]\]' AND jsonb_array_length(s.todos) > 0;
+-- convert_checklists converts existing tasks in place: their checklists become todos, the rest stays
+-- their text. It goes one workspace at a time with app.org_id set, so the row-level security policies
+-- (which read only app.org_id) let it through whatever role runs it: a superuser, a table owner under
+-- FORCE ROW LEVEL SECURITY on managed Postgres, or the app role. Returns how many tasks it converted.
+CREATE FUNCTION convert_checklists() RETURNS int LANGUAGE plpgsql AS $$
+DECLARE
+    o     record;
+    total int := 0;
+    k     int;
+    prior text := current_setting('app.org_id', true);
+BEGIN
+    FOR o IN SELECT id FROM orgs LOOP
+        PERFORM set_config('app.org_id', o.id::text, true);
+        INSERT INTO task_todos (org_id, task_id, position, text, done, done_at, result)
+        SELECT t.org_id, t.id, (j.n - 1)::int, j.v->>'text', (j.v->>'done')::bool,
+            CASE WHEN (j.v->>'done')::bool THEN now() END, j.v->>'result'
+        FROM tasks t, checklist_split(t.body) s, jsonb_array_elements(s.todos) WITH ORDINALITY AS j(v, n)
+        WHERE t.org_id = o.id AND t.body ~ '\[[ xX]\]';
+        UPDATE tasks t SET body = (checklist_split(t.body)).rest
+        WHERE t.org_id = o.id AND t.body ~ '\[[ xX]\]' AND jsonb_array_length((checklist_split(t.body)).todos) > 0;
+        GET DIAGNOSTICS k = ROW_COUNT;
+        total := total + k;
+    END LOOP;
+    PERFORM set_config('app.org_id', coalesce(prior, ''), true);
+    RETURN total;
+END $$;
 
-INSERT INTO task_todos (org_id, task_id, position, text, done, done_at, result)
-SELECT c.org_id, c.id, (j.n - 1)::int, j.v->>'text', (j.v->>'done')::bool,
-    CASE WHEN (j.v->>'done')::bool THEN now() END, j.v->>'result'
-FROM converted c, jsonb_array_elements(c.todos) WITH ORDINALITY AS j(v, n);
-
-UPDATE tasks t SET body = c.rest FROM converted c WHERE t.org_id = c.org_id AND t.id = c.id;
+SELECT convert_checklists();

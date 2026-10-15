@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/joalavedra/handoff/internal/core"
 )
 
@@ -314,6 +316,53 @@ func TestChecklistConversion(t *testing.T) {
 	}
 	if todos, rest = split("Just text\n- a plain list"); len(todos) != 0 || rest != "Just text\n- a plain list" {
 		t.Fatalf("no checklist: %+v %q", todos, rest)
+	}
+}
+
+// The migration's conversion runs per workspace under row-level security, so it works for any role
+// that is subject to it, not only a superuser. The pool connects as the unprivileged app role.
+func TestConvertChecklistsUnderRLS(t *testing.T) {
+	e := setup(t)
+	var bypass bool
+	if err := e.s.DB.Pool.QueryRow(e.ctx, `SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user`).Scan(&bypass); err != nil || bypass {
+		t.Fatalf("pool role bypasses RLS (%v)", err)
+	}
+	acme, globex := e.org(t, "convacme"), e.org(t, "convglobex")
+	a := e.create(t, acme, core.NewTask{Title: "Costume"})[0]
+	g := e.create(t, globex, core.NewTask{Title: "Party"})[0]
+	plain := e.create(t, globex, core.NewTask{Title: "Plain", Body: "Nothing to tick"})[0]
+	set := func(p *core.Principal, id, body string) {
+		t.Helper()
+		if err := e.s.DB.InOrg(e.ctx, p.Org.ID, func(tx pgx.Tx) error {
+			_, err := tx.Exec(e.ctx, `UPDATE tasks SET body = $2 WHERE id = $1`, id, body)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(acme, a.ID, "Get it sorted early.\n\n- [x] Check what's trending\n  - 6 ideas\n- [ ] Pick a direction")
+	set(globex, g.ID, "* [ ] Book a venue")
+	// No app.org_id set: the function sets it per workspace itself.
+	var n int
+	if err := e.s.DB.Pool.QueryRow(e.ctx, `SELECT convert_checklists()`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("converted %d (%v)", n, err)
+	}
+	d, err := e.s.GetTask(e.ctx, acme, core.TaskIDIn{ID: a.ID})
+	if err != nil || d.Task.Body != "Get it sorted early." || !slices.Equal(texts(d.Task.Todos), []string{"Check what's trending", "Pick a direction"}) ||
+		!d.Task.Todos[0].Done || d.Task.Todos[0].Result != "6 ideas" {
+		t.Fatalf("acme task: %q %+v %v", d.Task.Body, d.Task.Todos, err)
+	}
+	d, err = e.s.GetTask(e.ctx, globex, core.TaskIDIn{ID: g.ID})
+	if err != nil || d.Task.Body != "" || !slices.Equal(texts(d.Task.Todos), []string{"Book a venue"}) {
+		t.Fatalf("globex task: %q %+v %v", d.Task.Body, d.Task.Todos, err)
+	}
+	if d, _ = e.s.GetTask(e.ctx, globex, core.TaskIDIn{ID: plain.ID}); d.Task.Body != "Nothing to tick" || len(d.Task.Todos) != 0 {
+		t.Fatalf("plain task changed: %+v", d.Task)
+	}
+	// Running it again finds nothing left, and leaves no workspace set behind.
+	var org string
+	if err := e.s.DB.Pool.QueryRow(e.ctx, `SELECT convert_checklists(), coalesce(current_setting('app.org_id', true), '')`).Scan(&n, &org); err != nil || n != 0 || org != "" {
+		t.Fatalf("second run: %d %q %v", n, org, err)
 	}
 }
 
