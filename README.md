@@ -71,7 +71,7 @@ Point `tasks.example.com` and `*.tasks.example.com` at the server. Caddy issues 
 |---|---|
 | `DATABASE_URL` | Postgres URL. The server creates and uses a restricted `handoff_app` role for all queries. |
 | `HANDOFF_BASE_URL` | Public URL, e.g. `https://tasks.example.com`. Workspaces are `https://<slug>.tasks.example.com`. |
-| `HANDOFF_SECRET` | Random secret, required in production. |
+| `HANDOFF_SECRET` | 32+ random characters, the same on every server and kept across restarts; the server won't start without it outside dev mode. |
 | `HANDOFF_SINGLE_ORG`, `HANDOFF_SINGLE_ORG_NAME`, `HANDOFF_ADMIN_EMAIL` | Self-host one workspace directly on `HANDOFF_BASE_URL`. |
 | `HANDOFF_ALLOW_SIGNUP` | Whether anyone can create a workspace on the apex (default: on, unless single-org). |
 | `HANDOFF_SMTP_URL`, `HANDOFF_MAIL_FROM` | Email for sign-in links and invites. Without SMTP, links are logged. |

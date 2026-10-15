@@ -68,11 +68,18 @@ func Load() (*Config, error) {
 	if v, ok := os.LookupEnv("HANDOFF_ALLOW_SIGNUP"); ok {
 		c.AllowSignup = truthy(v) && c.SingleOrg == ""
 	}
-	if s := os.Getenv("HANDOFF_SECRET"); s != "" {
+	// The secret encrypts stored credentials and signs links, so it must survive restarts and be
+	// the same on every process. Only dev mode may make one up.
+	switch s := os.Getenv("HANDOFF_SECRET"); {
+	case len(s) >= 32:
 		c.Secret = []byte(s)
-	} else {
+	case c.Dev && s == "":
 		c.Secret = make([]byte, 32)
 		_, _ = rand.Read(c.Secret)
+	case c.Dev:
+		c.Secret = []byte(s)
+	default:
+		return nil, fmt.Errorf("HANDOFF_SECRET must be set to 32 or more random characters, the same on every server and kept across restarts (generate one with: openssl rand -hex 32)")
 	}
 	return c, nil
 }
