@@ -372,6 +372,12 @@ func (s *Service) geocode(ctx context.Context, q string) (*geo, error) {
 		return nil, ctx.Err()
 	case <-time.After(time.Until(slot)):
 	}
+	geocoder.Lock()
+	h, ok := geocoder.cache[key] // a call for the same place may have answered while this one waited
+	geocoder.Unlock()
+	if ok && (h.g != nil || time.Since(h.at) < geoMissFor) {
+		return h.g, nil
+	}
 	u := geocoderURL() + "?" + url.Values{"q": {q}, "format": {"jsonv2"}, "limit": {"1"}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
