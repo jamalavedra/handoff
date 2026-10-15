@@ -384,7 +384,9 @@ type extTool struct {
 var fnUnsafe = regexp.MustCompile(`[^A-Za-z0-9_]+`)
 
 // externalTools lists the switched-on tools of every connection (at most 24 in all).
-func (s *Service) externalTools(ctx context.Context, org string) ([]extTool, error) {
+// externalTools are the switched-on tools of the workspace's connections. readOnly keeps only those
+// their server declares read-only: for turns any member's text can start, like triage.
+func (s *Service) externalTools(ctx context.Context, org string, readOnly bool) ([]extTool, error) {
 	type row struct {
 		id, name string
 		tools    []byte
@@ -418,7 +420,7 @@ func (s *Service) externalTools(ctx context.Context, org string) ([]extTool, err
 			prefix = prefix[:16]
 		}
 		for _, t := range ts {
-			if !slices.Contains(r.enabled, t.Name) || t.Destructive || len(out) >= 24 {
+			if !slices.Contains(r.enabled, t.Name) || t.Destructive || (readOnly && !t.ReadOnly) || len(out) >= 24 {
 				continue
 			}
 			fn := "ext_" + prefix + "__" + strings.Trim(fnUnsafe.ReplaceAllString(t.Name, "_"), "_")

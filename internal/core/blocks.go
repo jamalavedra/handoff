@@ -63,6 +63,13 @@ func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string
 		a.add(ctx, step)
 		return `{"error":"this message already has enough images and maps"}`
 	}
+	if b.tool == imagesPlugin.tool {
+		if raw = a.onlyFoundPages(raw); raw == nil {
+			step.Summary, step.Error = "Didn't show pictures", "only pages your lookups returned this turn"
+			a.add(ctx, step)
+			return `{"error":"show_images only takes pages that a lookup returned in this turn"}`
+		}
+	}
 	rctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	data, summary, err := b.resolve(rctx, a.s, raw)
@@ -80,6 +87,41 @@ func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string
 	a.out.Blocks = append(a.out.Blocks, Block{Type: b.kind, Data: d})
 	a.add(ctx, step)
 	return `{"ok":true,"shown":"under your message; don't repeat it as text, refer to it"}`
+}
+
+var pageURL = regexp.MustCompile(`https?://[^\s"'<>\\)\]]+`)
+
+func normPage(u string) string { return strings.TrimRight(strings.TrimSpace(u), "/.,;:!?") }
+
+// foundPages remembers the pages a lookup returned.
+func (a *assistantRun) foundPages(text string) {
+	if a.found == nil {
+		a.found = map[string]bool{}
+	}
+	for _, u := range pageURL.FindAllString(text, 500) {
+		a.found[normPage(u)] = true
+	}
+}
+
+// onlyFoundPages drops pages no lookup returned this turn, or returns nil if none is left. Text in
+// a task or chat can't make the agent fetch a page of its choosing, with private data in its URL.
+func (a *assistantRun) onlyFoundPages(raw json.RawMessage) json.RawMessage {
+	var in imagesIn
+	if json.Unmarshal(raw, &in) != nil {
+		return raw
+	}
+	pages := in.Pages[:0]
+	for _, p := range in.Pages {
+		if a.found[normPage(p.URL)] {
+			pages = append(pages, p)
+		}
+	}
+	if len(pages) == 0 {
+		return nil
+	}
+	in.Pages = pages
+	out, _ := json.Marshal(in)
+	return out
 }
 
 // ---- images: pictures from the pages it cites ----

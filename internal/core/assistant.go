@@ -223,7 +223,7 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 		defer s.progressDone(ctx, a.progress)
 	}
 	defer a.sessions.close()
-	if a.ext, err = s.externalTools(ctx, p.Org.ID); err != nil {
+	if a.ext, err = s.externalTools(ctx, p.Org.ID, false); err != nil {
 		return out, err
 	}
 	defer func() { t.steps, t.changed, t.blocks = slices.Clone(out.Steps), out.Changed, slices.Clone(out.Blocks) }()
@@ -587,6 +587,8 @@ type assistantRun struct {
 	// ext are the tools of the workspace's connections (web search…), with sessions kept for the turn.
 	ext      []extTool
 	sessions extSessions
+	// found are the pages this turn's lookups returned: the only ones whose pictures it may show.
+	found    map[string]bool
 	progress *progress
 	task     string // the task the server runs this turn on, when it does
 }
@@ -1061,6 +1063,7 @@ func (a *assistantRun) callExternal(ctx context.Context, t extTool, args string)
 		return string(b)
 	}
 	a.add(ctx, step)
+	a.foundPages(text)
 	b, _ := json.Marshal(map[string]string{"source": t.conn, "content": text})
 	return string(b)
 }
