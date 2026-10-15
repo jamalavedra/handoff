@@ -199,7 +199,7 @@ func TestAssistantSeesOnlyWhatThePersonSees(t *testing.T) {
 
 	// Opening it by id doesn't work either, even as the open task.
 	srv2, reqs2 := scriptedModel(t, calls(toolCall("c1", "get_task", map[string]any{"id": secretID})), say("Can't see it."))
-	e.s.OutboundHTTP = srv2.Client()
+	e.useHTTP(srv2.Client())
 	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m", Credential: "sk-test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestAssistantWritesWorkIntoTheTask(t *testing.T) {
 	people = e.create(t, admin, core.NewTask{Title: "Pick a venue", Body: "Budget 5k"})[0].ID
 	own = e.create(t, admin, core.NewTask{Title: "Draft agenda"})[0].ID
 	// The fake can't know ids up front, so it uses placeholders the test swaps in.
-	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"PEOPLE": people, "OWN": own}, srv.Client().Transport}}
+	e.useHTTP(&http.Client{Transport: rewrite{map[string]string{"PEOPLE": people, "OWN": own}, srv.Client().Transport}})
 
 	out, err := e.s.AssistantChat(e.ctx, admin, ask("compare venues"))
 	if err != nil {
@@ -339,7 +339,7 @@ func TestAssistantRetryDoesNotRepeatWrites(t *testing.T) {
 	srv, reqs := scriptedModel(t, writes, map[string]any{"_status": http.StatusBadGateway}, again, say("Booked and noted."))
 	e, admin, _ := assistantEnv(t, srv, "asstretry")
 	task := e.create(t, admin, core.NewTask{Title: "Plan the offsite"})[0].ID
-	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"TASK": task}, srv.Client().Transport}}
+	e.useHTTP(&http.Client{Transport: rewrite{map[string]string{"TASK": task}, srv.Client().Transport}})
 
 	in := ask("book a venue and note it on the offsite task")
 	in.Turn = "turn-1"
@@ -351,7 +351,10 @@ func TestAssistantRetryDoesNotRepeatWrites(t *testing.T) {
 	if out.Error == "" || !strings.Contains(out.Error, "502") || len(out.Steps) != 3 || !out.Changed || out.Reply != "" {
 		t.Fatalf("partial result: %+v", out)
 	}
-	out, err = e.s.AssistantChat(e.ctx, admin, in)
+	// The retry lands on another server, which only shares the database.
+	other := core.New(e.s.DB, e.s.Cfg)
+	other.OutboundHTTP = e.s.OutboundHTTP
+	out, err = other.AssistantChat(e.ctx, admin, in)
 	if err != nil || out.Error != "" || out.Reply != "Booked and noted." || len(out.Steps) != 4 {
 		t.Fatalf("retry: %+v %v", out, err)
 	}
@@ -381,7 +384,7 @@ func TestAssistantReadsLeaveNoTrace(t *testing.T) {
 	if _, err := e.s.Comment(e.ctx, helper, core.CommentIn{ID: task, Body: "@Acme Bot can you check this?"}); err != nil {
 		t.Fatal(err)
 	}
-	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"TASK": task}, srv.Client().Transport}}
+	e.useHTTP(&http.Client{Transport: rewrite{map[string]string{"TASK": task}, srv.Client().Transport}})
 	before, err := e.s.Inbox(e.ctx, bot, core.InboxIn{})
 	if err != nil || before.Unread != 1 {
 		t.Fatalf("agent inbox before: %+v %v", before, err)
@@ -423,7 +426,7 @@ func TestAssistantCantReachAnotherOwnersPrivateWork(t *testing.T) {
 	}
 	secret := e.create(t, admin, core.NewTask{Title: "salary review", Project: "Board"})[0].ID
 	open := e.create(t, admin, core.NewTask{Title: "open task"})[0].ID
-	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"SECRET": secret, "OPEN": open}, srv.Client().Transport}}
+	e.useHTTP(&http.Client{Transport: rewrite{map[string]string{"SECRET": secret, "OPEN": open}, srv.Client().Transport}})
 	if _, err := e.s.Invite(e.ctx, admin, core.InviteIn{Email: "bob@asstowner.test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +470,7 @@ func TestAssistantCantReachAnotherOwnersPrivateWork(t *testing.T) {
 
 	// The same as the open task.
 	srv2, reqs2 := scriptedModel(t, say("ok"))
-	e.s.OutboundHTTP = srv2.Client()
+	e.useHTTP(srv2.Client())
 	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv2.URL + "/v1", Model: "m", Credential: "sk-test"}); err != nil {
 		t.Fatal(err)
 	}

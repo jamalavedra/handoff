@@ -397,7 +397,7 @@ func TestAssistantWorksThroughTodos(t *testing.T) {
 	}
 	task := e.create(t, admin, core.NewTask{Title: "Buy Halloween costume", Project: "Home", Todos: []string{"Check what's trending", "Pick a direction"}})[0]
 	d := waitTriage(t, e, admin, task.ID) // nothing else calls the model from here on
-	e.s.OutboundHTTP = &http.Client{Transport: rewrite{map[string]string{"TASK": task.ID, "TODO": d.Task.Todos[0].ID}, srv.Client().Transport}}
+	e.useHTTP(&http.Client{Transport: rewrite{map[string]string{"TASK": task.ID, "TODO": d.Task.Todos[0].ID}, srv.Client().Transport}})
 	in := ask("go through the todos")
 	in.Task = task.ID
 	out, err := e.s.AssistantChat(e.ctx, admin, in)

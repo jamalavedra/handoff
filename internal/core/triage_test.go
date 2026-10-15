@@ -51,12 +51,23 @@ func triageEnv(t *testing.T, srv *httptest.Server) *env {
 	t.Helper()
 	base, _ := url.Parse("http://handoff.test")
 	s := core.New(testutil.DB(t), &config.Config{BaseURL: base, Secret: []byte("test secret")})
-	s.OutboundHTTP = srv.Client()
+	rt := &swapRT{}
+	rt.c.Store(srv.Client())
+	s.OutboundHTTP = &http.Client{Transport: rt}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go s.RunTriage(ctx)
-	return &env{s: s, ctx: context.Background()}
+	return &env{s: s, ctx: context.Background(), rt: rt}
 }
+
+// swapRT lets a test change the model client while the triage loop is already using it.
+type swapRT struct{ c atomic.Pointer[http.Client] }
+
+func (s *swapRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	return s.c.Load().Transport.RoundTrip(r)
+}
+
+func (e *env) useHTTP(c *http.Client) { e.rt.c.Store(c) }
 
 // waitTriage polls until the task leaves the pending state.
 func waitTriage(t *testing.T, e *env, p *core.Principal, id string) core.TaskDetailOut {
