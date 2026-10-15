@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -67,7 +68,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	// Nobody is added or activated until the link is opened, which proves the address.
 	if err := s.Svc.CanSignIn(r.Context(), org, in.Email); err == nil {
 		link, err := s.sendLoginLink(r, org, in.Email, "", in.Next)
-		if err != nil {
+		if errors.Is(err, auth.ErrBusy) {
+			slog.Warn("login links capped", "org", org.Slug)
+		} else if err != nil {
 			slog.Error("send login link", "err", err)
 			writeErr(w, 500, "couldn't send the email")
 			return
@@ -82,9 +85,20 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, resp)
 }
 
+// verifyPage asks for a click before the link is used up: mail scanners that open links only send GETs.
+func (s *Server) verifyPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	fmt.Fprintf(w, `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in</title>
+<form method="post" style="font:16px system-ui;max-width:24rem;margin:20vh auto;text-align:center">
+<p>Sign in to %s on Handoff</p><input type="hidden" name="token" value="%s"><button style="font:inherit;padding:.6rem 1.4rem">Sign in</button></form>`,
+		html.EscapeString(orgFrom(r).Name), html.EscapeString(r.URL.Query().Get("token")))
+}
+
 func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 	org := orgFrom(r)
-	lt, err := s.Auth.ConsumeLoginToken(r.Context(), org.ID, r.URL.Query().Get("token"))
+	lt, err := s.Auth.ConsumeLoginToken(r.Context(), org.ID, r.FormValue("token"))
 	if err != nil {
 		http.Redirect(w, r, "/login?error=expired", http.StatusSeeOther)
 		return

@@ -437,14 +437,15 @@ func (s *Service) Invite(ctx context.Context, p *Principal, in InviteIn) (Member
 		}
 		m, err := scanMember(c.tx.QueryRow(c.ctx, `INSERT INTO members (org_id, kind, name, email, role, status)
 			VALUES ($1, 'human', $2, $3, $4, 'invited')
-			ON CONFLICT (org_id, lower(email)) WHERE kind = 'human' DO UPDATE SET role = EXCLUDED.role,
+			ON CONFLICT (org_id, lower(email)) WHERE kind = 'human' DO UPDATE SET
+				role = CASE WHEN members.status = 'revoked' THEN EXCLUDED.role ELSE members.role END,
 				status = CASE WHEN members.status = 'revoked' THEN 'invited' ELSE members.status END
 			RETURNING `+memberCols, p.Org.ID, name, email, role))
 		if err != nil {
 			return err
 		}
 		out = c.memberOut(m)
-		return c.event("", "member_invited", map[string]any{"email": email, "role": role})
+		return c.event("", "member_invited", map[string]any{"email": email, "role": m.Role})
 	})
 	return out, err
 }
