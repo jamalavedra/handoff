@@ -112,19 +112,19 @@ function AgentCard({ a, mine }: { a: Member; mine: boolean }) {
           <div>
             <div className="mb-1 text-[13px] font-medium text-muted-foreground">Can</div>
             {ACTIONS.map((x) => (
-              <label key={x} className="flex items-center gap-1.5"><input type="checkbox" checked={perms.actions.includes(x)} onChange={() => toggle("actions", x)} />{x}</label>
+              <label key={x} className="flex items-center gap-1.5"><input type="checkbox" disabled={save.isPending} checked={perms.actions.includes(x)} onChange={() => toggle("actions", x)} />{x}</label>
             ))}
           </div>
           <div>
             <div className="mb-1 text-[13px] font-medium text-muted-foreground">Needs approval to</div>
             {["delete"].map((x) => (
-              <label key={x} className="flex items-center gap-1.5"><input type="checkbox" checked={perms.approval.includes(x)} onChange={() => toggle("approval", x)} />{x}</label>
+              <label key={x} className="flex items-center gap-1.5"><input type="checkbox" disabled={save.isPending} checked={perms.approval.includes(x)} onChange={() => toggle("approval", x)} />{x}</label>
             ))}
             <div className="mb-1 mt-3 text-[13px] font-medium text-muted-foreground">Projects</div>
-            <label className="flex items-center gap-1.5"><input type="checkbox" checked={allProjects} onChange={() => save.mutate({ ...perms, projects: allProjects ? [] : ["*"] })} />All I can see</label>
+            <label className="flex items-center gap-1.5"><input type="checkbox" disabled={save.isPending} checked={allProjects} onChange={() => save.mutate({ ...perms, projects: allProjects ? [] : ["*"] })} />All I can see</label>
             {!allProjects && projects.data?.projects.map((p) => (
               <label key={p.id} className="flex items-center gap-1.5">
-                <input type="checkbox" checked={perms.projects.includes(p.id)} onChange={() => save.mutate({ ...perms, projects: perms.projects.includes(p.id) ? perms.projects.filter((x) => x !== p.id) : [...perms.projects, p.id] })} />{p.name}
+                <input type="checkbox" disabled={save.isPending} checked={perms.projects.includes(p.id)} onChange={() => save.mutate({ ...perms, projects: perms.projects.includes(p.id) ? perms.projects.filter((x) => x !== p.id) : [...perms.projects, p.id] })} />{p.name}
               </label>
             ))}
           </div>

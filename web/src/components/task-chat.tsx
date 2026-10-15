@@ -67,7 +67,7 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   const send = useMutation({
     // A quick answer stands alone: it drops the reply that was open (`drop`) instead of answering it.
     mutationFn: (v: { body: string; reply?: ReplyDraft | null; drop?: ReplyDraft | null }) => api.tool("comment", { id, body: v.body, ...replyArgs(v.reply ?? null) }),
-    onSuccess: (_, v) => { setComment(""); const sent = v.reply ?? v.drop; if (sent) setReply((r) => (r === sent ? null : r)); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
+    onSuccess: (_, v) => { setComment((c) => (c === v.body ? "" : c)); const sent = v.reply ?? v.drop; if (sent) setReply((r) => (r === sent ? null : r)); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
