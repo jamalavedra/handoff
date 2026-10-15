@@ -449,6 +449,7 @@ type CommentOut struct {
 	Reactions  []ReactionOut `json:"reactions"`
 	Lookups    []Lookup      `json:"lookups,omitempty"`
 	Options    []string      `json:"options,omitempty" jsonschema:"quick answers the agent offered with its question"`
+	Blocks     []Block       `json:"blocks,omitempty" jsonschema:"images, maps… the agent attached to its message"`
 	// Activity is what the agent did while working on this message, in order.
 	Activity []ActivityStep `json:"activity,omitempty"`
 	ReplyTo  *ReplyRef      `json:"reply_to,omitempty" jsonschema:"the message this one replies to"`
@@ -516,7 +517,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 		if out.Here, err = c.here(r.ID); err != nil {
 			return err
 		}
-		rows, err := c.tx.Query(c.ctx, `SELECT c.id, c.author_id::text, coalesce(c.on_behalf_of::text, ''), c.body, c.created_at, c.lookups, c.activity, c.options,
+		rows, err := c.tx.Query(c.ctx, `SELECT c.id, c.author_id::text, coalesce(c.on_behalf_of::text, ''), c.body, c.created_at, c.lookups, c.activity, c.options, c.blocks,
 				coalesce(rc.id::text, ''), coalesce(rc.author_id::text, ''), coalesce(c.quote, ''), coalesce(rc.body, '')
 			FROM comments c LEFT JOIN comments rc ON rc.id = c.reply_to WHERE c.task_id = $1 ORDER BY c.created_at`, r.ID)
 		if err != nil {
@@ -526,7 +527,7 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 			var co CommentOut
 			var author, obo, replyID, replyAuthor, quote, replyBody string
 			var at time.Time
-			if err := rows.Scan(&co.ID, &author, &obo, &co.Body, &at, &co.Lookups, &co.Activity, &co.Options, &replyID, &replyAuthor, &quote, &replyBody); err != nil {
+			if err := rows.Scan(&co.ID, &author, &obo, &co.Body, &at, &co.Lookups, &co.Activity, &co.Options, &co.Blocks, &replyID, &replyAuthor, &quote, &replyBody); err != nil {
 				rows.Close()
 				return err
 			}
@@ -1225,6 +1226,7 @@ type commentExtra struct {
 	activity []ActivityStep
 	done     *Member  // gets an agent_done notification
 	options  []string // quick answers to the question it asks
+	blocks   []Block
 
 	replyTo, quote string // the message this replies to, and the part of it quoted
 }
@@ -1274,9 +1276,12 @@ func (c *call) addComment(taskID, body string, x commentExtra) error {
 	if len(x.activity) > 0 {
 		act, _ = json.Marshal(x.activity)
 	}
-	var opts []byte
+	var opts, blocks []byte
 	if len(x.options) > 0 {
 		opts, _ = json.Marshal(x.options)
+	}
+	if len(x.blocks) > 0 {
+		blocks, _ = json.Marshal(x.blocks)
 	}
 	// A reply points at a message in the same chat; the quote is one line, clipped.
 	var replyTo, quote *string
@@ -1294,9 +1299,9 @@ func (c *call) addComment(taskID, body string, x commentExtra) error {
 			quote = &q
 		}
 	}
-	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body, lookups, activity, options, reply_to, quote)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body, lk, act, opts, replyTo, quote).Scan(&commentID); err != nil {
+	if err := c.tx.QueryRow(c.ctx, `INSERT INTO comments (org_id, task_id, author_id, on_behalf_of, body, lookups, activity, options, blocks, reply_to, quote)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		RETURNING id::text`, c.p.Org.ID, taskID, c.p.Member.ID, c.p.onBehalfOf(), body, lk, act, opts, blocks, replyTo, quote).Scan(&commentID); err != nil {
 		return err
 	}
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, taskID); err != nil {

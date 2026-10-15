@@ -290,7 +290,7 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		if !finished {
 			out.asked = nil // no question was posted: nothing to wait on
 		}
-		extra := commentExtra{lookups: lookups(out.Steps), activity: activity(out.Steps), options: out.asked}
+		extra := commentExtra{lookups: lookups(out.Steps), activity: activity(out.Steps), options: out.asked, blocks: out.Blocks}
 		if finished && out.asked == nil { // a question it handed back is announced as that, not as done
 			extra.done = person.Member
 		}

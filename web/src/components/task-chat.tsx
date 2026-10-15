@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, AtSign, ChevronDown, Globe, MessageSquare, Search, SmilePlus } from "lucide-react";
 import { sources } from "../checklist";
+import { Blocks } from "../blocks";
 import { toast } from "sonner";
 import { ago, api, cn, type Comment, type Event, type Lookup, type Member, type MemberRef, type Task } from "../lib";
 import { mentionQuery } from "../quickadd";
@@ -188,6 +189,7 @@ function Bubble({ c, mine, mentions, locked, answers, onAnswer }: { c: Comment; 
           {!c.activity?.length && c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
           <QuotedReply r={c.reply_to} />
           <Markdown text={c.body} mentions={mentions} />
+          <Blocks blocks={c.blocks} />
           {cited.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
               Sources
