@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -167,7 +169,7 @@ func (s *Service) RefreshConnection(ctx context.Context, p *Principal, in Connec
 	var out ConnectionOut
 	err = s.run(ctx, p, func(c *call) error {
 		if lerr != nil {
-			_, err := c.tx.Exec(c.ctx, `UPDATE mcp_connections SET last_error = $2, updated_at = now() WHERE id::text = $1`, in.ID, clip(lerr.Error(), 300))
+			_, err := c.tx.Exec(c.ctx, `UPDATE mcp_connections SET last_error = $2, updated_at = now() WHERE id::text = $1`, in.ID, clip(noURL(lerr), 300))
 			if err != nil {
 				return err
 			}
@@ -464,7 +466,7 @@ func (s *Service) callExternal(ctx context.Context, sessions extSessions, t extT
 	if cs == nil {
 		var err error
 		if cs, err = s.openServer(ctx, t.server); err != nil {
-			return "", fmt.Errorf("couldn't reach %s: %s", t.conn, clip(err.Error(), 200))
+			return "", fmt.Errorf("couldn't reach %s: %s", t.conn, clip(noURL(err), 200))
 		}
 		sessions[t.server.id] = cs
 	}
@@ -476,7 +478,7 @@ func (s *Service) callExternal(ctx context.Context, sessions extSessions, t extT
 	}
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: t.tool, Arguments: a})
 	if err != nil {
-		return "", fmt.Errorf("%s: %s", t.conn, clip(err.Error(), 200))
+		return "", fmt.Errorf("%s: %s", t.conn, clip(noURL(err), 200))
 	}
 	var b strings.Builder
 	for _, c := range res.Content {
@@ -494,4 +496,26 @@ func (s *Service) callExternal(ctx context.Context, sessions extSessions, t extT
 		return "", fmt.Errorf("%s: %s", t.conn, clip(text, 300))
 	}
 	return clipBytes(text, 12000), nil
+}
+
+// noURL is an error's text without the address it was calling: some services put their key in it,
+// and lookup errors are shown to everyone on the task.
+func noURL(err error) string {
+	s := err.Error()
+	for e := err; ; {
+		var ue *url.Error
+		if !errors.As(e, &ue) {
+			return s
+		}
+		s = strings.ReplaceAll(strings.ReplaceAll(s, strconv.Quote(ue.URL), `"…"`), ue.URL, "…")
+		e = ue.Err
+	}
+}
+
+// endpointHost is the part of a connection's address that is safe to show in Activity.
+func endpointHost(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil {
+		return u.Host
+	}
+	return ""
 }

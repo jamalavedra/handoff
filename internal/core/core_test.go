@@ -17,6 +17,7 @@ import (
 type env struct {
 	s   *core.Service
 	ctx context.Context
+	rt  *swapRT
 }
 
 func setup(t *testing.T) *env {

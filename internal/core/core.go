@@ -168,9 +168,6 @@ type Service struct {
 	outboundOnce sync.Once
 	hooksBusy    sync.Map      // workspaces with a webhook round running
 	hookSlots    chan struct{} // bounds how many workspaces deliver at once
-	// assistant turns in progress or recently finished, so a retried turn resumes instead of repeating writes.
-	turnsMu sync.Mutex
-	turns   map[string]*assistantTurn
 }
 
 func New(d *db.DB, cfg *config.Config) *Service {

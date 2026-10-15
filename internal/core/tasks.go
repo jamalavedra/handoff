@@ -685,11 +685,14 @@ func parseRepeat(s string) (string, error) {
 
 // nextDue is the next occurrence after today, counted on from the current due date (or from today when
 // there is none), skipping any that are already in the past.
-func nextDue(repeat string, due *time.Time, today time.Time) time.Time {
+func nextDue(repeat string, due *time.Time, today time.Time, day int) time.Time {
 	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 	d := today
 	if due != nil {
 		d = time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	if day == 0 {
+		day = d.Day()
 	}
 	step := func(t time.Time) time.Time {
 		switch repeat {
@@ -706,9 +709,9 @@ func nextDue(repeat string, due *time.Time, today time.Time) time.Time {
 		case "biweekly":
 			return t.AddDate(0, 0, 14)
 		case "monthly":
-			return t.AddDate(0, 1, 0)
+			return addMonths(t, 1, day)
 		default: // yearly
-			return t.AddDate(1, 0, 0)
+			return addMonths(t, 12, day)
 		}
 	}
 	d = step(d)
@@ -718,12 +721,39 @@ func nextDue(repeat string, due *time.Time, today time.Time) time.Time {
 	return d
 }
 
+// addMonths moves t by n months, keeping day of the month or the month's last day when it's shorter.
+func addMonths(t time.Time, n, day int) time.Time {
+	first := time.Date(t.Year(), t.Month()+time.Month(n), 1, 0, 0, 0, 0, time.UTC)
+	return first.AddDate(0, 0, min(day, first.AddDate(0, 1, -1).Day())-1)
+}
+
+// seriesDay is the day of the month a monthly or yearly series falls on: the one it was started on
+// (kept through short months), unless the due date was since moved to another day.
+func seriesDay(stored int, due *time.Time) int {
+	if due == nil {
+		return 0
+	}
+	if last := time.Date(due.Year(), due.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day(); stored > 0 && min(stored, last) == due.Day() {
+		return stored
+	}
+	return due.Day()
+}
+
+// closerToday is the closer's local date when they sent a plausible one (a day either side of UTC's).
+func closerToday(local string, now time.Time) time.Time {
+	utc := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	if d, err := time.Parse("2006-01-02", local); err == nil && !d.Before(utc.AddDate(0, 0, -1)) && !d.After(utc.AddDate(0, 0, 1)) {
+		return d
+	}
+	return utc
+}
+
 // nextOccurrence creates the next task in a repeating series, carrying its fields over. The series
 // belongs to whoever created it, so the new task is created as them while they're still active (or
 // else as the closer, if allowed to create tasks); when neither can, the series ends with an event.
 // Nothing about the next occurrence can stop the current task from closing: an assignee who left
 // or a parent that's gone are simply not carried over.
-func (c *call) nextOccurrence(r *taskRow) (*TaskOut, error) {
+func (c *call) nextOccurrence(r *taskRow, today time.Time) (*TaskOut, error) {
 	maker := c.p
 	if m := c.members[r.CreatedBy]; m != nil && m.Status == "active" && m.ID != c.p.Member.ID {
 		mp := &Principal{Org: c.p.Org, Member: m, Via: c.p.Via}
@@ -737,6 +767,11 @@ func (c *call) nextOccurrence(r *taskRow) (*TaskOut, error) {
 	if maker == c.p && c.p.Member.IsAgent() && !c.p.can(ActCreate) {
 		return nil, c.event(r.ID, "repeat_ended", map[string]any{"reason": "nobody who may create tasks is left to continue the series"})
 	}
+	var stored int
+	if err := c.tx.QueryRow(c.ctx, `SELECT coalesce(repeat_day, 0) FROM tasks WHERE id = $1`, r.ID).Scan(&stored); err != nil {
+		return nil, err
+	}
+	day := seriesDay(stored, r.Due)
 	prio := r.Priority
 	// The next one starts with the same steps, none done.
 	var todos []string
@@ -749,7 +784,7 @@ func (c *call) nextOccurrence(r *taskRow) (*TaskOut, error) {
 	}
 	nt := NewTask{
 		Title: r.Title, Body: r.Body, Project: r.ProjectID, Priority: &prio, Todos: todos,
-		Due: nextDue(r.Repeat, r.Due, time.Now().UTC()).Format("2006-01-02"), Labels: r.Labels, Repeat: r.Repeat,
+		Due: nextDue(r.Repeat, r.Due, today, day).Format("2006-01-02"), Labels: r.Labels, Repeat: r.Repeat,
 	}
 	if m := c.members[r.AssigneeID]; m != nil && m.Status == "active" {
 		nt.Assignee = m.ID
@@ -763,6 +798,9 @@ func (c *call) nextOccurrence(r *taskRow) (*TaskOut, error) {
 	mc.p = maker
 	id, _, err := mc.createOne(nt)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET repeat_day = $2 WHERE id = $1`, id, day); err != nil {
 		return nil, err
 	}
 	n, err := c.getTask(id, false, false)
@@ -1196,6 +1234,7 @@ type CloseTaskIn struct {
 	ID     string `json:"id"`
 	Status string `json:"status,omitempty" jsonschema:"done (default) or archived"`
 	Reason string `json:"reason,omitempty" jsonschema:"short note on the outcome"`
+	Today  string `json:"today,omitempty" jsonschema:"your local date (YYYY-MM-DD): a repeating task's next date counts from it; defaults to today in UTC"`
 }
 
 type CloseTaskOut struct {
@@ -1239,10 +1278,23 @@ func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (
 		}
 		out.Task = c.out(r, true)
 		// Done with a repeating task: the next one is due one interval later. Cancelling ends the series.
+		// Reopened and closed again: the next one made the first time still stands.
+		var made bool
 		if continues {
-			next, err := c.nextOccurrence(r)
+			// Even a trashed next one counts: it can be restored.
+			if err := c.tx.QueryRow(c.ctx, `SELECT next_id IS NOT NULL FROM tasks WHERE id = $1`, r.ID).Scan(&made); err != nil {
+				return err
+			}
+		}
+		if continues && !made {
+			next, err := c.nextOccurrence(r, closerToday(in.Today, time.Now()))
 			if err != nil {
 				return err
+			}
+			if next != nil {
+				if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET next_id = $2 WHERE id = $1`, r.ID, next.ID); err != nil {
+					return err
+				}
 			}
 			out.Next = next
 		}
@@ -1557,7 +1609,7 @@ func (s *Service) Trash(ctx context.Context, p *Principal, in TrashIn) (TrashOut
 
 func (c *call) trash(id, reason string) error {
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET deleted_at = now(), deleted_by = $2, claimed_by = NULL,
-		claim_expires_at = NULL, updated_at = now() WHERE id = $1`, id, c.p.Member.ID); err != nil {
+		claim_expires_at = NULL, triage = nullif(triage, 'pending'), updated_at = now() WHERE id = $1`, id, c.p.Member.ID); err != nil {
 		return err
 	}
 	return c.event(id, "trashed", map[string]any{"reason": reason})

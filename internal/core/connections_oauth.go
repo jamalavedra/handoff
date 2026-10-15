@@ -323,7 +323,7 @@ func (s *Service) FinishConnectionOAuth(ctx context.Context, p *Principal, state
 	tools, listErr := s.listServerTools(ctx, connServer{url: endpoint, auth: "oauth", secret: sec.Access})
 	out, err = s.saveConnection(ctx, p, name, endpoint, "oauth", "", sec, tools)
 	if err == nil && listErr != nil {
-		err = errf(ErrInvalid, "%s is connected, but its tools couldn't be listed (%s); use Refresh", name, clip(listErr.Error(), 120))
+		err = errf(ErrInvalid, "%s is connected, but its tools couldn't be listed (%s); use Refresh", name, clip(noURL(listErr), 120))
 	}
 	return out, err
 }
@@ -365,7 +365,7 @@ func (s *Service) saveConnection(ctx context.Context, p *Principal, name, endpoi
 			}
 			return err
 		}
-		if err := c.event("", "connection_added", map[string]any{"name": name, "url": endpoint, "tools": len(tools)}); err != nil {
+		if err := c.event("", "connection_added", map[string]any{"name": name, "host": endpointHost(endpoint), "tools": len(tools)}); err != nil {
 			return err
 		}
 		all, err := c.connections()
