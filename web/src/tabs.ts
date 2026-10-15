@@ -7,8 +7,8 @@ export type Tabs = { tabs: Tab[]; active: string };
 
 export const home = "/";
 
-// What a tab is named after: a task page, a project, or another page.
-export type Target = { kind: "task"; id: string } | { kind: "project"; id: string } | { kind: "page"; path: string };
+// What a tab is named after: a task page, a project, a note, or another page.
+export type Target = { kind: "task"; id: string } | { kind: "project"; id: string } | { kind: "note"; id: string } | { kind: "page"; path: string };
 
 const decode = (s: string) => {
   try {
@@ -24,6 +24,8 @@ export function target(href: string): Target {
   if (task) return { kind: "task", id: decode(task) };
   const project = path.match(/^\/projects\/([^/]+)/)?.[1];
   if (project) return { kind: "project", id: decode(project) };
+  const note = path.match(/^\/notes\/([^/]+)/)?.[1];
+  if (note) return { kind: "note", id: decode(note) };
   return { kind: "page", path };
 }
 

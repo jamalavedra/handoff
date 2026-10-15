@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useCanGoBack, useRouter, useRouterState } from "@tanstack/react-router";
-import { Activity, ArrowLeft, ArrowRight, Bell, Bot, CheckSquare, FolderKanban, LayoutGrid, Plus, Settings, Trash2, Users, X, Zap, Plug } from "lucide-react";
-import { api, cn, type Project, type Task } from "../lib";
+import { Activity, ArrowLeft, ArrowRight, Bell, Bot, CheckSquare, FileText, FolderKanban, LayoutGrid, Plus, Settings, Trash2, Users, X, Zap, Plug } from "lucide-react";
+import { api, cn, type Note, type Project, type Task } from "../lib";
 import { agentOnIt } from "../quickadd";
 import * as tabs from "../tabs";
 import { StatusCircle } from "./app";
@@ -290,6 +290,7 @@ function TabLabel({ href, onMissing }: { href: string; onMissing?: () => void })
   const t = tabs.target(href);
   if (t.kind === "task") return <TaskLabel id={t.id} onMissing={onMissing} />;
   if (t.kind === "project") return <ProjectLabel id={t.id} />;
+  if (t.kind === "note") return <NoteLabel id={t.id} />;
   const page = pages[t.path] ?? { label: "Handoff", icon: LayoutGrid };
   return (
     <>
@@ -344,6 +345,17 @@ function TaskLabel({ id, onMissing }: { id: string; onMissing?: () => void }) {
       <span className={iconBox}>{t ? <StatusCircle t={t} small /> : <CheckSquare className="size-3.5 text-foreground/40" />}</span>
       {t ? <Title>{t.title}</Title> : <Title muted>{failed ? "Task not found" : "Loading…"}</Title>}
       {t && agentOnIt(t) && <span aria-hidden className="agent-border pointer-events-none absolute inset-0 rounded-[8px]" />}
+    </>
+  );
+}
+
+// Shares the note page's cache entry; reading a note changes nothing, so background tabs can too.
+function NoteLabel({ id }: { id: string }) {
+  const q = useQuery({ queryKey: ["note", id], queryFn: () => api.tool<{ note: Note }>("get_note", { id }), refetchInterval: false, staleTime: 60_000 });
+  return (
+    <>
+      <span className={iconBox}><FileText className="size-3.5 text-foreground/50" /></span>
+      <Title muted={!q.data}>{q.data?.note.title ?? (q.isError ? "Note not found" : "Loading…")}</Title>
     </>
   );
 }

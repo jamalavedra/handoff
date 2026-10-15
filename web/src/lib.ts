@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import type { ActivityStep } from "./activity";
+import type { Todo, TodoProgress } from "./todos";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -67,6 +68,26 @@ export type Task = {
   // The start of the newest comment an agent left: its one-line status.
   agent_note?: string;
   repeat?: "daily" | "weekdays" | "weekly" | "biweekly" | "monthly" | "yearly";
+  // Its steps, in order (only from get_task), and how far along they are (in lists too).
+  todos?: Todo[];
+  todo_progress?: TodoProgress;
+};
+
+// A note is a markdown document inside a project, for longer work; it can be written for a task.
+export type Note = {
+  id: string;
+  title: string;
+  body?: string;
+  project: string;
+  project_id: string;
+  task?: { id: string; title: string };
+  created_by?: MemberRef;
+  on_behalf_of?: MemberRef;
+  updated_by?: MemberRef;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+  url: string;
 };
 
 export type Project = { id: string; name: string; description?: string; emoji?: string; visibility: string; open_tasks: number; members?: string[] };
