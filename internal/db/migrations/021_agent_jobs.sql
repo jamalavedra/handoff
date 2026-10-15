@@ -12,6 +12,7 @@ CREATE TABLE assistant_turns (
     turn          text NOT NULL,
     state         jsonb NOT NULL DEFAULT '{}',
     running_until timestamptz NOT NULL,
+    lease         text NOT NULL DEFAULT '',
     updated_at    timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, member_id, turn),
     FOREIGN KEY (org_id, member_id) REFERENCES members(org_id, id) ON DELETE CASCADE

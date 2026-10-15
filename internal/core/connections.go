@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -168,7 +169,7 @@ func (s *Service) RefreshConnection(ctx context.Context, p *Principal, in Connec
 	var out ConnectionOut
 	err = s.run(ctx, p, func(c *call) error {
 		if lerr != nil {
-			_, err := c.tx.Exec(c.ctx, `UPDATE mcp_connections SET last_error = $2, updated_at = now() WHERE id::text = $1`, in.ID, clip(lerr.Error(), 300))
+			_, err := c.tx.Exec(c.ctx, `UPDATE mcp_connections SET last_error = $2, updated_at = now() WHERE id::text = $1`, in.ID, clip(noURL(lerr), 300))
 			if err != nil {
 				return err
 			}
@@ -500,11 +501,15 @@ func (s *Service) callExternal(ctx context.Context, sessions extSessions, t extT
 // noURL is an error's text without the address it was calling: some services put their key in it,
 // and lookup errors are shown to everyone on the task.
 func noURL(err error) string {
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return ue.Op + ": " + ue.Err.Error()
+	s := err.Error()
+	for e := err; ; {
+		var ue *url.Error
+		if !errors.As(e, &ue) {
+			return s
+		}
+		s = strings.ReplaceAll(strings.ReplaceAll(s, strconv.Quote(ue.URL), `"…"`), ue.URL, "…")
+		e = ue.Err
 	}
-	return err.Error()
 }
 
 // endpointHost is the part of a connection's address that is safe to show in Activity.

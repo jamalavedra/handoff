@@ -98,6 +98,10 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 	var task, author, kind, comment string
 	var attempts int
 	err = s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
+		// Without the lock, two claims on one task could both pass NOT EXISTS before either commits.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(task_id::text, 0)) FROM chat_replies WHERE id::text = $1`, j.id); err != nil {
+			return err
+		}
 		return tx.QueryRow(ctx, `UPDATE chat_replies SET claim_until = now() + interval '5 minutes', attempts = attempts + 1
 			WHERE id::text = $1 AND state = 'pending' AND (claim_until IS NULL OR claim_until < now())
 			AND NOT EXISTS (SELECT 1 FROM chat_replies o WHERE o.task_id = chat_replies.task_id AND o.id <> chat_replies.id

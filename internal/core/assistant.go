@@ -96,6 +96,7 @@ type AssistantChatOut struct {
 // in assistant_turns, so a retry on another server or after a restart resumes instead of repeating writes.
 type assistantTurn struct {
 	org, member, id string
+	lease           string           // this request's claim: a request that lost it to a retry stops saving
 	msgs            []map[string]any // the turn's tool calls and results, replayed to the model on a retry
 	steps           []AssistantStep
 	rounds          int
@@ -127,15 +128,16 @@ type turnState struct {
 // takeTurn claims a turn for one request: a new one, or an earlier attempt to resume.
 func (s *Service) takeTurn(ctx context.Context, org, member, id string) (*assistantTurn, error) {
 	var raw []byte
+	lease := randomID("l", 16)
 	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM assistant_turns WHERE updated_at < now() - make_interval(secs => $1) AND running_until < now()`,
 			assistantTurnTTL.Seconds()); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO assistant_turns (org_id, member_id, turn, running_until) VALUES ($1, $2, $3, now() + make_interval(secs => $4))
-			ON CONFLICT (org_id, member_id, turn) DO UPDATE SET running_until = excluded.running_until, updated_at = now()
+		return tx.QueryRow(ctx, `INSERT INTO assistant_turns (org_id, member_id, turn, running_until, lease) VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5)
+			ON CONFLICT (org_id, member_id, turn) DO UPDATE SET running_until = excluded.running_until, lease = excluded.lease, updated_at = now()
 			WHERE assistant_turns.running_until < now()
-			RETURNING state`, org, member, id, assistantTurnLease.Seconds()).Scan(&raw)
+			RETURNING state`, org, member, id, assistantTurnLease.Seconds(), lease).Scan(&raw)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errf(ErrConflict, "the assistant is still working on that message")
@@ -147,11 +149,26 @@ func (s *Service) takeTurn(ctx context.Context, org, member, id string) (*assist
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return nil, err
 	}
+	st.Msgs = completeCalls(st.Msgs)
 	if st.Done == nil {
 		st.Done = map[string]string{}
 	}
-	return &assistantTurn{org: org, member: member, id: id, msgs: st.Msgs, steps: st.Steps, rounds: st.Rounds, calls: st.Calls,
+	return &assistantTurn{org: org, member: member, id: id, lease: lease, msgs: st.Msgs, steps: st.Steps, rounds: st.Rounds, calls: st.Calls,
 		changed: st.Changed, done: st.Done, found: st.Found, finished: st.Finished, reply: st.Reply, asked: st.Asked, blocks: st.Blocks}, nil
+}
+
+// completeCalls drops a last round of tool calls that didn't get all its results (the server stopped
+// mid-round), so the model asks again; writes already done answer from the turn's record.
+func completeCalls(msgs []map[string]any) []map[string]any {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if calls, ok := msgs[i]["tool_calls"].([]any); ok {
+			if len(msgs)-1-i < len(calls) {
+				return msgs[:i]
+			}
+			return msgs
+		}
+	}
+	return msgs
 }
 
 // saveTurn stores the turn's progress; running keeps it claimed for another lease.
@@ -166,8 +183,11 @@ func (s *Service) saveTurn(ctx context.Context, t *assistantTurn, running bool) 
 		// The request may be cancelled already: what the turn did is still kept.
 		ctx := context.WithoutCancel(ctx)
 		err = s.DB.InOrg(ctx, t.org, func(tx pgx.Tx) error {
-			_, err := tx.Exec(ctx, `UPDATE assistant_turns SET state = $4, running_until = now() + make_interval(secs => $5), updated_at = now()
-				WHERE member_id = $1 AND turn = $2 AND org_id = $3`, t.member, t.id, t.org, b, lease)
+			tag, err := tx.Exec(ctx, `UPDATE assistant_turns SET state = $4, running_until = now() + make_interval(secs => $5), updated_at = now()
+				WHERE member_id = $1 AND turn = $2 AND org_id = $3 AND lease = $6`, t.member, t.id, t.org, b, lease, t.lease)
+			if err == nil && tag.RowsAffected() == 0 {
+				slog.Warn("assistant turn: a retry took over, not saving", "turn", t.id)
+			}
 			return err
 		})
 	}
