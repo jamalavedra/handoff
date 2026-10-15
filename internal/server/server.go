@@ -436,6 +436,7 @@ type limiter struct {
 	n      int
 	window time.Duration
 	hits   map[string][]time.Time
+	swept  time.Time
 }
 
 func newLimiter(n int, window time.Duration) *limiter {
@@ -446,8 +447,15 @@ func (l *limiter) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
-	if len(l.hits) > 10000 {
-		l.hits = map[string][]time.Time{}
+	// Forget only expired keys, so a flood of new ones can't reset everyone's limit; sweep at most once a window so it stays cheap.
+	// shortcut: memory grows with distinct client IPs per window, move limits to Postgres or Redis if that ever matters.
+	if len(l.hits) > 10000 && now.Sub(l.swept) >= l.window {
+		l.swept = now
+		for k, ts := range l.hits {
+			if now.Sub(ts[len(ts)-1]) >= l.window {
+				delete(l.hits, k)
+			}
+		}
 	}
 	h := l.hits[key][:0]
 	for _, t := range l.hits[key] {
@@ -464,9 +472,9 @@ func (l *limiter) allow(key string) bool {
 }
 
 func clientIP(r *http.Request) string {
+	// The proxy in front (deploy/Caddyfile) appends the address it saw last; earlier entries are the client's to forge.
 	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		ip, _, _ := strings.Cut(f, ",")
-		return strings.TrimSpace(ip)
+		return strings.TrimSpace(f[strings.LastIndex(f, ",")+1:])
 	}
 	ip := r.RemoteAddr
 	if i := strings.LastIndex(ip, ":"); i > 0 {

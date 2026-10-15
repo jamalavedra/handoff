@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/joalavedra/handoff/internal/auth"
 )
 
 type MemberOut struct {
@@ -622,7 +624,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, p *Principal, agentID, key s
 		hint := key[:8] + "…" + key[len(key)-4:]
 		var at time.Time
 		if err := c.tx.QueryRow(c.ctx, `INSERT INTO api_keys (org_id, member_id, token_hash, hint, created_by) VALUES ($1, $2, $3, $4, $5)
-			RETURNING id, created_at`, p.Org.ID, m.ID, hashKey(key), hint, p.Member.ID).Scan(&out.ID, &at); err != nil {
+			RETURNING id, created_at`, p.Org.ID, m.ID, auth.Hash(key), hint, p.Member.ID).Scan(&out.ID, &at); err != nil {
 			return err
 		}
 		out.Hint, out.CreatedAt, out.Key = hint, ts(&at), key
