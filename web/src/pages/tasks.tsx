@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { useQuickAdd } from "../components/quickadd";
-import { agentOnIt, groupByDue } from "../quickadd";
+import { agentOnIt, groupByDue, isoDate } from "../quickadd";
 import { useMe } from "../main";
 import { SettingsHeader } from "./settings";
 import { Board, useView, ViewToggle } from "./board";
@@ -33,7 +33,7 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   // The checkbox answers immediately; the server catches up, and Undo reopens.
   // `wasClosed` is the state at click time: the optimistic patch flips `closed` before onSuccess runs.
   const toggle = useMutation({
-    mutationFn: (wasClosed: boolean) => (wasClosed ? reopen(t.id) : api.tool<{ next?: Task }>("close_task", { id: t.id, status: "done" })),
+    mutationFn: (wasClosed: boolean) => (wasClosed ? reopen(t.id) : api.tool<{ next?: Task }>("close_task", { id: t.id, status: "done", today: isoDate(new Date()) })),
     onMutate: (wasClosed) => patchTask(qc, t.id, { status: wasClosed ? "open" : "done" }),
     onError: (_e, _v, rollback) => rollback?.(),
     onSuccess: (r, wasClosed) => {

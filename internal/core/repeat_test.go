@@ -29,6 +29,14 @@ func TestRepeatingTask(t *testing.T) {
 	if err != nil || again.Next != nil {
 		t.Fatalf("retried close created another occurrence: %+v %v", again.Next, err)
 	}
+	// Reopened and closed again: still one next task.
+	open := "open"
+	if _, err := e.s.UpdateTask(e.ctx, admin, core.UpdateTaskIn{ID: task.ID, Status: open}); err != nil {
+		t.Fatal(err)
+	}
+	if again, err = e.s.CloseTask(e.ctx, admin, core.CloseTaskIn{ID: task.ID}); err != nil || again.Next != nil {
+		t.Fatalf("reopen and close created another occurrence: %+v %v", again.Next, err)
+	}
 	// An agent that may only close still continues the series, as the series' creator.
 	closer := e.agent(t, admin, "Closer", &core.Permissions{Projects: []string{"*"}, Actions: []string{core.ActRead, core.ActClose}})
 	byAgent, err := e.s.CloseTask(e.ctx, closer, core.CloseTaskIn{ID: n.ID})

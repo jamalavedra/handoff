@@ -20,7 +20,9 @@ func TestNextDue(t *testing.T) {
 		{"weekly", day("2026-10-16"), "2026-10-23"},
 		{"biweekly", day("2026-10-16"), "2026-10-30"},
 		{"weekdays", day("2026-10-16"), "2026-10-19"}, // Friday -> Monday
-		{"monthly", day("2026-10-31"), "2026-12-01"},  // Go normalises Nov 31
+		{"monthly", day("2026-10-31"), "2026-11-30"},  // clamped to the month's last day
+		{"monthly", day("2026-01-31"), "2026-10-31"},  // the 31st again where the month has one
+		{"yearly", day("2028-02-29"), "2029-02-28"},
 		{"yearly", day("2026-10-14"), "2027-10-14"},
 		{"weekly", day("2026-09-01"), "2026-10-20"}, // missed weeks are skipped, the weekday kept
 		{"daily", nil, "2026-10-15"},                // no due date: counted from today
@@ -40,6 +42,15 @@ func TestSingleEmoji(t *testing.T) {
 	for _, bad := range []string{"", "done", "👍👀", "a👍", "🇪", "1", "👍 ", "‍👍", "🇪🇸🇫🇷"} {
 		if singleEmoji(bad) {
 			t.Errorf("%q should be refused", bad)
+		}
+	}
+}
+
+func TestCloserToday(t *testing.T) {
+	now := time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC) // Oct 14 evening in California
+	for local, want := range map[string]string{"2026-10-14": "2026-10-14", "2026-10-16": "2026-10-16", "2026-10-01": "2026-10-15", "": "2026-10-15", "x": "2026-10-15"} {
+		if got := closerToday(local, now).Format("2006-01-02"); got != want {
+			t.Errorf("%q: got %s, want %s", local, got, want)
 		}
 	}
 }

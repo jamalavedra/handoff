@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Columns3, List } from "lucide-react";
 import { api, cn, type Task } from "../lib";
 import { Card, Empty, ErrorText } from "../components/app";
-import { boardColumn, type BoardColumn } from "../quickadd";
+import { boardColumn, isoDate, type BoardColumn } from "../quickadd";
 import { TaskRow, useInvalidate } from "./tasks";
 
 export type View = "list" | "board";
@@ -52,7 +52,7 @@ const columns: { key: BoardColumn; title: string; empty: string }[] = [
 ];
 
 async function moveTask(t: Task, to: BoardColumn) {
-  if (to === "done") return api.tool("close_task", { id: t.id, status: "done" });
+  if (to === "done") return api.tool("close_task", { id: t.id, status: "done", today: isoDate(new Date()) });
   if (to === "working") return api.tool("update_task", { id: t.id, status: "in_progress" });
   let status = t.status;
   if (t.claimed_by) {
