@@ -63,6 +63,13 @@ func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string
 		a.add(ctx, step)
 		return `{"error":"this message already has enough images and maps"}`
 	}
+	if b.tool == imagesPlugin.tool {
+		if raw = a.onlyFoundPages(raw); raw == nil {
+			step.Summary, step.Error = "Didn't show pictures", "only pages your lookups returned this turn"
+			a.add(ctx, step)
+			return `{"error":"show_images only takes pages that a lookup returned in this turn"}`
+		}
+	}
 	rctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	data, summary, err := b.resolve(rctx, a.s, raw)
@@ -80,6 +87,62 @@ func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string
 	a.out.Blocks = append(a.out.Blocks, Block{Type: b.kind, Data: d})
 	a.add(ctx, step)
 	return `{"ok":true,"shown":"under your message; don't repeat it as text, refer to it"}`
+}
+
+var pageURL = regexp.MustCompile(`https?://[^\s"'<>\\\]]+`)
+
+// normPage trims what ends a sentence around a URL: punctuation, and a ")" with no "(" in the URL,
+// so "https://en.wikipedia.org/wiki/Paris_(film)" keeps its own.
+func normPage(u string) string {
+	u = strings.TrimSpace(u)
+	for {
+		t := strings.TrimRight(u, "/.,;:!?")
+		if strings.HasSuffix(t, ")") && strings.Count(t, "(") < strings.Count(t, ")") {
+			t = t[:len(t)-1]
+		}
+		if t == u {
+			return u
+		}
+		u = t
+	}
+}
+
+// foundPages remembers the pages a lookup returned, but not ones it was asked about: a search
+// that echoes its query would otherwise let the model vouch for a URL of its own.
+func (a *assistantRun) foundPages(text, args string) {
+	if a.turn.found == nil {
+		a.turn.found = map[string]bool{}
+	}
+	asked := map[string]bool{}
+	for _, u := range pageURL.FindAllString(args, 50) {
+		asked[normPage(u)] = true
+	}
+	for _, u := range pageURL.FindAllString(text, 500) {
+		if u = normPage(u); !asked[u] {
+			a.turn.found[u] = true
+		}
+	}
+}
+
+// onlyFoundPages drops pages no lookup returned this turn, or returns nil if none is left. Text in
+// a task or chat can't make the agent fetch a page of its choosing, with private data in its URL.
+func (a *assistantRun) onlyFoundPages(raw json.RawMessage) json.RawMessage {
+	var in imagesIn
+	if json.Unmarshal(raw, &in) != nil {
+		return raw
+	}
+	pages := in.Pages[:0]
+	for _, p := range in.Pages {
+		if a.turn.found[normPage(p.URL)] {
+			pages = append(pages, p)
+		}
+	}
+	if len(pages) == 0 {
+		return nil
+	}
+	in.Pages = pages
+	out, _ := json.Marshal(in)
+	return out
 }
 
 // ---- images: pictures from the pages it cites ----

@@ -92,14 +92,16 @@ type AssistantChatOut struct {
 
 // assistantTurn is what the server remembers about one turn while it runs and for a while after.
 type assistantTurn struct {
-	at       time.Time
-	running  bool
-	msgs     []map[string]any // the turn's tool calls and results, replayed to the model on a retry
-	steps    []AssistantStep
-	rounds   int
-	calls    int
-	changed  bool
-	done     map[string]string // write calls already made (tool and arguments) and what they returned
+	at      time.Time
+	running bool
+	msgs    []map[string]any // the turn's tool calls and results, replayed to the model on a retry
+	steps   []AssistantStep
+	rounds  int
+	calls   int
+	changed bool
+	done    map[string]string // write calls already made (tool and arguments) and what they returned
+	// found are the pages this turn's lookups returned, kept for retries: the only ones whose pictures it may show.
+	found    map[string]bool
 	finished bool
 	reply    string
 	asked    []string // set when it asked the person (ask_person): the answers it offered
@@ -223,7 +225,7 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 		defer s.progressDone(ctx, a.progress)
 	}
 	defer a.sessions.close()
-	if a.ext, err = s.externalTools(ctx, p.Org.ID); err != nil {
+	if a.ext, err = s.externalTools(ctx, p.Org.ID, false); err != nil {
 		return out, err
 	}
 	defer func() { t.steps, t.changed, t.blocks = slices.Clone(out.Steps), out.Changed, slices.Clone(out.Blocks) }()
@@ -1061,6 +1063,7 @@ func (a *assistantRun) callExternal(ctx context.Context, t extTool, args string)
 		return string(b)
 	}
 	a.add(ctx, step)
+	a.foundPages(text, args)
 	b, _ := json.Marshal(map[string]string{"source": t.conn, "content": text})
 	return string(b)
 }

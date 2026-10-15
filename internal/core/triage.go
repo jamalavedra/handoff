@@ -466,7 +466,7 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 	s.progressStep(ctx, pr, ActivityStep{Type: "tool", Tool: "get_task", Text: "Read “" + d.Task.Title + "”"})
 	// With connected tools (web search…) triage looks things up first; otherwise it answers from the model.
 	var sugg triageSuggestion
-	if ext, xerr := s.externalTools(ctx, j.org); xerr == nil && len(ext) > 0 {
+	if ext, xerr := s.externalTools(ctx, j.org, true); xerr == nil && len(ext) > 0 {
 		sugg, err = s.askModelResearching(lctx, st, string(cred), org, t, projects.Projects, members.Members, ext, pr)
 	} else {
 		s.progressStep(ctx, pr, ActivityStep{Type: "write", Text: "Writing it up"})

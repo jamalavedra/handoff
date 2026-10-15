@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/joalavedra/handoff/internal/core"
 )
 
 // The agent shows a page's picture and a map of places; the server finds the picture on the page and
@@ -45,16 +48,12 @@ func TestAssistantBlocks(t *testing.T) {
 	if err != nil || out.Error != "" {
 		t.Fatal(err, out.Error)
 	}
-	if len(out.Blocks) != 2 || out.Blocks[0].Type != "images" || out.Blocks[1].Type != "map" {
+	// No lookup returned those pages this turn, so the agent can't fetch them (or leak data in their URLs).
+	if len(out.Blocks) != 1 || out.Blocks[0].Type != "map" {
 		t.Fatalf("blocks: %+v", out.Blocks)
 	}
-	var imgs struct {
-		Images []struct{ Src, Page, Caption string }
-	}
-	_ = json.Unmarshal(out.Blocks[0].Data, &imgs)
-	// Pictures are served through the server's signed image proxy.
-	if len(imgs.Images) != 1 || !strings.HasPrefix(imgs.Images[0].Src, "/api/image?") || !strings.Contains(imgs.Images[0].Src, url.QueryEscape("https://cdn.example/dolly.jpg")) || imgs.Images[0].Caption != "Dolly Parton" {
-		t.Fatalf("images: %+v", imgs)
+	if i := slices.IndexFunc(out.Steps, func(s core.AssistantStep) bool { return s.Tool == "show_images" }); i < 0 || out.Steps[i].Error == "" {
+		t.Fatalf("show_images of pages no lookup returned wasn't refused: %+v", out.Steps)
 	}
 	var places struct {
 		Places []struct {
@@ -63,12 +62,47 @@ func TestAssistantBlocks(t *testing.T) {
 			Note     string
 		}
 	}
-	_ = json.Unmarshal(out.Blocks[1].Data, &places)
+	_ = json.Unmarshal(out.Blocks[0].Data, &places)
 	if len(places.Places) != 1 || places.Places[0].Lat != 37.7726 || places.Places[0].Note != "great accessories" {
 		t.Fatalf("places: %+v", places)
 	}
 	// The unknown place on its own makes a failed step, not a block.
 	if s := out.Steps[len(out.Steps)-1]; s.Tool != "show_map" || s.Error == "" {
 		t.Fatalf("last step: %+v", s)
+	}
+}
+
+// A page a lookup returned this turn is one the agent may show the picture of.
+func TestAssistantBlocksFromLookup(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><head><meta property="og:image" content="https://cdn.example/dolly.jpg"></head></html>`)
+	}))
+	t.Cleanup(site.Close)
+	search := fakeSearchServer(t)
+	model, _ := scriptedModel(t,
+		calls(toolCall("c1", "ext_web_search__web_search", map[string]any{"query": "site " + strings.TrimPrefix(site.URL, "http://") + "/dolly"})),
+		calls(toolCall("c2", "show_images", map[string]any{"pages": []map[string]any{{"url": site.URL + "/dolly", "caption": "Dolly Parton"}, {"url": site.URL + "/other"}}})),
+		say("Here she is."),
+	)
+	e, admin, _ := assistantEnv(t, model, "lookblocks")
+	if _, err := e.s.AddConnection(e.ctx, admin, core.AddConnectionIn{Name: "Web search", URL: search.URL, Auth: "bearer", Secret: "sk-mcp"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.s.AssistantChat(e.ctx, admin, ask("show me dolly"))
+	if err != nil || out.Error != "" {
+		t.Fatal(err, out.Error)
+	}
+	if len(out.Blocks) != 1 || out.Blocks[0].Type != "images" {
+		t.Fatalf("blocks: %+v", out.Blocks)
+	}
+	var imgs struct {
+		Images []struct{ Src, Page, Caption string }
+	}
+	_ = json.Unmarshal(out.Blocks[0].Data, &imgs)
+	// Only the page the lookup returned; pictures are served through the server's signed image proxy.
+	if len(imgs.Images) != 1 || imgs.Images[0].Page != site.URL+"/dolly" || !strings.HasPrefix(imgs.Images[0].Src, "/api/image?") ||
+		!strings.Contains(imgs.Images[0].Src, url.QueryEscape("https://cdn.example/dolly.jpg")) || imgs.Images[0].Caption != "Dolly Parton" {
+		t.Fatalf("images: %+v", imgs)
 	}
 }

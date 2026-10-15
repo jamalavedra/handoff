@@ -40,6 +40,13 @@ export function Markdown({ text, mentions = [], className }: { text: string; men
         components={{
           input: ({ type, checked }) =>
             type === "checkbox" ? <input type="checkbox" checked={!!checked} disabled aria-label={checked ? "Done" : "Not done"} className="mr-1.5 size-3.5 translate-y-0.5 accent-foreground" /> : null,
+          // Pictures from elsewhere show as links: loading them would tell their host who read the text.
+          img: ({ src, alt }) =>
+            typeof src === "string" && /^\/(?!\/)/.test(src) ? (
+              <img src={src} alt={alt ?? ""} className="max-w-full rounded-md" />
+            ) : (
+              <a href={typeof src === "string" ? src : undefined} target="_blank" rel="noreferrer noopener" onClick={(e) => e.stopPropagation()}>{alt || "Image"}</a>
+            ),
           a: ({ href, children }) =>
             href === "mention:" ? (
               <span className="rounded bg-accent px-0.5 font-medium text-foreground">{children}</span>
