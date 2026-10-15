@@ -261,7 +261,7 @@ function TodoRow({ td, index, disabled, dragging, onToggle, onRename, onRemove, 
             {td.text}
           </button>
         )}
-        {td.result && !editing && <span className="text-muted-foreground"> <span aria-hidden>→</span><span className="sr-only">result:</span> {td.result}</span>}
+        {td.result && !editing && <TodoResult text={td.result} />}
       </div>
       {!disabled && !editing && (
         <button
@@ -275,5 +275,15 @@ function TodoRow({ td, index, disabled, dragging, onToggle, onRename, onRemove, 
         </button>
       )}
     </li>
+  );
+}
+
+// TodoResult is a step's one-line result: one line, the rest on click.
+function TodoResult({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <button type="button" onClick={() => setOpen((o) => !o)} title={open ? undefined : text} aria-expanded={open} className={cn("block w-full text-left text-[13px] text-muted-foreground hover:text-foreground/80", !open && "truncate")}>
+      <span aria-hidden>→ </span><span className="sr-only">result: </span>{text}
+    </button>
   );
 }

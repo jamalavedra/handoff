@@ -40,7 +40,7 @@ export function ProjectNotes({ notes, more, loadingMore }: { notes?: Note[]; mor
       </Card>
     );
   }
-  if (!notes.length) return <Card><Empty>No notes yet. Notes hold longer work, like research, drafts and plans; agents write theirs here too.</Empty></Card>;
+  if (!notes.length) return <Card><Empty>No notes yet. Notes are this project's context: decisions, preferences, references. The agent reads them whenever it works on a task here.</Empty></Card>;
   return (
     <Card>
       {notes.map((n) => (
