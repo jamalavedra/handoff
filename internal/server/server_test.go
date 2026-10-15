@@ -286,3 +286,44 @@ func TestLLMsDocs(t *testing.T) {
 		t.Fatalf("apex: %s", apex)
 	}
 }
+
+// Asking for a sign-in link adds nobody: an allowed-domain address becomes a member only when its
+// link is opened.
+func TestLoginLinkAddsMemberOnlyOnOpen(t *testing.T) {
+	f := setup(t)
+	acme := f.signup("acme")
+	if code, out := f.do("POST", acme+"/api/tools/update_org", map[string]string{"allowed_email_domain": "acme.test"}, nil); code != 200 {
+		t.Fatalf("update_org: %d %v", code, out)
+	}
+	has := func(email string) bool {
+		t.Helper()
+		code, out := f.do("POST", acme+"/api/tools/list_members", map[string]any{}, nil)
+		if code != 200 {
+			t.Fatalf("list_members: %d %v", code, out)
+		}
+		for _, m := range out["members"].([]any) {
+			if m.(map[string]any)["email"] == email {
+				return true
+			}
+		}
+		return false
+	}
+	code, out := f.do("POST", acme+"/api/login", map[string]string{"email": "new@acme.test", "next": "/team"}, nil)
+	link, _ := out["dev_link"].(string)
+	if code != 200 || link == "" {
+		t.Fatalf("login: %d %v", code, out)
+	}
+	if has("new@acme.test") {
+		t.Fatal("requesting a link created a member")
+	}
+	if code, out := f.do("POST", acme+"/api/login", map[string]string{"email": "x@globex.test"}, nil); code != 200 || out["dev_link"] != nil {
+		t.Fatalf("outsider login: %d %v", code, out)
+	}
+	f.client.Jar, _ = cookiejar.New(nil)
+	if code, out := f.do("GET", link, nil, nil); code != 303 || out["_location"] != "/team" {
+		t.Fatalf("verify: %d %v", code, out)
+	}
+	if !has("new@acme.test") {
+		t.Fatal("opening the link didn't add the member")
+	}
+}

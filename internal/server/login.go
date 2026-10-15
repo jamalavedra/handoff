@@ -18,8 +18,11 @@ import (
 	"github.com/joalavedra/handoff/internal/core"
 )
 
+// safeNext keeps a post-sign-in redirect on this site. Browsers drop tabs and newlines from URLs,
+// so "/\t/evil.com" would become "//evil.com"; control characters are refused.
 func safeNext(next string) string {
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, `\`) {
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, `\`) ||
+		strings.ContainsFunc(next, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return "/"
 	}
 	return next
@@ -61,7 +64,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	org := orgFrom(r)
 	resp := map[string]any{"sent": true}
 	// Only members get a link; the response is the same either way so emails can't be probed.
-	if _, err := s.Svc.MemberForLogin(r.Context(), org, in.Email, ""); err == nil {
+	// Nobody is added or activated until the link is opened, which proves the address.
+	if err := s.Svc.CanSignIn(r.Context(), org, in.Email); err == nil {
 		link, err := s.sendLoginLink(r, org, in.Email, "", in.Next)
 		if err != nil {
 			slog.Error("send login link", "err", err)
