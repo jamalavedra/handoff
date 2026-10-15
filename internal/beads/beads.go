@@ -158,7 +158,7 @@ func Import(ctx context.Context, s *core.Service, p *core.Principal, project str
 			st = "cancelled"
 		}
 		if st != "done" && st != "cancelled" {
-			if st == "blocked" || st == "in_progress" {
+			if st == "in_progress" {
 				_, _ = s.UpdateTask(ctx, p, core.UpdateTaskIn{ID: ids[is.ID], Status: st})
 			}
 			continue
@@ -184,10 +184,10 @@ func mapStatusIn(s string) string {
 		return "done"
 	case "tombstone":
 		return "cancelled"
-	case "in_progress", "blocked":
+	case "in_progress":
 		return s
 	}
-	return "open"
+	return "open" // blocked too: waiting is a dependency here, not a status
 }
 
 // Export writes every task the principal can see (including done) as bd JSONL.

@@ -16,7 +16,17 @@ import (
 	"github.com/joalavedra/handoff/internal/db"
 )
 
-var Statuses = []string{"open", "in_progress", "blocked", "done", "cancelled"}
+// Statuses are what a task can be. "cancelled" is shown to people as Archived, and "archived" is
+// accepted for it.
+var Statuses = []string{"open", "in_progress", "done", "cancelled"}
+
+// statusIn reads a status from a caller: "archived" is the name people know cancelled by.
+func statusIn(s string) string {
+	if s = strings.TrimSpace(s); s == "archived" {
+		return "cancelled"
+	}
+	return s
+}
 
 type TaskOut struct {
 	ID             string        `json:"id"`
@@ -359,7 +369,7 @@ func (c *call) assigneeFilter(s string, n int) (string, []any, error) {
 type SearchTasksIn struct {
 	Query       string   `json:"query,omitempty" jsonschema:"text to find in title or body, or a task id"`
 	Project     string   `json:"project,omitempty"`
-	Status      []string `json:"status,omitempty" jsonschema:"filter by status; default excludes done and cancelled"`
+	Status      []string `json:"status,omitempty" jsonschema:"filter by status (open, in_progress, done, archived); default excludes done and archived"`
 	Assignee    string   `json:"assignee,omitempty" jsonschema:"'me', 'unassigned', a name, email or id"`
 	Label       string   `json:"label,omitempty"`
 	IncludeDone bool     `json:"include_done,omitempty"`
@@ -397,8 +407,9 @@ func (s *Service) SearchTasks(ctx context.Context, p *Principal, in SearchTasksI
 			add(" AND t.project_id = $%d", pr.ID)
 		}
 		if len(in.Status) > 0 {
-			for _, st := range in.Status {
-				if !slices.Contains(Statuses, st) {
+			for i, st := range in.Status {
+				in.Status[i] = statusIn(st)
+				if st = in.Status[i]; !slices.Contains(Statuses, st) {
 					return errf(ErrInvalid, "unknown status %q", st)
 				}
 			}
@@ -916,7 +927,7 @@ type UpdateTaskIn struct {
 	Body     *string  `json:"body,omitempty" jsonschema:"the task's plain text: text to append (default) or the new text when body_mode=replace. Steps go in todos"`
 	BodyMode string   `json:"body_mode,omitempty" jsonschema:"append (default) or replace"`
 	Confirm  bool     `json:"confirm,omitempty" jsonschema:"required with body_mode=replace"`
-	Status   string   `json:"status,omitempty" jsonschema:"open, in_progress or blocked; use close_task to finish"`
+	Status   string   `json:"status,omitempty" jsonschema:"open or in_progress; use close_task to finish or archive"`
 	Priority *int     `json:"priority,omitempty"`
 	Assignee *string  `json:"assignee,omitempty" jsonschema:"'me', 'owner', a name, email or id; empty string unassigns"`
 	Due      *string  `json:"due,omitempty" jsonschema:"YYYY-MM-DD; empty string clears"`
@@ -991,9 +1002,11 @@ func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
 			return nil, errf(ErrInvalid, "body_mode must be append or replace")
 		}
 	}
-	if in.Status != "" {
+	if in.Status = statusIn(in.Status); in.Status != "" {
 		switch in.Status {
-		case "open", "in_progress", "blocked":
+		case "open", "in_progress":
+		case "blocked":
+			return nil, errf(ErrInvalid, "blocked isn't a status: to say a task waits on another, link them with link_tasks")
 		case "done", "cancelled":
 			return nil, errf(ErrInvalid, "use close_task to mark a task %s", in.Status)
 		default:
@@ -1120,8 +1133,6 @@ func (s *Service) ClaimTask(ctx context.Context, p *Principal, in ClaimTaskIn) (
 			switch {
 			case r.Status == "done" || r.Status == "cancelled":
 				return errf(ErrConflict, "task %s is already %s", r.ID, r.Status)
-			case r.Status == "blocked":
-				return errf(ErrConflict, "task %s is marked blocked; set it to open first", r.ID)
 			case claimActive(r):
 				return errf(ErrConflict, "task %s is claimed by %s until %s", r.ID, c.ref(r.ClaimedBy).Name, ts(r.ClaimExpires))
 			case r.OpenBlockers > 0:
@@ -1183,7 +1194,7 @@ func (s *Service) ReleaseTask(ctx context.Context, p *Principal, in ReleaseTaskI
 
 type CloseTaskIn struct {
 	ID     string `json:"id"`
-	Status string `json:"status,omitempty" jsonschema:"done (default) or cancelled"`
+	Status string `json:"status,omitempty" jsonschema:"done (default) or archived"`
 	Reason string `json:"reason,omitempty" jsonschema:"short note on the outcome"`
 }
 
@@ -1199,12 +1210,12 @@ func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (
 		if err := p.require(ActClose); err != nil {
 			return err
 		}
-		st := in.Status
+		st := statusIn(in.Status)
 		if st == "" {
 			st = "done"
 		}
 		if st != "done" && st != "cancelled" {
-			return errf(ErrInvalid, "status must be done or cancelled")
+			return errf(ErrInvalid, "status must be done or archived")
 		}
 		r, err := c.getTask(in.ID, false, true)
 		if err != nil {

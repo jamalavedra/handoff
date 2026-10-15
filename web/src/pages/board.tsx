@@ -59,7 +59,7 @@ async function moveTask(t: Task, to: BoardColumn) {
     await api.tool("release_task", { id: t.id });
     if (status === "in_progress") status = "open"; // release reopens started tasks
   }
-  if (status !== "open" && status !== "blocked") await api.tool("update_task", { id: t.id, status: "open" });
+  if (status !== "open") await api.tool("update_task", { id: t.id, status: "open" });
 }
 
 // Board shows open tasks plus recently done ones in To do / Working / Done; drag a card to move it.
