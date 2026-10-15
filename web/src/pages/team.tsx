@@ -1,10 +1,10 @@
-import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { undoable } from "../components/feedback";
 import { toast } from "sonner";
-import { api, cn, type Member, type Task } from "../lib";
+import { api, type Member, type Task } from "../lib";
 import { Avatar, Card, Empty, ErrorText, PageHeader } from "../components/app";
-import { TaskRow, useInvalidate } from "./tasks";
+import { useInvalidate } from "./tasks";
+import { DragCard, DropColumn } from "./board";
 
 const unassigned = "";
 
@@ -24,7 +24,6 @@ export function TeamPage() {
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const invalidate = useInvalidate();
   const qc = useQueryClient();
-  const [over, setOver] = useState<string | null>(null);
   const move = useMutation({ mutationFn: async (v: { t: Task; to: string }) => {
       // A handoff ends the previous worker's claim so the new assignee can start.
       if (v.t.claimed_by && v.t.claimed_by.id !== v.to) await api.tool("release_task", { id: v.t.id });
@@ -71,36 +70,15 @@ export function TeamPage() {
           const working = c.tasks.filter((t) => t.claimed_by).length;
           const label = c.member?.name ?? "Unassigned";
           return (
-            <section
-              key={c.id || "unassigned"}
-              aria-label={label}
-              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setOver(c.id); }}
-              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null); }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setOver(null);
-                const t = byId.get(e.dataTransfer.getData("application/x-handoff-task"));
-                if (t && (t.assignee?.id ?? unassigned) !== c.id) move.mutate({ t, to: c.id });
-              }}
-              className={cn("flex w-[82vw] max-w-xs shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-accent p-2 transition-colors md:w-72", over === c.id && "bg-accent ring-2 ring-ring")}
-            >
+            <DropColumn key={c.id || "unassigned"} label={label} onDrop={(id) => { const t = byId.get(id); if (t && (t.assignee?.id ?? unassigned) !== c.id) move.mutate({ t, to: c.id }); }}>
               <h2 className="flex items-center gap-2 px-2 pt-1 text-sm font-semibold">
                 {c.member && <Avatar m={c.member} />}
                 <span className="truncate">{label}</span>
                 <span className="ml-auto shrink-0 text-xs font-normal text-muted-foreground">{c.tasks.length} open{working ? ` · ${working} working` : ""}</span>
               </h2>
-              {c.tasks.map((t) => (
-                <div
-                  key={t.id}
-                  draggable
-                  onDragStart={(e) => { e.dataTransfer.setData("application/x-handoff-task", t.id); e.dataTransfer.effectAllowed = "move"; }}
-                  className={cn("cursor-grab active:cursor-grabbing", move.isPending && move.variables?.t.id === t.id && "opacity-50")}
-                >
-                  <TaskRow t={t} />
-                </div>
-              ))}
+              {c.tasks.map((t) => <DragCard key={t.id} t={t} moving={move.isPending && move.variables?.t.id === t.id} />)}
               {c.tasks.length === 0 && <div className="px-2 py-6 text-center text-sm text-muted-foreground/70">Nothing assigned</div>}
-            </section>
+            </DropColumn>
           );
         })}
       </div>

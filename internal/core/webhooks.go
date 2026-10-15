@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +18,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/joalavedra/handoff/internal/auth"
 )
 
 // Agent webhooks: an agent that isn't always connected (a Slack bot, a CI job, a cloud function) gives
@@ -103,11 +104,7 @@ func (s *Service) SetWebhook(ctx context.Context, p *Principal, in SetWebhookIn)
 		}
 		var secret string
 		if existing == nil || in.Rotate {
-			b := make([]byte, 24)
-			if _, err := rand.Read(b); err != nil {
-				return err
-			}
-			secret = "whsec_" + hex.EncodeToString(b)
+			secret = auth.NewToken("whsec_")
 			sealed, err := s.seal([]byte(secret))
 			if err != nil {
 				return err

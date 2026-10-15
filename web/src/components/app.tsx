@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Bot, Check, User, X } from "lucide-react";
-import { cn, type MemberRef, type Task, statusLabel } from "../lib";
+import { cn, type MemberRef, type Task } from "../lib";
 import { dueLabel } from "../quickadd";
 
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
@@ -9,22 +9,6 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
 
 export function Badge({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
   return <span className={cn("inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-foreground/70", className)} {...props} />;
-}
-
-const statusColor: Record<Task["status"], string> = {
-  open: "border-input bg-card text-foreground/80",
-  in_progress: "border-blue-200 bg-blue-50 text-blue-700",
-  done: "border-green-200 bg-green-50 text-green-700",
-  cancelled: "border-border bg-accent text-muted-foreground",
-};
-
-export function StatusBadge({ status }: { status: Task["status"] }) {
-  return <Badge className={statusColor[status]}>{statusLabel[status]}</Badge>;
-}
-
-export function Priority({ p }: { p: number }) {
-  const c = ["text-red-600", "text-orange-600", "text-foreground/70", "text-muted-foreground/70", "text-muted-foreground/50"][p];
-  return <span className={cn("font-mono text-xs font-semibold", c)}>P{p}</span>;
 }
 
 export function Who({ m, by }: { m?: MemberRef; by?: MemberRef }) {

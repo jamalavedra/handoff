@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useCanGoBack, useRouter, useRouterState } from "@tanstack/react-router";
 import { Activity, ArrowLeft, ArrowRight, Bell, Bot, CheckSquare, FileText, FolderKanban, LayoutGrid, Plus, Settings, Trash2, Users, X, Zap, Plug } from "lucide-react";
@@ -7,19 +7,12 @@ import { agentOnIt } from "../quickadd";
 import * as tabs from "../tabs";
 import { StatusCircle } from "./app";
 import { typing } from "./shortcuts";
+import { useMedia } from "@/hooks/use-mobile";
 
 // Tabs are a desktop thing: phones have the bottom tab bar.
 const desktop = window.matchMedia("(min-width: 768px)");
 
-function useDesktop() {
-  return useSyncExternalStore(
-    (l) => {
-      desktop.addEventListener("change", l);
-      return () => desktop.removeEventListener("change", l);
-    },
-    () => desktop.matches,
-  );
-}
+const useDesktop = () => useMedia(desktop);
 
 const storeKey = "handoff-tabs";
 const historyKey = "handoff-history";
