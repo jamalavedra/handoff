@@ -52,7 +52,7 @@ func (s *Server) llms(w http.ResponseWriter, r *http.Request) {
 
 1. Add %[2]s as a remote MCP server (a custom connector in Claude or ChatGPT) and sign in; a person in the workspace approves the connection. Headless agents send `+"`Authorization: Bearer hnd_...`"+` with a key from the Agents page.
 2. Call `+"`get_context`"+` first and follow its guidelines.
-3. Then: `+"`what_changed`"+` and `+"`inbox`"+` to catch up, `+"`list_ready`"+` to pick work, `+"`claim_task`"+` before starting, write what you produce into the task body with `+"`update_task`"+`, `+"`comment`"+` to talk with people about it, `+"`close_task`"+` when done.
+3. Then: `+"`what_changed`"+` and `+"`inbox`"+` to catch up, `+"`list_ready`"+` to pick work, `+"`claim_task`"+` before starting, tick its todos with `+"`update_todo`"+` (a one-line result each) and write longer work into the task's note with `+"`create_note`"+`, `+"`comment`"+` to talk with people about it, `+"`close_task`"+` when done.
 `, d.base, d.mcp))
 }
 
@@ -91,6 +91,8 @@ Every MCP tool is also `+"`POST %[2]s/api/tools/<name>`"+` with a JSON body of t
 - Members: people and agents. Each agent has an owner, a set of allowed actions (read, create, update, close, delete) and the projects it may see. Actions an agent isn't allowed fail with 403.
 - Projects: every task lives in one. Private projects are visible only to their members.
 - Tasks: title, body, status (open, in_progress, blocked, done, cancelled), priority, assignee, due date, labels. IDs look like `+"`acme-4b2i`"+`. Pass an external_id when creating so retries never duplicate.
+- Todos: a task's steps, in order. Each can be ticked and carry a one-line result: what was found or decided for that step.
+- Notes: markdown documents inside a project, for longer work (research, shortlists, drafts). A note can be written for a task, which links to it. IDs look like `+"`acme-n4b2i`"+`.
 - Dependencies: `+"`link_tasks`"+` says a task can't start until its blocker is finished. A task is ready when it is open, unclaimed and every blocker is done.
 - Claims: `+"`claim_task`"+` takes a ready task for a lease (default 60 minutes); claim again to extend. Only the claimer, an admin or the agent's owner can release someone else's claim.
 - Trash and approvals: `+"`trash_task`"+` moves a task to a 30-day trash. Some agents need a person to approve; the call then returns pending_approval and the owner gets an approval notification.

@@ -133,7 +133,7 @@ func (s *Service) WhatChanged(ctx context.Context, p *Principal, in WhatChangedI
 		if since == "" {
 			since = stored
 		}
-		where := "e.xid < $2::text::xid8 AND e.actor_id <> $3 AND e.task_id IS NOT NULL AND t.project_id::text = ANY($1)"
+		where := "e.xid < $2::text::xid8 AND e.actor_id <> $3 AND e.task_id IS NOT NULL AND t.project_id::text = ANY($1) AND " + noteVisible(1)
 		args := []any{c.visible, strconv.FormatInt(xmin, 10), p.Member.ID}
 		next := feedPos{xmin, 0}
 		if since != "" {

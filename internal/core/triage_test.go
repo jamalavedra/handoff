@@ -75,7 +75,7 @@ func TestTriage(t *testing.T) {
 	var auth atomic.Value
 	srv := fakeModel(t, http.StatusOK, map[string]any{
 		"title": "Edit the episode 14 intro", "due": "2026-10-16", "priority": 0, "project": "Podcast",
-		"labels": []string{"audio"}, "assignee": "Acme Bot", "plan": "Done when the intro is under 30s.\n- Trim\n- Export",
+		"labels": []string{"audio"}, "assignee": "Acme Bot", "text": "Done when the intro is under 30s.", "todos": []string{"Trim the intro", " ", "Export: by Thursday"},
 	}, &auth)
 	e := triageEnv(t, srv)
 	admin := e.org(t, "tri")
@@ -116,12 +116,16 @@ func TestTriage(t *testing.T) {
 		got.Project != "Podcast" || !slices.Equal(got.Labels, []string{"audio"}) || got.Assignee == nil || got.Assignee.ID != admin.Member.ID {
 		t.Fatalf("triaged task: %+v (error %q)", got, got.TriageError)
 	}
-	// The plan is the task's document; the chat gets a one-line note.
-	if !strings.HasPrefix(got.Body, "Done when the intro") {
-		t.Fatalf("plan not in the body: %q", got.Body)
+	// A task is text and todos; the chat gets a one-line note.
+	if got.Body != "Done when the intro is under 30s." || len(got.Todos) != 2 || got.Todos[0].Text != "Trim the intro" ||
+		got.Todos[1].Text != "Export: by Thursday" || got.Todos[0].Done || got.TodoProgress == nil || got.TodoProgress.Total != 2 {
+		t.Fatalf("text and todos: %q %+v %+v", got.Body, got.Todos, got.TodoProgress)
+	}
+	if len(d.Notes) != 0 {
+		t.Fatalf("a note without work: %+v", d.Notes)
 	}
 	if len(d.Comments) != 1 || d.Comments[0].Author.ID != bot.Member.ID ||
-		d.Comments[0].Body != "I tidied the title, set it due Fri, Oct 16, moved it to Podcast, labelled it “audio” and wrote a plan in the details. Mention me here if you want changes." {
+		d.Comments[0].Body != "I tidied the title, set it due Fri, Oct 16, moved it to Podcast, labelled it “audio”, added a line on what it's about and broke it into 2 todos. Mention me here if you want changes." {
 		t.Fatalf("triage note: %+v", d.Comments)
 	}
 	if !strings.HasPrefix(got.AgentNote, "I tidied the title") {
@@ -310,8 +314,8 @@ func TestTriageDoesTheWork(t *testing.T) {
 	var auth atomic.Value
 	srv := fakeModel(t, http.StatusOK, map[string]any{
 		"title": "Compare Pixel 8 and Pixel 9", "labels": []string{"research"},
-		"work": "Here's how they compare.\n\n| | Pixel 8 | Pixel 9 |\n|---|---|---|\n| Chip | Tensor G3 | Tensor G4 |",
-		"plan": "should be ignored when there is work",
+		"work":      "Here's how they compare.\n\n| | Pixel 8 | Pixel 9 |\n|---|---|---|\n| Chip | Tensor G3 | Tensor G4 |",
+		"work_kind": "Comparison", "todos": []string{"Compare specs", "Pick one", "Order: by Friday"},
 	}, &auth)
 	e := triageEnv(t, srv)
 	admin := e.org(t, "triwork")
@@ -321,10 +325,22 @@ func TestTriageDoesTheWork(t *testing.T) {
 	}
 	task := e.create(t, admin, core.NewTask{Title: "hey can u compare pixel 8 vs pixel 9"})[0]
 	d := waitTriage(t, e, admin, task.ID)
-	if !strings.Contains(d.Task.Body, "| Chip | Tensor G3 | Tensor G4 |") || strings.Contains(d.Task.Body, "ignored") {
-		t.Fatalf("work not in the body: %q", d.Task.Body)
+	// The work is a note in the task's project, linked from the task; the task stays text and todos.
+	if d.Task.Body != "" || len(d.Task.Todos) != 3 || d.Task.Todos[2].Text != "Order: by Friday" {
+		t.Fatalf("task: %q %+v", d.Task.Body, d.Task.Todos)
 	}
-	if len(d.Comments) != 1 || !strings.Contains(d.Comments[0].Body, "did it: the result is in the details") {
-		t.Fatalf("note: %+v", d.Comments)
+	if len(d.Notes) != 1 || d.Notes[0].Title != "Compare Pixel 8 and Pixel 9 — comparison" || d.Notes[0].Task == nil || d.Notes[0].Task.ID != task.ID ||
+		d.Notes[0].ProjectID != d.Task.ProjectID || d.Notes[0].CreatedBy.Name != "Acme Bot" {
+		t.Fatalf("notes: %+v", d.Notes)
+	}
+	n, err := e.s.GetNote(e.ctx, admin, core.NoteIDIn{ID: d.Notes[0].ID})
+	if err != nil || !strings.Contains(n.Note.Body, "| Chip | Tensor G3 | Tensor G4 |") {
+		t.Fatalf("note body: %+v %v", n.Note, err)
+	}
+	if len(d.Comments) != 1 || !strings.Contains(d.Comments[0].Body, "did what I could: it's in the note “Compare Pixel 8 and Pixel 9 — comparison”") {
+		t.Fatalf("triage comment: %+v", d.Comments)
+	}
+	if !slices.ContainsFunc(d.Events, func(ev core.EventOut) bool { return ev.Kind == "note_created" && ev.Data["note_id"] == n.Note.ID }) {
+		t.Fatalf("no note event on the task: %+v", d.Events)
 	}
 }

@@ -129,7 +129,8 @@ type ActivityOut struct {
 func (s *Service) Activity(ctx context.Context, p *Principal, in ActivityIn) (ActivityOut, error) {
 	var out ActivityOut
 	err := s.run(ctx, p, func(c *call) error {
-		where := "(e.task_id IS NULL OR t.project_id::text = ANY($1))"
+		// A note's events follow its project; other events their task's.
+		where := "(e.task_id IS NULL OR t.project_id::text = ANY($1)) AND " + noteVisible(1)
 		args := []any{c.visible}
 		if in.Member != "" {
 			m, err := c.resolveMember(in.Member)

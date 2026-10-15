@@ -148,7 +148,7 @@ func TestAssistantActsAsAgentForPerson(t *testing.T) {
 
 	// The model got the tools, the person's name, and the tool results.
 	rs := reqs()
-	if len(rs) != 3 || len(rs[0].Tools) != 8 {
+	if len(rs) != 3 || len(rs[0].Tools) != 15 {
 		t.Fatalf("requests: %d, tools %d", len(rs), len(rs[0].Tools))
 	}
 	if sys := rs[0].Messages[0]["content"].(string); !strings.Contains(sys, "Admin asst") || !strings.Contains(sys, "Podcast") {
@@ -274,10 +274,10 @@ func TestAssistantWritesWorkIntoTheTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(reqs()[0].Messages[0]["content"].(string), "The task is the artifact") {
+	if !strings.Contains(reqs()[0].Messages[0]["content"].(string), "the note is the artifact") {
 		t.Fatal("system prompt doesn't steer work into the task")
 	}
-	if len(out.Steps) != 3 || out.Steps[0].Summary != "Updated “Pick a venue” details" || out.Steps[1].Error != "" || out.Steps[2].Error != "" {
+	if len(out.Steps) != 3 || out.Steps[0].Summary != "Updated “Pick a venue” text" || out.Steps[1].Error != "" || out.Steps[2].Error != "" {
 		t.Fatalf("steps: %+v", out.Steps)
 	}
 	previous := func(id string) []any {
