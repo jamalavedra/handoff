@@ -221,6 +221,13 @@ func TestPermissionsAndApprovals(t *testing.T) {
 	if _, err := e.s.MemberForLogin(e.ctx, org, "bob@acme.test", "Bob"); err != nil {
 		t.Fatal(err)
 	}
+	carol, err := e.s.Invite(e.ctx, acme, core.InviteIn{Email: "carol@acme.test", Role: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := e.s.Invite(e.ctx, acme, core.InviteIn{Email: "carol@acme.test"}); err != nil || again.ID != carol.ID || again.Role != "admin" {
+		t.Fatalf("re-invite changed the role: %+v %v", again, err)
+	}
 	bp, _ := e.s.Principal(e.ctx, org, bob.ID, "web")
 	if _, err := e.s.GetTask(e.ctx, bp, core.TaskIDIn{ID: bt.ID}); !core.IsCode(err, core.ErrNotFound) {
 		t.Fatalf("non-member saw private task: %v", err)

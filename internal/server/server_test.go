@@ -93,7 +93,10 @@ func (f *fixture) signup(slug string) string {
 		f.t.Fatalf("signup: %d %v", code, out)
 	}
 	link := out["dev_link"].(string)
-	code, out = f.do("GET", link, nil, nil)
+	if code, _ := f.do("GET", link, nil, nil); code != 200 {
+		f.t.Fatalf("verify page: %d", code)
+	}
+	code, out = f.do("POST", link, nil, nil)
 	if code != 303 || out["_location"] != "/" {
 		f.t.Fatalf("verify: %d %v", code, out)
 	}
@@ -336,10 +339,22 @@ func TestLoginLinkAddsMemberOnlyOnOpen(t *testing.T) {
 		t.Fatalf("outsider login: %d %v", code, out)
 	}
 	f.client.Jar, _ = cookiejar.New(nil)
-	if code, out := f.do("GET", link, nil, nil); code != 303 || out["_location"] != "/team" {
+	if code, out := f.do("POST", link, nil, nil); code != 303 || out["_location"] != "/team" {
 		t.Fatalf("verify: %d %v", code, out)
 	}
 	if !has("new@acme.test") {
 		t.Fatal("opening the link didn't add the member")
+	}
+}
+
+func TestLoginLinksPerEmailCapped(t *testing.T) {
+	f := setup(t)
+	acme := f.signup("acme")
+	var last map[string]any
+	for range 6 {
+		_, last = f.do("POST", acme+"/api/login", map[string]string{"email": "admin@acme.test"}, nil)
+	}
+	if last["sent"] != true || last["dev_link"] != nil {
+		t.Fatalf("sixth link in 15 minutes: %v", last)
 	}
 }

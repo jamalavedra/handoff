@@ -21,6 +21,14 @@ import (
 
 var ErrInvalid = errors.New("invalid or expired credential")
 
+// ErrBusy: too many unexpired sign-in links for one address, or OAuth requests for one workspace.
+var ErrBusy = errors.New("too many recent requests")
+
+const (
+	loginLinksPerEmail  = 5
+	oauthRequestsPerOrg = 1000
+)
+
 const (
 	SessionTTL      = 30 * 24 * time.Hour
 	LoginTokenTTL   = 15 * time.Minute
@@ -79,9 +87,24 @@ func (s *Store) DeleteSession(ctx context.Context, orgID, tok string) error {
 
 // ---- email login links ----
 
-func (s *Store) CreateLoginToken(ctx context.Context, orgID, email, name, next string) (string, error) {
+// CreateLoginToken caps emailed links per address; Google sign-ins (emailed false) are already verified, so they skip the cap.
+func (s *Store) CreateLoginToken(ctx context.Context, orgID, email, name, next string, emailed bool) (string, error) {
 	tok := NewToken("")
 	err := s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM login_tokens WHERE expires_at < now()`); err != nil {
+			return err
+		}
+		if emailed {
+			// The lock makes count-then-insert atomic per address across requests and processes.
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('login:' || $1, 0)), (SELECT count(*) FROM login_tokens WHERE email = $1 AND used_at IS NULL)`,
+				strings.ToLower(email)).Scan(nil, &n); err != nil {
+				return err
+			}
+			if n >= loginLinksPerEmail {
+				return ErrBusy
+			}
+		}
 		_, err := tx.Exec(ctx, `INSERT INTO login_tokens (token_hash, org_id, email, name, next_path, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 			Hash(tok), orgID, strings.ToLower(email), name, next, time.Now().Add(LoginTokenTTL))
 		return err
@@ -171,6 +194,16 @@ type Request struct {
 
 func (s *Store) SaveRequest(ctx context.Context, orgID string, r *Request) error {
 	return s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM oauth_requests WHERE expires_at < now()`); err != nil {
+			return err
+		}
+		var n int
+		if err := tx.QueryRow(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('oauth:' || $1, 0)), (SELECT count(*) FROM oauth_requests)`, orgID).Scan(nil, &n); err != nil {
+			return err
+		}
+		if n >= oauthRequestsPerOrg {
+			return ErrBusy
+		}
 		return tx.QueryRow(ctx, `INSERT INTO oauth_requests (org_id, client_id, redirect_uri, state, code_challenge, scope, resource, expires_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`, orgID, r.ClientID, r.RedirectURI, r.State, r.CodeChallenge, r.Scope, r.Resource,
 			time.Now().Add(OAuthRequestTTL)).Scan(&r.ID)
