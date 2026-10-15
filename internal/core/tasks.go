@@ -685,14 +685,15 @@ func parseRepeat(s string) (string, error) {
 
 // nextDue is the next occurrence after today, counted on from the current due date (or from today when
 // there is none), skipping any that are already in the past.
-func nextDue(repeat string, due *time.Time, today time.Time) time.Time {
+func nextDue(repeat string, due *time.Time, today time.Time, day int) time.Time {
 	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 	d := today
 	if due != nil {
 		d = time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
 	}
-	// shortcut: the day comes from the current due date, so one clamped to Feb 28 stays on the 28th; store the series' day if that matters.
-	day := d.Day()
+	if day == 0 {
+		day = d.Day()
+	}
 	step := func(t time.Time) time.Time {
 		switch repeat {
 		case "daily":
@@ -726,6 +727,18 @@ func addMonths(t time.Time, n, day int) time.Time {
 	return first.AddDate(0, 0, min(day, first.AddDate(0, 1, -1).Day())-1)
 }
 
+// seriesDay is the day of the month a monthly or yearly series falls on: the one it was started on
+// (kept through short months), unless the due date was since moved to another day.
+func seriesDay(stored int, due *time.Time) int {
+	if due == nil {
+		return 0
+	}
+	if last := time.Date(due.Year(), due.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day(); stored > 0 && min(stored, last) == due.Day() {
+		return stored
+	}
+	return due.Day()
+}
+
 // closerToday is the closer's local date when they sent a plausible one (a day either side of UTC's).
 func closerToday(local string, now time.Time) time.Time {
 	utc := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
@@ -754,6 +767,11 @@ func (c *call) nextOccurrence(r *taskRow, today time.Time) (*TaskOut, error) {
 	if maker == c.p && c.p.Member.IsAgent() && !c.p.can(ActCreate) {
 		return nil, c.event(r.ID, "repeat_ended", map[string]any{"reason": "nobody who may create tasks is left to continue the series"})
 	}
+	var stored int
+	if err := c.tx.QueryRow(c.ctx, `SELECT coalesce(repeat_day, 0) FROM tasks WHERE id = $1`, r.ID).Scan(&stored); err != nil {
+		return nil, err
+	}
+	day := seriesDay(stored, r.Due)
 	prio := r.Priority
 	// The next one starts with the same steps, none done.
 	var todos []string
@@ -766,7 +784,7 @@ func (c *call) nextOccurrence(r *taskRow, today time.Time) (*TaskOut, error) {
 	}
 	nt := NewTask{
 		Title: r.Title, Body: r.Body, Project: r.ProjectID, Priority: &prio, Todos: todos,
-		Due: nextDue(r.Repeat, r.Due, today).Format("2006-01-02"), Labels: r.Labels, Repeat: r.Repeat,
+		Due: nextDue(r.Repeat, r.Due, today, day).Format("2006-01-02"), Labels: r.Labels, Repeat: r.Repeat,
 	}
 	if m := c.members[r.AssigneeID]; m != nil && m.Status == "active" {
 		nt.Assignee = m.ID
@@ -780,6 +798,9 @@ func (c *call) nextOccurrence(r *taskRow, today time.Time) (*TaskOut, error) {
 	mc.p = maker
 	id, _, err := mc.createOne(nt)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET repeat_day = $2 WHERE id = $1`, id, day); err != nil {
 		return nil, err
 	}
 	n, err := c.getTask(id, false, false)
@@ -1260,8 +1281,8 @@ func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (
 		// Reopened and closed again: the next one made the first time still stands.
 		var made bool
 		if continues {
-			if err := c.tx.QueryRow(c.ctx, `SELECT EXISTS (SELECT 1 FROM tasks n JOIN tasks t ON n.id = t.next_id
-				WHERE t.id = $1 AND n.deleted_at IS NULL)`, r.ID).Scan(&made); err != nil {
+			// Even a trashed next one counts: it can be restored.
+			if err := c.tx.QueryRow(c.ctx, `SELECT next_id IS NOT NULL FROM tasks WHERE id = $1`, r.ID).Scan(&made); err != nil {
 				return err
 			}
 		}
