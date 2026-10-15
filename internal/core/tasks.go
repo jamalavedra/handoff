@@ -1557,7 +1557,7 @@ func (s *Service) Trash(ctx context.Context, p *Principal, in TrashIn) (TrashOut
 
 func (c *call) trash(id, reason string) error {
 	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET deleted_at = now(), deleted_by = $2, claimed_by = NULL,
-		claim_expires_at = NULL, updated_at = now() WHERE id = $1`, id, c.p.Member.ID); err != nil {
+		claim_expires_at = NULL, triage = nullif(triage, 'pending'), updated_at = now() WHERE id = $1`, id, c.p.Member.ID); err != nil {
 		return err
 	}
 	return c.event(id, "trashed", map[string]any{"reason": reason})

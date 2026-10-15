@@ -376,7 +376,7 @@ func (s *Service) pendingTriage(ctx context.Context, olderThan time.Duration) []
 	var jobs []triageJob
 	for _, org := range orgs {
 		_ = s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, `SELECT id FROM tasks WHERE triage = 'pending' AND created_at < now() - make_interval(secs => $1)
+			rows, err := tx.Query(ctx, `SELECT id FROM tasks WHERE triage = 'pending' AND deleted_at IS NULL AND created_at < now() - make_interval(secs => $1)
 				AND (triage_claim_until IS NULL OR triage_claim_until < now())
 				ORDER BY created_at LIMIT 100`, olderThan.Seconds())
 			if err != nil {

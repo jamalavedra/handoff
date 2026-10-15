@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -34,6 +35,7 @@ const (
 	assistantMaxChars    = 8000 // per message from the client
 	assistantResultChars = 8000 // per tool result sent back to the model
 	assistantTurnTTL     = 15 * time.Minute
+	assistantTurnLease   = 5 * time.Minute
 )
 
 type AssistantOut struct {
@@ -90,16 +92,16 @@ type AssistantChatOut struct {
 	asked []string
 }
 
-// assistantTurn is what the server remembers about one turn while it runs and for a while after.
+// assistantTurn is what the server remembers about one turn while it runs and for a while after,
+// in assistant_turns, so a retry on another server or after a restart resumes instead of repeating writes.
 type assistantTurn struct {
-	at      time.Time
-	running bool
-	msgs    []map[string]any // the turn's tool calls and results, replayed to the model on a retry
-	steps   []AssistantStep
-	rounds  int
-	calls   int
-	changed bool
-	done    map[string]string // write calls already made (tool and arguments) and what they returned
+	org, member, id string
+	msgs            []map[string]any // the turn's tool calls and results, replayed to the model on a retry
+	steps           []AssistantStep
+	rounds          int
+	calls           int
+	changed         bool
+	done            map[string]string // write calls already made (tool and arguments) and what they returned
 	// found are the pages this turn's lookups returned, kept for retries: the only ones whose pictures it may show.
 	found    map[string]bool
 	finished bool
@@ -108,35 +110,70 @@ type assistantTurn struct {
 	blocks   []Block
 }
 
-// takeTurn claims a turn for one request: a new one, or an earlier attempt to resume.
-func (s *Service) takeTurn(key string) (*assistantTurn, error) {
-	s.turnsMu.Lock()
-	defer s.turnsMu.Unlock()
-	if s.turns == nil {
-		s.turns = map[string]*assistantTurn{}
-	}
-	now := time.Now()
-	for k, t := range s.turns {
-		if !t.running && now.Sub(t.at) > assistantTurnTTL {
-			delete(s.turns, k)
-		}
-	}
-	t := s.turns[key]
-	if t == nil {
-		t = &assistantTurn{done: map[string]string{}}
-		s.turns[key] = t
-	}
-	if t.running {
-		return nil, errf(ErrConflict, "the assistant is still working on that message")
-	}
-	t.running, t.at = true, now
-	return t, nil
+type turnState struct {
+	Msgs     []map[string]any  `json:"msgs,omitempty"`
+	Steps    []AssistantStep   `json:"steps,omitempty"`
+	Rounds   int               `json:"rounds,omitempty"`
+	Calls    int               `json:"calls,omitempty"`
+	Changed  bool              `json:"changed,omitempty"`
+	Done     map[string]string `json:"done,omitempty"`
+	Found    map[string]bool   `json:"found,omitempty"`
+	Finished bool              `json:"finished,omitempty"`
+	Reply    string            `json:"reply,omitempty"`
+	Asked    []string          `json:"asked,omitempty"`
+	Blocks   []Block           `json:"blocks,omitempty"`
 }
 
-func (s *Service) releaseTurn(t *assistantTurn) {
-	s.turnsMu.Lock()
-	defer s.turnsMu.Unlock()
-	t.running, t.at = false, time.Now()
+// takeTurn claims a turn for one request: a new one, or an earlier attempt to resume.
+func (s *Service) takeTurn(ctx context.Context, org, member, id string) (*assistantTurn, error) {
+	var raw []byte
+	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM assistant_turns WHERE updated_at < now() - make_interval(secs => $1) AND running_until < now()`,
+			assistantTurnTTL.Seconds()); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `INSERT INTO assistant_turns (org_id, member_id, turn, running_until) VALUES ($1, $2, $3, now() + make_interval(secs => $4))
+			ON CONFLICT (org_id, member_id, turn) DO UPDATE SET running_until = excluded.running_until, updated_at = now()
+			WHERE assistant_turns.running_until < now()
+			RETURNING state`, org, member, id, assistantTurnLease.Seconds()).Scan(&raw)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errf(ErrConflict, "the assistant is still working on that message")
+	}
+	if err != nil {
+		return nil, err
+	}
+	var st turnState
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return nil, err
+	}
+	if st.Done == nil {
+		st.Done = map[string]string{}
+	}
+	return &assistantTurn{org: org, member: member, id: id, msgs: st.Msgs, steps: st.Steps, rounds: st.Rounds, calls: st.Calls,
+		changed: st.Changed, done: st.Done, found: st.Found, finished: st.Finished, reply: st.Reply, asked: st.Asked, blocks: st.Blocks}, nil
+}
+
+// saveTurn stores the turn's progress; running keeps it claimed for another lease.
+func (s *Service) saveTurn(ctx context.Context, t *assistantTurn, running bool) {
+	b, err := json.Marshal(turnState{Msgs: t.msgs, Steps: t.steps, Rounds: t.rounds, Calls: t.calls, Changed: t.changed,
+		Done: t.done, Found: t.found, Finished: t.finished, Reply: t.reply, Asked: t.asked, Blocks: t.blocks})
+	if err == nil {
+		lease := 0.0
+		if running {
+			lease = assistantTurnLease.Seconds()
+		}
+		// The request may be cancelled already: what the turn did is still kept.
+		ctx := context.WithoutCancel(ctx)
+		err = s.DB.InOrg(ctx, t.org, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE assistant_turns SET state = $4, running_until = now() + make_interval(secs => $5), updated_at = now()
+				WHERE member_id = $1 AND turn = $2 AND org_id = $3`, t.member, t.id, t.org, b, lease)
+			return err
+		})
+	}
+	if err != nil {
+		slog.Error("assistant turn: save", "turn", t.id, "err", err)
+	}
 }
 
 // GetAssistant tells the web app whether the assistant is set up, and as which agent.
@@ -204,11 +241,11 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 		return out, errf(ErrInvalid, "the saved model credential can't be read; an admin needs to enter it again in Admin → Triage")
 	}
 
-	t, err := s.takeTurn(p.Org.ID + "/" + p.Member.ID + "/" + turnID)
+	t, err := s.takeTurn(ctx, p.Org.ID, p.Member.ID, turnID)
 	if err != nil {
 		return out, err
 	}
-	defer s.releaseTurn(t)
+	defer s.saveTurn(ctx, t, false)
 	if t.finished {
 		return AssistantChatOut{Reply: t.reply, Steps: slices.Clone(t.steps), Agent: out.Agent, Changed: t.changed, asked: t.asked, Blocks: slices.Clone(t.blocks)}, nil
 	}
@@ -676,6 +713,7 @@ func (a *assistantRun) call(ctx context.Context, name, args string) string {
 	}
 	if key != "" {
 		a.turn.done[key] = string(b)
+		a.s.saveTurn(ctx, a.turn, true)
 	}
 	return string(b)
 }

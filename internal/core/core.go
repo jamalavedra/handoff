@@ -166,9 +166,6 @@ type Service struct {
 	// outboundHTTP is the shared guarded client, built on first use.
 	outboundHTTP *http.Client
 	outboundOnce sync.Once
-	// assistant turns in progress or recently finished, so a retried turn resumes instead of repeating writes.
-	turnsMu sync.Mutex
-	turns   map[string]*assistantTurn
 }
 
 func New(d *db.DB, cfg *config.Config) *Service {

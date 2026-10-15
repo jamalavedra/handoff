@@ -351,7 +351,10 @@ func TestAssistantRetryDoesNotRepeatWrites(t *testing.T) {
 	if out.Error == "" || !strings.Contains(out.Error, "502") || len(out.Steps) != 3 || !out.Changed || out.Reply != "" {
 		t.Fatalf("partial result: %+v", out)
 	}
-	out, err = e.s.AssistantChat(e.ctx, admin, in)
+	// The retry lands on another server, which only shares the database.
+	other := core.New(e.s.DB, e.s.Cfg)
+	other.OutboundHTTP = e.s.OutboundHTTP
+	out, err = other.AssistantChat(e.ctx, admin, in)
 	if err != nil || out.Error != "" || out.Reply != "Booked and noted." || len(out.Steps) != 4 {
 		t.Fatalf("retry: %+v %v", out, err)
 	}

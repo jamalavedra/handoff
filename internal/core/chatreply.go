@@ -23,8 +23,13 @@ type replyJob struct{ org, id string }
 // with the change that caused it, and wakes the worker once that change is committed.
 func (c *call) requestAgent(kind, taskID string, commentID *string) error {
 	var id string
-	if err := c.tx.QueryRow(c.ctx, `INSERT INTO chat_replies (org_id, comment_id, task_id, author_id, kind) VALUES ($1, $2, $3, $4, $5)
-		RETURNING id::text`, c.p.Org.ID, commentID, taskID, c.p.Member.ID, kind).Scan(&id); err != nil {
+	// A task has at most one take-on waiting (chat_replies_take_on): a second hand-over joins it.
+	err := c.tx.QueryRow(c.ctx, `INSERT INTO chat_replies (org_id, comment_id, task_id, author_id, kind) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT DO NOTHING RETURNING id::text`, c.p.Org.ID, commentID, taskID, c.p.Member.ID, kind).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	job := replyJob{org: c.p.Org.ID, id: id}
@@ -95,6 +100,8 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 	err = s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `UPDATE chat_replies SET claim_until = now() + interval '5 minutes', attempts = attempts + 1
 			WHERE id::text = $1 AND state = 'pending' AND (claim_until IS NULL OR claim_until < now())
+			AND NOT EXISTS (SELECT 1 FROM chat_replies o WHERE o.task_id = chat_replies.task_id AND o.id <> chat_replies.id
+				AND o.state = 'pending' AND o.claim_until > now())
 			RETURNING task_id, author_id::text, kind, coalesce(comment_id::text, ''), attempts`, j.id).Scan(&task, &author, &kind, &comment, &attempts)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -275,7 +282,13 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		if err != nil {
 			msg = err.Error()
 		}
-		reply = "I couldn't finish that: " + clip(msg, 300)
+		slog.Warn("chat reply: turn failed", "request", j.id, "err", msg)
+		// Our own errors say what to do; anything else (the provider's text, the database's) stays in the log.
+		reply = "I couldn't finish that. Try again in a moment."
+		var ce *Error
+		if errors.As(err, &ce) {
+			reply = "I couldn't finish that: " + clip(err.Error(), 300)
+		}
 	}
 	if reply != "" {
 		// Posted as the agent, for the person it answered.

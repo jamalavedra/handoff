@@ -365,7 +365,7 @@ func (s *Service) saveConnection(ctx context.Context, p *Principal, name, endpoi
 			}
 			return err
 		}
-		if err := c.event("", "connection_added", map[string]any{"name": name, "url": endpoint, "tools": len(tools)}); err != nil {
+		if err := c.event("", "connection_added", map[string]any{"name": name, "host": endpointHost(endpoint), "tools": len(tools)}); err != nil {
 			return err
 		}
 		all, err := c.connections()
