@@ -208,9 +208,11 @@ func Export(ctx context.Context, s *core.Service, p *core.Principal, project str
 		ids[t.ID] = bdID(t)
 	}
 	enc := json.NewEncoder(w)
+	quiet := *p
+	quiet.Via = core.ViaAssistant // an export isn't someone looking: no seen marks, alerts read or presence
 	for _, t := range all {
 		is := toIssue(t)
-		d, err := s.GetTask(ctx, p, core.TaskIDIn{ID: t.ID})
+		d, err := s.GetTask(ctx, &quiet, core.TaskIDIn{ID: t.ID})
 		if err != nil {
 			return 0, err
 		}

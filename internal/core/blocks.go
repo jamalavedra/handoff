@@ -439,9 +439,19 @@ func (s *Service) ProxyImage(ctx context.Context, src, sig string) (string, []by
 	}
 	req.Header.Set("Accept", "image/*")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Handoff/1; +https://github.com/joalavedra/handoff)")
-	resp, err := s.outbound().Do(req)
-	if err != nil {
-		return "", nil, errf(ErrNotFound, "the image couldn't be loaded")
+	// outbound never follows redirects (bearer tokens); a picture carries none, so follow a few here.
+	var resp *http.Response
+	for range 4 {
+		if resp, err = s.outbound().Do(req); err != nil {
+			return "", nil, errf(ErrNotFound, "the image couldn't be loaded")
+		}
+		next, lerr := resp.Location()
+		if resp.StatusCode < 300 || resp.StatusCode > 399 || lerr != nil || (next.Scheme != "https" && next.Scheme != "http") {
+			break
+		}
+		resp.Body.Close()
+		req = req.Clone(ctx)
+		req.URL, req.Host = next, ""
 	}
 	defer resp.Body.Close()
 	ct := resp.Header.Get("Content-Type")
