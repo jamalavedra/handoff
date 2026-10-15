@@ -308,10 +308,14 @@ func (s *Service) webhookTick(ctx context.Context, org, slug string) {
 		_, err := tx.Exec(ctx, `INSERT INTO webhook_deliveries (org_id, notification_id, agent_id)
 			SELECT n.org_id, n.id, n.member_id FROM notifications n
 			JOIN agent_webhooks w ON w.org_id = n.org_id AND w.agent_id = n.member_id
-			-- shortcut: only the last day is scanned, so alerts made while no server ran for a day are never sent; queue on write if that matters.
-			WHERE n.created_at >= greatest(w.since, now() - interval '1 day') AND n.kind <> 'agent_done'
+			-- shortcut: rescans 5 minutes back, so a notification committed later than that after it was stamped is missed; queue on write if transactions ever run that long.
+			WHERE n.created_at >= greatest(w.since, w.scanned_at - interval '5 minutes') AND n.kind <> 'agent_done'
 				AND NOT EXISTS (SELECT 1 FROM webhook_deliveries d WHERE d.org_id = n.org_id AND d.notification_id = n.id)
 			ON CONFLICT DO NOTHING`)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE agent_webhooks SET scanned_at = now() WHERE org_id = $1`, org)
 		return err
 	})
 	if err != nil {
