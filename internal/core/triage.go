@@ -614,11 +614,7 @@ func triageUserMessage(org *Org, t triageTask, projects []ProjectOut, members []
 	}
 	fmt.Fprintf(&b, "\nTask title: %s\n", t.Title)
 	if strings.TrimSpace(t.Body) != "" {
-		body := t.Body
-		if len(body) > 4000 {
-			body = body[:4000]
-		}
-		fmt.Fprintf(&b, "Task details:\n%s\n", body)
+		fmt.Fprintf(&b, "Task details:\n%s\n", clipBytes(t.Body, 4000))
 	}
 	if t.Notes != "" {
 		b.WriteString("\n" + t.Notes + "\n")
@@ -673,11 +669,12 @@ func (s *Service) completeJSON(ctx context.Context, st *triageSettings, cred str
 		return sugg, errors.New("model endpoint returned an unexpected response")
 	}
 	text := out.Choices[0].Message.Content
-	i, k := strings.Index(text, "{"), strings.LastIndex(text, "}")
-	if i < 0 || k < i {
+	i := strings.Index(text, "{")
+	if i < 0 {
 		return sugg, errors.New("the model did not answer with JSON")
 	}
-	if err := json.Unmarshal([]byte(text[i:k+1]), &sugg); err != nil {
+	// Read the first JSON object only: prose after it (even with braces) is ignored.
+	if err := json.NewDecoder(strings.NewReader(text[i:])).Decode(&sugg); err != nil {
 		return sugg, errors.New("the model's JSON could not be read")
 	}
 	return sugg, nil

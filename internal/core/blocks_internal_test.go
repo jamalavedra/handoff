@@ -1,6 +1,8 @@
 package core
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
@@ -47,5 +49,23 @@ func TestFoundPages(t *testing.T) {
 		if a.turn.found[u] != want {
 			t.Errorf("found[%q] = %v, want %v (all: %v)", u, a.turn.found[u], want, a.turn.found)
 		}
+	}
+}
+
+func TestImageProxyFollowsRedirects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/a" {
+			http.Redirect(w, r, "/b", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("png"))
+	}))
+	defer srv.Close()
+	s := &Service{Cfg: &config.Config{Secret: []byte("k")},
+		OutboundHTTP: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	src := srv.URL + "/a"
+	if ct, b, err := s.ProxyImage(t.Context(), src, s.imageSig(src)); err != nil || ct != "image/png" || string(b) != "png" {
+		t.Fatalf("redirected image: %q %q %v", ct, b, err)
 	}
 }
