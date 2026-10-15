@@ -1,3 +1,4 @@
+import type { Block } from "./blocks";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import type { ActivityStep } from "./activity";
@@ -125,7 +126,9 @@ export type Reaction = { emoji: string; count: number; mine?: boolean; by: strin
 
 // Lookup is one call the agent made to a connected service (web search, an internal tool…) for a message.
 export type Lookup = { source: string; tool: string; query?: string; failed?: boolean };
-export type Comment = { id: string; author: MemberRef; on_behalf_of?: MemberRef; body: string; created_at: string; reactions?: Reaction[]; lookups?: Lookup[]; activity?: ActivityStep[]; options?: string[] };
+// ReplyRef is the message a comment replies to: the quoted part, or its start.
+export type ReplyRef = { id: string; author?: MemberRef; excerpt: string; quoted?: boolean };
+export type Comment = { id: string; author: MemberRef; on_behalf_of?: MemberRef; body: string; created_at: string; reactions?: Reaction[]; lookups?: Lookup[]; activity?: ActivityStep[]; options?: string[]; blocks?: Block[]; reply_to?: ReplyRef };
 
 export type Me = {
   apex?: boolean;

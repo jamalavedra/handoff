@@ -1,5 +1,7 @@
 // What the browser keeps of an assistant conversation, and how it goes back to the server.
 
+import type { Block } from "./blocks";
+
 export type TaskRef = { id: string; title: string };
 // type: thought, tool, lookup or write (older replies have none); lookup: a connected service it called.
 export type Step = { tool: string; summary: string; tasks?: TaskRef[]; error?: string; type?: "thought" | "tool" | "lookup" | "write"; lookup?: { source: string; tool: string; query?: string; failed?: boolean } };
@@ -7,6 +9,7 @@ export type Msg = {
   role: "user" | "assistant";
   content: string;
   steps?: Step[];
+  blocks?: Block[]; // images, a map… under the reply
   // error: the turn stopped early; steps (if any) were still done.
   error?: boolean;
   // turn: the id a user message was sent with, so a retry resumes that turn on the server.
