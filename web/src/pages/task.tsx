@@ -103,11 +103,15 @@ function MenuItem({ icon: Icon, onClick, children, danger }: { icon: typeof Flag
 function TitleEditor({ t, onSave, disabled }: { t: Task; onSave: (title: string) => void; disabled: boolean }) {
   const [v, setV] = useState(t.title);
   const discard = useRef(false);
-  useEffect(() => setV(t.title), [t.title]);
+  // While the field has focus, a new title from elsewhere (like triage tidying it) waits instead of replacing the typing.
+  const focused = useRef(false);
+  const base = useRef(t.title);
+  useEffect(() => { if (!focused.current) { setV(t.title); base.current = t.title; } }, [t.title]);
   const commit = () => {
-    if (discard.current) { discard.current = false; return; }
+    focused.current = false;
+    if (discard.current) { discard.current = false; base.current = t.title; return; }
     const next = v.replace(/\s+/g, " ").trim();
-    if (!next) setV(t.title);
+    if (!next || next === base.current) { setV(t.title); base.current = t.title; }
     else if (next !== t.title) onSave(next);
   };
   return (
@@ -117,6 +121,7 @@ function TitleEditor({ t, onSave, disabled }: { t: Task; onSave: (title: string)
       value={v}
       readOnly={disabled}
       onChange={(e) => setV(e.target.value)}
+      onFocus={() => { focused.current = true; }}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }

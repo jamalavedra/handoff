@@ -36,6 +36,9 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const meId = useMe().data?.member?.id;
   const [comment, setComment] = useState("");
+  // Counts edits to the draft, so a send only clears it if nothing was typed since (even the same text).
+  const edits = useRef(0);
+  useEffect(() => { edits.current++; }, [comment]);
   const [caret, setCaret] = useState(0);
   const [pick, setPick] = useState(0);
   // Esc closes the @ menu for the mention it was showing; typing another @ opens it again.
@@ -66,8 +69,8 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
   const send = useMutation({
     // A quick answer stands alone: it drops the reply that was open (`drop`) instead of answering it.
-    mutationFn: (v: { body: string; reply?: ReplyDraft | null; drop?: ReplyDraft | null }) => api.tool("comment", { id, body: v.body, ...replyArgs(v.reply ?? null) }),
-    onSuccess: (_, v) => { setComment(""); const sent = v.reply ?? v.drop; if (sent) setReply((r) => (r === sent ? null : r)); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
+    mutationFn: (v: { body: string; at?: number; reply?: ReplyDraft | null; drop?: ReplyDraft | null }) => api.tool("comment", { id, body: v.body, ...replyArgs(v.reply ?? null) }),
+    onSuccess: (_, v) => { if (v.at === edits.current) setComment(""); const sent = v.reply ?? v.drop; if (sent) setReply((r) => (r === sent ? null : r)); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
@@ -126,7 +129,7 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
       {!locked && (
         <form
           className={cn("relative mx-3 mt-1 flex flex-wrap items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-sm focus-within:ring-2 focus-within:ring-input", drawer ? "mb-[calc(0.75rem+env(safe-area-inset-bottom))]" : "mb-3")}
-          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim() && !send.isPending) send.mutate({ body: comment, reply }); }}
+          onSubmit={(e) => { e.preventDefault(); dictation.cancel(); if (comment.trim() && !send.isPending) send.mutate({ body: comment, at: edits.current, reply }); }}
         >
           {reply && <ReplyChip draft={reply} onCancel={() => { setReply(null); ref.current?.focus(); }} />}
           <MentionMenu items={suggestions} active={picked} onPick={insertMention} onHover={setPick} />
