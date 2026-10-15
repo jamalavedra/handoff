@@ -86,7 +86,7 @@ func (c *call) mentioned(body string) []*Member {
 
 // visibleNotifications limits a member's notifications to live tasks they can still see.
 const visibleNotifications = `FROM notifications n JOIN tasks t ON t.org_id = n.org_id AND t.id = n.task_id
-	WHERE n.member_id = $1 AND t.deleted_at IS NULL AND t.project_id::text = ANY($2)`
+	WHERE n.member_id = $1 AND t.deleted_at IS NULL AND t.project_id = ANY($2::uuid[])`
 
 func (c *call) unreadCount() (int, error) {
 	var n int

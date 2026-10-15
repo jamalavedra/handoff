@@ -175,7 +175,7 @@ func (c *call) outs(rs []*taskRow) []TaskOut {
 
 // getTask loads a visible task; trashed tasks only when includeDeleted.
 func (c *call) getTask(id string, includeDeleted bool, forUpdate bool) (*taskRow, error) {
-	q := "t.id = $1 AND t.project_id::text = ANY($2)"
+	q := "t.id = $1 AND t.project_id = ANY($2::uuid[])"
 	if !includeDeleted {
 		q += " AND t.deleted_at IS NULL"
 	}
@@ -273,7 +273,7 @@ func (s *Service) GetContext(ctx context.Context, p *Principal, _ struct{}) (Con
 		if out.Projects, err = c.projectOuts(); err != nil {
 			return err
 		}
-		open := " AND t.deleted_at IS NULL AND t.status NOT IN ('done', 'cancelled') AND t.project_id::text = ANY($2) ORDER BY t.priority, t.due_at NULLS LAST, t.created_at LIMIT 25"
+		open := " AND t.deleted_at IS NULL AND t.status NOT IN ('done', 'cancelled') AND t.project_id = ANY($2::uuid[]) ORDER BY t.priority, t.due_at NULLS LAST, t.created_at LIMIT 25"
 		rs, err := c.queryTasks("t.assignee_id = $1"+open, p.Member.ID, c.visible)
 		if err != nil {
 			return err
@@ -291,7 +291,7 @@ func (s *Service) GetContext(ctx context.Context, p *Principal, _ struct{}) (Con
 			return err
 		}
 		out.ClaimedByMe = c.outs(rs)
-		rs, err = c.queryTasks(readyCond+" AND t.project_id::text = ANY($1) ORDER BY t.priority, t.due_at NULLS LAST, t.created_at LIMIT 10", c.visible)
+		rs, err = c.queryTasks(readyCond+" AND t.project_id = ANY($1::uuid[]) ORDER BY t.priority, t.due_at NULLS LAST, t.created_at LIMIT 10", c.visible)
 		if err != nil {
 			return err
 		}
@@ -324,7 +324,7 @@ func clampLimit(n, def, max int) int {
 func (s *Service) ListReady(ctx context.Context, p *Principal, in ListReadyIn) (TasksOut, error) {
 	out := TasksOut{Tasks: []TaskOut{}}
 	err := s.run(ctx, p, func(c *call) error {
-		where := readyCond + " AND t.project_id::text = ANY($1)"
+		where := readyCond + " AND t.project_id = ANY($1::uuid[])"
 		args := []any{c.visible}
 		if in.Project != "" {
 			pr, err := c.resolveProject(in.Project)
@@ -385,7 +385,7 @@ type SearchTasksIn struct {
 func (s *Service) SearchTasks(ctx context.Context, p *Principal, in SearchTasksIn) (TasksOut, error) {
 	out := TasksOut{Tasks: []TaskOut{}}
 	err := s.run(ctx, p, func(c *call) error {
-		where := "t.project_id::text = ANY($1)"
+		where := "t.project_id = ANY($1::uuid[])"
 		args := []any{c.visible}
 		add := func(cond string, v any) {
 			args = append(args, v)
@@ -1247,7 +1247,7 @@ func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (
 			out.Next = next
 		}
 		if len(r.Blocks) > 0 {
-			rs, err := c.queryTasks(readyCond+" AND t.id = ANY($1) AND t.project_id::text = ANY($2)", r.Blocks, c.visible)
+			rs, err := c.queryTasks(readyCond+" AND t.id = ANY($1) AND t.project_id = ANY($2::uuid[])", r.Blocks, c.visible)
 			if err != nil {
 				return err
 			}
@@ -1600,7 +1600,7 @@ func (c *call) loadReactions(comments []CommentOut) error {
 		idx[co.ID], ids[i] = i, co.ID
 	}
 	rows, err := c.tx.Query(c.ctx, `SELECT comment_id::text, emoji, member_id::text FROM comment_reactions
-		WHERE comment_id::text = ANY($1) ORDER BY created_at`, ids)
+		WHERE comment_id = ANY($1::uuid[]) ORDER BY created_at`, ids)
 	if err != nil {
 		return err
 	}
