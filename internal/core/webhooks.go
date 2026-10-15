@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -247,7 +248,7 @@ func (s *Service) RunWebhooks(ctx context.Context) {
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	for {
-		s.DeliverWebhooks(ctx)
+		go s.DeliverWebhooks(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -256,7 +257,8 @@ func (s *Service) RunWebhooks(ctx context.Context) {
 	}
 }
 
-// DeliverWebhooks runs one delivery round over every workspace.
+// DeliverWebhooks runs one delivery round over every workspace, a few at a time. A workspace whose
+// last round is still going (a slow endpoint) is skipped, so it only holds up itself.
 func (s *Service) DeliverWebhooks(ctx context.Context) {
 	rows, err := s.DB.Pool.Query(ctx, `SELECT id::text, slug FROM orgs`)
 	if err != nil {
@@ -272,9 +274,19 @@ func (s *Service) DeliverWebhooks(ctx context.Context) {
 		slog.Error("webhooks", "err", err)
 		return
 	}
+	var wg sync.WaitGroup
 	for _, o := range orgs {
-		s.webhookTick(ctx, o.id, o.slug)
+		if _, busy := s.hooksBusy.LoadOrStore(o.id, true); busy {
+			continue
+		}
+		wg.Go(func() {
+			defer s.hooksBusy.Delete(o.id)
+			s.hookSlots <- struct{}{}
+			defer func() { <-s.hookSlots }()
+			s.webhookTick(ctx, o.id, o.slug)
+		})
 	}
+	wg.Wait()
 }
 
 // webhookTick does one round for a workspace: note tasks that came due for agents, queue new
@@ -296,7 +308,8 @@ func (s *Service) webhookTick(ctx context.Context, org, slug string) {
 		_, err := tx.Exec(ctx, `INSERT INTO webhook_deliveries (org_id, notification_id, agent_id)
 			SELECT n.org_id, n.id, n.member_id FROM notifications n
 			JOIN agent_webhooks w ON w.org_id = n.org_id AND w.agent_id = n.member_id
-			WHERE n.created_at >= w.since AND n.kind <> 'agent_done'
+			-- shortcut: only the last day is scanned, so alerts made while no server ran for a day are never sent; queue on write if that matters.
+			WHERE n.created_at >= greatest(w.since, now() - interval '1 day') AND n.kind <> 'agent_done'
 				AND NOT EXISTS (SELECT 1 FROM webhook_deliveries d WHERE d.org_id = n.org_id AND d.notification_id = n.id)
 			ON CONFLICT DO NOTHING`)
 		return err
