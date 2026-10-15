@@ -109,7 +109,7 @@ function TitleEditor({ t, onSave, disabled }: { t: Task; onSave: (title: string)
   useEffect(() => { if (!focused.current) { setV(t.title); base.current = t.title; } }, [t.title]);
   const commit = () => {
     focused.current = false;
-    if (discard.current) { discard.current = false; return; }
+    if (discard.current) { discard.current = false; base.current = t.title; return; }
     const next = v.replace(/\s+/g, " ").trim();
     if (!next || next === base.current) { setV(t.title); base.current = t.title; }
     else if (next !== t.title) onSave(next);
