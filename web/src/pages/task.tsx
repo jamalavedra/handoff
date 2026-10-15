@@ -257,9 +257,9 @@ function TaskView({ id }: { id: string }) {
                   <div role="separator" className="my-1 h-px bg-border" />
                 </>
               )}
-              {!locked && (t.status === "cancelled"
-                ? <MenuItem icon={ArchiveRestore} onClick={() => { setStatus("open"); done(); }}>Unarchive</MenuItem>
-                : <MenuItem icon={Archive} onClick={() => { close.mutate("cancelled"); done(); }}>Archive</MenuItem>)}
+              {/* Archive is for work that won't be done; a finished task keeps its Done. */}
+              {!locked && t.status === "cancelled" && <MenuItem icon={ArchiveRestore} onClick={() => { setStatus("open"); done(); }}>Unarchive</MenuItem>}
+              {!locked && !closed && <MenuItem icon={Archive} onClick={() => { close.mutate("cancelled"); done(); }}>Archive</MenuItem>}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
             </>
           )}
