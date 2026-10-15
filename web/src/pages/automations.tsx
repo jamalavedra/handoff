@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { api, cn, projectName, type Member, type MemberRef, type Project, type Task } from "../lib";
 import { isoDate, repeatLabel, scheduleLabel, type Repeat } from "../quickadd";
 import { Avatar, Card, DuePill, ErrorText, PageHeader } from "../components/app";
-import { TaskLink, usePanelTask } from "../components/tasklink";
+import { TaskLink } from "../components/tasklink";
 import { patchTask, undoable } from "../components/feedback";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,7 +69,6 @@ function AutomationsSkeleton() {
 function AutomationRow({ t, agent }: { t: Task; agent?: Member }) {
   const qc = useQueryClient();
   const invalidate = useInvalidate();
-  const selected = usePanelTask() === t.id;
   const was = t.repeat!;
   const pause = useMutation({
     mutationFn: () => api.tool("update_task", { id: t.id, repeat: "" }),
@@ -88,7 +87,7 @@ function AutomationRow({ t, agent }: { t: Task; agent?: Member }) {
   return (
     // Sized by the row, not the screen: the list narrows when the task panel and assistant are open.
     <div className="@container">
-    <div className={cn("flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/60", selected && "bg-accent hover:bg-accent")}>
+    <div className={cn("flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/60")}>
       <TaskLink id={t.id} className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="truncate text-[15px] font-medium sm:text-sm">{t.title}</span>
         {/* Narrow rows: schedule and project, then who runs it. Wide rows: one line. */}

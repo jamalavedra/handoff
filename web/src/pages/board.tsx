@@ -73,7 +73,7 @@ export function Board({ tasks, done }: { tasks?: Task[]; done?: Task[] }) {
   return (
     <>
       <ErrorText error={move.error} />
-      <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 [scrollbar-width:none] md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
+      <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:mx-0 md:px-0">
         {columns.map((c) => {
           const items = all.filter((t) => boardColumn(t) === c.key);
           return (
@@ -88,7 +88,7 @@ export function Board({ tasks, done }: { tasks?: Task[]; done?: Task[] }) {
                 const t = byId.get(e.dataTransfer.getData("application/x-handoff-task"));
                 if (t && boardColumn(t) !== c.key) move.mutate({ t, to: c.key });
               }}
-              className={cn("flex w-[82vw] max-w-sm shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-accent p-2 transition-colors md:w-auto md:max-w-none", over === c.key && "bg-accent ring-2 ring-ring")}
+              className={cn("flex w-[82vw] max-w-xs shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-accent p-2 transition-colors md:w-72", over === c.key && "bg-accent ring-2 ring-ring")}
             >
               <h2 className="flex items-baseline gap-2 px-2 pt-1 text-[13px] font-medium text-muted-foreground">
                 {c.title}<span className="font-normal text-muted-foreground/70">{items.length}</span>

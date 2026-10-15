@@ -1,7 +1,7 @@
-import { StrictMode, useCallback, useEffect, useState } from "react";
+import { StrictMode, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createRootRoute, createRoute, createRouter, Link, Navigate, Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, Link, Navigate, Outlet, redirect, RouterProvider, useRouterState } from "@tanstack/react-router";
 import { Bell, CheckSquare, ChevronDown, ChevronRight, Search, FolderKanban, Inbox, LogOut, Monitor, Moon, MoreHorizontal, Plus, Settings, Sun, Trash2, Users, Zap } from "lucide-react";
 import { setTheme, useTheme, type Theme } from "./theme";
 import { useLive } from "./live";
@@ -9,11 +9,10 @@ import "./index.css";
 import { api, cn, projectName, type Me, type Project } from "./lib";
 import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
 import { ActivityPage, MyTasksPage, ProjectPage, ProjectsPage, TrashPage } from "./pages/tasks";
-import { TaskPage, TaskView } from "./pages/task";
+import { TaskPage } from "./pages/task";
 import { NotePage } from "./pages/notes";
 import { TeamPage } from "./pages/team";
 import { NotificationsPage, useInbox } from "./pages/notifications";
-import { usePanelTask, useWide } from "./components/tasklink";
 import { AgentsPage } from "./pages/agents";
 import { AutomationsPage } from "./pages/automations";
 import { AdminPage } from "./pages/admin";
@@ -26,7 +25,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useNotificationToasts } from "./components/feedback";
 import { CommandPaletteProvider, useCommandPalette } from "./components/command-palette";
 import { ShortcutsDialog, useShortcuts } from "./components/shortcuts";
-import { AssistantFab, AssistantPanel, AssistantProvider, clearAssistant, useAssistant, useAssistantInset, useFab } from "./components/assistant";
+import { AssistantFab, AssistantPanel, AssistantProvider, clearAssistant, useAssistantInset, useFab } from "./components/assistant";
 import { TabsProvider, TabStrip, useOpenInTab } from "./components/tabs";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
@@ -199,7 +198,6 @@ function Layout({ me }: { me: Me }) {
                 </div>
               </main>
             </div>
-            <TaskPanel />
           </div>
         </div>
         <AssistantPanel me={me} />
@@ -242,99 +240,6 @@ function SidebarBell({ unread }: { unread: number }) {
       <Bell className="size-4" />
       {unread > 0 && <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white tabular-nums">{unread > 9 ? "9+" : unread}</span>}
     </Link>
-  );
-}
-
-const panelWidthKey = "handoff-panel-width";
-const panelDefault = 480;
-
-function savedPanelWidth() {
-  try {
-    const v = Number(localStorage.getItem(panelWidthKey));
-    return v >= 360 ? v : panelDefault;
-  } catch {
-    return panelDefault;
-  }
-}
-
-// PanelResizer is the task panel's left edge: drag to resize (kept per browser), double-click to reset.
-function PanelResizer({ width, onResize }: { width: number; onResize: (w: number) => void }) {
-  const clamp = (w: number) => Math.round(Math.min(Math.max(w, 360), window.innerWidth * 0.7));
-  const save = (w: number) => {
-    try {
-      localStorage.setItem(panelWidthKey, String(w));
-    } catch {
-      // private mode: keep it for this tab
-    }
-  };
-  return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize task panel"
-      tabIndex={0}
-      title="Drag to resize · double-click to reset"
-      onDoubleClick={() => { onResize(panelDefault); save(panelDefault); }}
-      onKeyDown={(e) => {
-        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-        e.preventDefault();
-        const w = clamp(width + (e.key === "ArrowLeft" ? 32 : -32));
-        onResize(w);
-        save(w);
-      }}
-      onPointerDown={(e) => {
-        e.preventDefault();
-        const startX = e.clientX, startW = width;
-        let last = startW;
-        const move = (ev: PointerEvent) => { last = clamp(startW + startX - ev.clientX); onResize(last); };
-        const up = () => {
-          save(last);
-          document.body.style.cursor = "";
-          window.removeEventListener("pointermove", move);
-          window.removeEventListener("pointerup", up);
-        };
-        document.body.style.cursor = "col-resize";
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up);
-      }}
-      className="group absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize justify-center outline-none"
-    >
-      <span className="h-full w-px bg-transparent transition-colors group-hover:bg-ring group-focus-visible:bg-ring group-active:bg-foreground/40" />
-    </div>
-  );
-}
-
-// TaskPanel shows ?task=<id> beside the list on wide screens; narrow screens get the full task page.
-function TaskPanel() {
-  const task = usePanelTask();
-  const assistant = useAssistant();
-  const wide = useWide();
-  const navigate = useNavigate();
-  const [width, setWidth] = useState(savedPanelWidth);
-  const path = useRouterState({ select: (s) => s.location.pathname });
-  const open = !!task && !path.startsWith("/tasks/");
-  useEffect(() => {
-    if (open && !wide) navigate({ to: "/tasks/$id", params: { id: task }, replace: true });
-  }, [open, wide, task, navigate]);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement;
-      if (e.key !== "Escape" || e.defaultPrevented || el.closest("input, textarea, select, [role=dialog], [role=menu]")) return;
-      navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, navigate]);
-  if (!open || !wide) return null;
-  // Wide screens always have the tab strip (h-11) above the panel.
-  return (
-    <div className="sticky top-11 h-[calc(100dvh-2.75rem)] shrink-0" style={{ width: assistant.open ? Math.min(width, 0.4 * window.innerWidth) : width }}>
-      <PanelResizer width={width} onResize={setWidth} />
-      <aside key={task} aria-label="Task" className="h-full overflow-y-auto border-l border-border bg-background">
-      <TaskView id={task} panel />
-      </aside>
-    </div>
   );
 }
 
@@ -486,6 +391,10 @@ const root = createRootRoute({
     task: typeof s.task === "string" && s.task ? s.task : undefined,
     tab: typeof s.tab === "string" && s.tab ? s.tab : undefined,
   }),
+  // Tasks used to open in a side panel at ?task=<id>; those links now land on the task's page.
+  beforeLoad: ({ search }) => {
+    if (search.task) throw redirect({ to: "/tasks/$id", params: { id: search.task }, replace: true });
+  },
 });
 const r = <P extends string>(path: P, component: () => React.ReactNode) => createRoute({ getParentRoute: () => root, path, component });
 const router = createRouter({

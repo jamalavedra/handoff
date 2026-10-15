@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { AppWindow, Bot, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
+import { Bot, Check, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
-import { useTabs } from "../components/tabs";
-import { taskHref } from "../tabs";
 import { NoteCards, TaskText, Todos } from "../components/todos";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ago, api, cn, type Member, type MemberRef, type Note, type Project, type Task, statusLabel } from "../lib";
@@ -27,6 +25,9 @@ const statusTone: Record<Task["status"], string> = {
   cancelled: "bg-accent text-muted-foreground",
 };
 const priorityText = ["Urgent", "High", "Normal", "Low", "Someday"];
+// Every workspace starts with this project (core.DefaultProject); tasks land there unless filed elsewhere.
+const defaultProject = "Inbox";
+type Extra = "assignee" | "priority" | "repeat" | "project";
 
 function Pill({ icon: Icon, children, className, label, select }: { icon?: typeof Flag; children: React.ReactNode; className?: string; label: string; select?: React.ReactNode }) {
   return (
@@ -99,13 +100,10 @@ export function TaskPage() {
   return <TaskView id={id} />;
 }
 
-// TaskView is the task page body; with `panel` it renders inside the desktop side panel.
-export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
+function TaskView({ id }: { id: string }) {
   const navigate = useNavigate();
   const router = useRouter();
   const canGoBack = useCanGoBack();
-  const tabs = useTabs();
-  const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
   const q = useQuery({ ...taskQuery(id), refetchInterval: 10000 });
   const assistant = useAssistant();
   const chatShown = useTaskChatShown();
@@ -127,6 +125,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
     return () => document.removeEventListener("visibilitychange", read);
   }, [id, loaded, commentCount, qc]);
   const dueRef = useRef<HTMLInputElement>(null);
+  // Assignee, priority, repeat and project show as pills only when set; the ⋯ menu sets them from a picker.
+  const [picking, setPicking] = useState<Extra | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
   // A patch can name its task: a body draft saved as the view switches tasks still belongs to the old one.
@@ -156,16 +156,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       <ChevronLeft className="size-5" />Back
     </button>
   );
-  if (q.error) {
-    if (!panel) return <div>{back}<ErrorText error={q.error} /></div>;
-    return (
-      <div className="px-5 pt-4">
-        <button onClick={closePanel} className="-ml-2 mb-3 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)"><X className="size-5" /></button>
-        <ErrorText error={q.error} />
-      </div>
-    );
-  }
-  if (!q.data) return panel ? null : back;
+  if (q.error) return <div>{back}<ErrorText error={q.error} /></div>;
+  if (!q.data) return back;
   const { task: t, comments, events } = q.data;
   const notes = (q.data as { notes?: Note[] }).notes ?? [];
   const closed = t.status === "done" || t.status === "cancelled";
@@ -177,22 +169,38 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const activity = events.filter((e) => e.kind !== "commented");
   const here = q.data.here ?? [];
   const typers = here.filter((h) => h.typing);
+  const configured: Record<Extra, boolean> = {
+    assignee: !!t.assignee && t.assignee.id !== meId,
+    priority: t.priority !== 2,
+    repeat: !!t.repeat,
+    project: t.project !== defaultProject,
+  };
+  const pickers: Record<Extra, Picker> = {
+    assignee: {
+      title: "Assign to",
+      value: t.assignee?.id ?? "",
+      options: [{ value: "", label: "Unassigned" }, ...people.map((m) => ({ value: m.id, label: m.kind === "agent" ? `${m.name} (agent)` : m.name }))],
+      set: (v) => update.mutate({ assignee: v }),
+    },
+    priority: { title: "Priority", value: String(t.priority), options: priorityText.map((p, i) => ({ value: String(i), label: p })), set: (v) => update.mutate({ priority: Number(v) }) },
+    repeat: {
+      title: "Repeat",
+      value: t.repeat ?? "",
+      options: [{ value: "", label: "Doesn't repeat" }, ...(Object.keys(repeatLabel) as (keyof typeof repeatLabel)[]).map((r) => ({ value: r, label: repeatLabel[r] }))],
+      set: (v) => update.mutate({ repeat: v }),
+    },
+    project: { title: "Move to project", value: t.project_id, options: projects.data?.projects.map((p) => ({ value: p.id, label: p.name })) ?? [], set: (v) => update.mutate({ project: v }) },
+  };
 
   return (
-    <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:animate-none")}>
+    <div className="mx-auto flex min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] max-w-3xl flex-col motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:min-h-[calc(100dvh-4rem)] md:animate-none">
       <div className="mb-3 flex items-center gap-1">
-        {panel ? (
-          <button onClick={closePanel} className="-ml-2 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)">
-            <X className="size-5" />
-          </button>
-        ) : (
-          <button onClick={() => goBack()} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent" aria-label="Back">
-            <ChevronLeft className="size-5" /><span className="hidden sm:inline">Back</span>
-          </button>
-        )}
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground/70">
-          <Link to="/projects/$id" params={{ id: t.project_id }} className="hover:text-foreground/80 hover:underline">{t.project}</Link>
-          {t.deleted_at && <span className="ml-2 font-medium text-red-600">In trash</span>}
+        {/* Phones have no app bars on a task; wider screens go back from the tab strip. */}
+        <button onClick={() => goBack()} className="-ml-2 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent md:hidden" aria-label="Back">
+          <ChevronLeft className="size-5" />
+        </button>
+        <span className="min-w-0 flex-1 truncate text-sm">
+          {t.deleted_at && <span className="font-medium text-red-600">In trash</span>}
         </span>
         {here.length > 0 && (
           <div role="group" aria-label={`${names(here)} ${here.length === 1 ? "is" : "are"} here`} title={`${names(here)} ${here.length === 1 ? "is" : "are"} looking at this`} className="mr-1 flex items-center -space-x-1.5">
@@ -203,17 +211,21 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <button onClick={() => copyTaskLink(id)} className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Copy link" title="Copy link">
           <Link2 className="size-4" />
         </button>
-        {panel && (
-          <Link to="/tasks/$id" params={{ id }} className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Open full page" title="Open full page">
-            <Maximize2 className="size-4" />
-          </Link>
-        )}
         <Menu>
           {(done) => (
             <>
-              {panel && tabs && <MenuItem icon={AppWindow} onClick={() => { tabs.openInTab(taskHref(t.id)); done(); }}>Open in new tab</MenuItem>}
               <MenuItem icon={History} onClick={() => { setActivityOpen(true); done(); }}>Activity <span className="ml-auto text-xs text-muted-foreground/70 tabular-nums">{activity.length}</span></MenuItem>
               <MenuItem icon={Link2} onClick={() => { copyTaskLink(t.id); done(); }}>Copy link</MenuItem>
+              {!locked && (
+                <>
+                  <div role="separator" className="my-1 h-px bg-border" />
+                  <MenuItem icon={User} onClick={() => { done(); setPicking("assignee"); }}>Assign…</MenuItem>
+                  <MenuItem icon={Flag} onClick={() => { done(); setPicking("priority"); }}>Priority…</MenuItem>
+                  <MenuItem icon={RepeatIcon} onClick={() => { done(); setPicking("repeat"); }}>Repeat…</MenuItem>
+                  <MenuItem icon={Folder} onClick={() => { done(); setPicking("project"); }}>Move to project…</MenuItem>
+                  <div role="separator" className="my-1 h-px bg-border" />
+                </>
+              )}
               {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
             </>
@@ -221,8 +233,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </Menu>
       </div>
 
-      {/* One scrollable row on phones so the title stays near the top; wrapped on wider screens and in the panel. */}
-      <div className={cn("mb-4 flex gap-2", panel ? "flex-wrap" : "-mx-4 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0")}>
+      {/* One scrollable row on phones so the title stays near the top; wrapped on wider screens. */}
+      <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
         <Pill label="Status" className={statusTone[t.status]} select={!locked && (
           <select className={overlay} value={t.status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
             {(["open", "in_progress", "blocked", "done", "cancelled"] as const).map((s) => <option key={s} value={s}>{statusLabel[s]}</option>)}
@@ -232,28 +244,28 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
           <input ref={dueRef} type="date" className={overlay} value={t.due ?? ""} onClick={() => { try { dueRef.current?.showPicker(); } catch { /* not supported */ } }} onChange={(e) => update.mutate({ due: e.target.value })} aria-label="Due" />
         )}>{due ? due.text : "No date"}</Pill>
         {t.due && !locked && <button onClick={() => update.mutate({ due: "" })} aria-label="Clear due date" className="-ml-1.5 flex size-7 items-center justify-center rounded-full text-muted-foreground/70 hover:bg-accent"><X className="size-3.5" /></button>}
-        <Pill label="Assignee" icon={t.assignee?.kind === "agent" ? Bot : User} className={t.assignee?.kind === "agent" ? "bg-violet-50 text-violet-700" : ""} select={!locked && (
+        {configured.assignee && <Pill label="Assignee" icon={t.assignee?.kind === "agent" ? Bot : User} className={t.assignee?.kind === "agent" ? "bg-violet-50 text-violet-700" : ""} select={!locked && (
           <select className={overlay} value={t.assignee?.id ?? ""} onChange={(e) => update.mutate({ assignee: e.target.value })} aria-label="Assignee">
             <option value="">Unassigned</option>
             {people.map((m) => <option key={m.id} value={m.id}>{m.name}{m.kind === "agent" ? " (agent)" : ""}</option>)}
           </select>
-        )}>{t.assignee?.name ?? "Unassigned"}</Pill>
-        <Pill label="Priority" icon={Flag} className={cn(t.priority === 0 && "bg-red-50 text-red-700", t.priority === 1 && "bg-orange-50 text-orange-700")} select={!locked && (
+        )}>{t.assignee?.name ?? "Unassigned"}</Pill>}
+        {configured.priority && <Pill label="Priority" icon={Flag} className={cn(t.priority === 0 && "bg-red-50 text-red-700", t.priority === 1 && "bg-orange-50 text-orange-700")} select={!locked && (
           <select className={overlay} value={t.priority} onChange={(e) => update.mutate({ priority: Number(e.target.value) })} aria-label="Priority">
             {priorityText.map((p, i) => <option key={i} value={i}>{p}</option>)}
           </select>
-        )}>{priorityText[t.priority]}</Pill>
-        <Pill label="Repeat" icon={RepeatIcon} select={!locked && (
+        )}>{priorityText[t.priority]}</Pill>}
+        {configured.repeat && <Pill label="Repeat" icon={RepeatIcon} select={!locked && (
           <select className={overlay} value={t.repeat ?? ""} onChange={(e) => update.mutate({ repeat: e.target.value })} aria-label="Repeat">
             <option value="">Doesn't repeat</option>
             {(Object.keys(repeatLabel) as (keyof typeof repeatLabel)[]).map((r) => <option key={r} value={r}>{repeatLabel[r]}</option>)}
           </select>
-        )}>{t.repeat ? repeatLabel[t.repeat] : "Doesn't repeat"}</Pill>
-        <Pill label="Project" icon={Folder} select={!locked && (
+        )}>{t.repeat ? repeatLabel[t.repeat] : "Doesn't repeat"}</Pill>}
+        {configured.project && <Pill label="Project" icon={Folder} select={!locked && (
           <select className={overlay} value={t.project_id} onChange={(e) => update.mutate({ project: e.target.value })} aria-label="Project">
             {projects.data?.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-        )}>{t.project}</Pill>
+        )}>{t.project}</Pill>}
       </div>
 
       <div className="mb-4 flex items-start gap-3">
@@ -272,7 +284,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       {t.waiting_on && !closed && (
         <button
           type="button"
-          onClick={() => { if (panel) navigate({ to: "/tasks/$id", params: { id } }); assistant.openTaskChat(); }}
+          onClick={() => assistant.openTaskChat()}
           className="mb-4 flex w-full items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-left text-sm text-amber-800 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/15"
         >
           <MessageCircleQuestion className="size-4 shrink-0" />
@@ -315,11 +327,10 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         comments={comments}
         agent={t.assignee?.kind === "agent" ? t.assignee : undefined}
         typing={typers.length ? `${names(typers)} ${typers.length === 1 ? "is" : "are"} typing…` : undefined}
-        onOpen={() => {
-          if (panel) navigate({ to: "/tasks/$id", params: { id } });
-          assistant.openTaskChat();
-        }}
+        onOpen={() => assistant.openTaskChat()}
       />}
+
+      <PickerDialog picker={picking ? pickers[picking] : undefined} onClose={() => setPicking(null)} />
 
       <Dialog open={activityOpen} onOpenChange={setActivityOpen}>
         <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-2xl sm:max-w-lg">
@@ -330,6 +341,35 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       </Dialog>
 
     </div>
+  );
+}
+
+type Picker = { title: string; value: string; options: { value: string; label: string }[]; set: (value: string) => void };
+
+// PickerDialog lists a field's options as buttons: a picker every browser shows, unlike opening a
+// native select from script.
+function PickerDialog({ picker, onClose }: { picker?: Picker; onClose: () => void }) {
+  return (
+    <Dialog open={!!picker} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-2xl sm:max-w-xs">
+        <DialogTitle>{picker?.title}</DialogTitle>
+        <DialogDescription className="sr-only">Choose an option</DialogDescription>
+        <div className="-mx-2 flex flex-col">
+          {picker?.options.map((o) => (
+            <button
+              key={o.value}
+              aria-pressed={o.value === picker.value}
+              autoFocus={o.value === picker.value}
+              onClick={() => { if (o.value !== picker.value) picker.set(o.value); onClose(); }}
+              className="flex items-center gap-2 rounded-lg px-2 py-2.5 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+            >
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              {o.value === picker.value && <Check className="size-4 shrink-0 text-muted-foreground" />}
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
