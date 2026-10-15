@@ -87,7 +87,7 @@ func (c *call) getNote(id string, includeDeleted, forUpdate bool) (*noteRow, err
 			return nil, err
 		}
 	}
-	q := "n.id = $1 AND n.project_id::text = ANY($2)"
+	q := "n.id = $1 AND n.project_id = ANY($2::uuid[])"
 	if !includeDeleted {
 		q += " AND n.deleted_at IS NULL"
 	}
@@ -318,7 +318,7 @@ func (s *Service) ListNotes(ctx context.Context, p *Principal, in ListNotesIn) (
 }
 
 func (c *call) listNotes(in ListNotesIn) ([]*noteRow, error) {
-	where := "n.project_id::text = ANY($1)"
+	where := "n.project_id = ANY($1::uuid[])"
 	args := []any{c.visible}
 	add := func(cond string, v any) {
 		args = append(args, v)

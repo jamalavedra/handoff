@@ -131,7 +131,7 @@ func (s *Service) Activity(ctx context.Context, p *Principal, in ActivityIn) (Ac
 	err := s.run(ctx, p, func(c *call) error {
 		// A note's events follow its project; other events their task's.
 		where := `(CASE WHEN e.data->>'note_id' IS NOT NULL THEN e.data->>'project_id' = ANY($1)
-			ELSE e.task_id IS NULL OR t.project_id::text = ANY($1) END)`
+			ELSE e.task_id IS NULL OR t.project_id = ANY($1::uuid[]) END)`
 		args := []any{c.visible}
 		if in.Member != "" {
 			m, err := c.resolveMember(in.Member)
