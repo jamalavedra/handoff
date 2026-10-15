@@ -13,7 +13,7 @@ import { agentOnIt, groupByDue } from "../quickadd";
 import { useMe } from "../main";
 import { SettingsHeader } from "./settings";
 import { Board, useView, ViewToggle } from "./board";
-import { TaskLink, usePanelTask } from "../components/tasklink";
+import { TaskLink } from "../components/tasklink";
 import { completedText, patchTask, reopen, undoable, undoClose, useChangeFlash, useTriageReveal } from "../components/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -45,14 +45,13 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   const agentWorking = agentOnIt(t);
   const waiting = !closed && !t.ready && t.blocked_by.length > 0 && !t.claimed_by;
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
-  const selected = usePanelTask() === t.id;
   return (
     <div>
-    <div data-task-row className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:min-h-11 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted data-[kbd-focus]:bg-muted data-[kbd-focus]:ring-1 data-[kbd-focus]:ring-ring", flash && "change-flash", agentWorking && "agent-border [--agent-border-offset:1px]", selected && "border-ring ring-1 ring-ring md:bg-accent md:ring-0 md:hover:bg-accent")}>
+    <div data-task-row className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:min-h-11 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted data-[kbd-focus]:bg-muted data-[kbd-focus]:ring-1 data-[kbd-focus]:ring-ring", flash && "change-flash", agentWorking && "agent-border [--agent-border-offset:1px]")}>
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate(closed)} />
       <TaskLink id={t.id} className="flex min-w-0 flex-1 flex-col justify-center self-stretch py-2">
         <span className="flex min-w-0 items-center gap-1.5">
-        {t.unseen && !closed && !selected && <span role="img" aria-label="Changed by someone else" title="Changed by someone else since you last opened it" className="size-2 shrink-0 rounded-full bg-unseen" />}
+        {t.unseen && !closed && <span role="img" aria-label="Changed by someone else" title="Changed by someone else since you last opened it" className="size-2 shrink-0 rounded-full bg-unseen" />}
         <span title={t.triage === "pending" ? "The triage agent is looking at this task" : undefined} className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-muted-foreground/70 line-through", t.triage === "pending" && "agent-shimmer", reveal && "triage-reveal")}>{t.title}</span>
         {t.triage === "failed" && <span title={`Triage failed: ${t.triage_error ?? ""}`} className="shrink-0 text-amber-600"><CircleAlert aria-label="Triage failed" className="size-3.5" /></span>}
         {t.priority < 2 && !closed && <Flag aria-label={t.priority === 0 ? "Urgent" : "High priority"} className={cn("size-3.5 shrink-0", t.priority === 0 ? "fill-red-500 text-red-500" : "text-orange-500")} />}
