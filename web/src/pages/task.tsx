@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { AppWindow, Bot, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, Maximize2, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
+import { Bot, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
-import { useTabs } from "../components/tabs";
-import { taskHref } from "../tabs";
 import { BodyEditor } from "../components/editor";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ago, api, cn, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
@@ -102,13 +100,10 @@ export function TaskPage() {
   return <TaskView id={id} />;
 }
 
-// TaskView is the task page body; with `panel` it renders inside the desktop side panel.
-export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
+function TaskView({ id }: { id: string }) {
   const navigate = useNavigate();
   const router = useRouter();
   const canGoBack = useCanGoBack();
-  const tabs = useTabs();
-  const closePanel = () => navigate({ to: ".", search: (p) => ({ ...p, task: undefined }) });
   const q = useQuery({ ...taskQuery(id), refetchInterval: 10000 });
   const assistant = useAssistant();
   const chatShown = useTaskChatShown();
@@ -172,16 +167,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       <ChevronLeft className="size-5" />Back
     </button>
   );
-  if (q.error) {
-    if (!panel) return <div>{back}<ErrorText error={q.error} /></div>;
-    return (
-      <div className="px-5 pt-4">
-        <button onClick={closePanel} className="-ml-2 mb-3 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)"><X className="size-5" /></button>
-        <ErrorText error={q.error} />
-      </div>
-    );
-  }
-  if (!q.data) return panel ? null : back;
+  if (q.error) return <div>{back}<ErrorText error={q.error} /></div>;
+  if (!q.data) return back;
   const { task: t, comments, events } = q.data;
   const closed = t.status === "done" || t.status === "cancelled";
   const locked = !!t.deleted_at;
@@ -202,20 +189,14 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
   const pick = (k: Extra) => { setRevealed((r) => (r.includes(k) ? r : [...r, k])); setPicking(k); };
 
   return (
-    <div className={cn("mx-auto flex max-w-3xl flex-col", panel ? "min-h-full px-5 pt-4" : "min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] md:min-h-[calc(100dvh-4rem)] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:animate-none")}>
+    <div className="mx-auto flex min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] max-w-3xl flex-col motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:min-h-[calc(100dvh-4rem)] md:animate-none">
       <div className="mb-3 flex items-center gap-1">
-        {panel ? (
-          <button onClick={closePanel} className="-ml-2 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Close panel" title="Close (Esc)">
-            <X className="size-5" />
-          </button>
-        ) : (
-          <button onClick={() => goBack()} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent" aria-label="Back">
-            <ChevronLeft className="size-5" /><span className="hidden sm:inline">Back</span>
-          </button>
-        )}
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground/70">
-          <Link to="/projects/$id" params={{ id: t.project_id }} className="hover:text-foreground/80 hover:underline">{t.project}</Link>
-          {t.deleted_at && <span className="ml-2 font-medium text-red-600">In trash</span>}
+        {/* Phones have no app bars on a task; wider screens go back from the tab strip. */}
+        <button onClick={() => goBack()} className="-ml-2 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent md:hidden" aria-label="Back">
+          <ChevronLeft className="size-5" />
+        </button>
+        <span className="min-w-0 flex-1 truncate text-sm">
+          {t.deleted_at && <span className="font-medium text-red-600">In trash</span>}
         </span>
         {here.length > 0 && (
           <div role="group" aria-label={`${names(here)} ${here.length === 1 ? "is" : "are"} here`} title={`${names(here)} ${here.length === 1 ? "is" : "are"} looking at this`} className="mr-1 flex items-center -space-x-1.5">
@@ -226,15 +207,9 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         <button onClick={() => copyTaskLink(id)} className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Copy link" title="Copy link">
           <Link2 className="size-4" />
         </button>
-        {panel && (
-          <Link to="/tasks/$id" params={{ id }} className="flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent" aria-label="Open full page" title="Open full page">
-            <Maximize2 className="size-4" />
-          </Link>
-        )}
         <Menu>
           {(done) => (
             <>
-              {panel && tabs && <MenuItem icon={AppWindow} onClick={() => { tabs.openInTab(taskHref(t.id)); done(); }}>Open in new tab</MenuItem>}
               <MenuItem icon={History} onClick={() => { setActivityOpen(true); done(); }}>Activity <span className="ml-auto text-xs text-muted-foreground/70 tabular-nums">{activity.length}</span></MenuItem>
               <MenuItem icon={Link2} onClick={() => { copyTaskLink(t.id); done(); }}>Copy link</MenuItem>
               {!locked && (
@@ -254,8 +229,8 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         </Menu>
       </div>
 
-      {/* One scrollable row on phones so the title stays near the top; wrapped on wider screens and in the panel. */}
-      <div className={cn("mb-4 flex gap-2", panel ? "flex-wrap" : "-mx-4 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0")}>
+      {/* One scrollable row on phones so the title stays near the top; wrapped on wider screens. */}
+      <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
         <Pill label="Status" className={statusTone[t.status]} select={!locked && (
           <select className={overlay} value={t.status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
             {(["open", "in_progress", "blocked", "done", "cancelled"] as const).map((s) => <option key={s} value={s}>{statusLabel[s]}</option>)}
@@ -305,7 +280,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
       {t.waiting_on && !closed && (
         <button
           type="button"
-          onClick={() => { if (panel) navigate({ to: "/tasks/$id", params: { id } }); assistant.openTaskChat(); }}
+          onClick={() => assistant.openTaskChat()}
           className="mb-4 flex w-full items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-left text-sm text-amber-800 hover:bg-amber-100 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/15"
         >
           <MessageCircleQuestion className="size-4 shrink-0" />
@@ -344,10 +319,7 @@ export function TaskView({ id, panel }: { id: string; panel?: boolean }) {
         comments={comments}
         agent={t.assignee?.kind === "agent" ? t.assignee : undefined}
         typing={typers.length ? `${names(typers)} ${typers.length === 1 ? "is" : "are"} typing…` : undefined}
-        onOpen={() => {
-          if (panel) navigate({ to: "/tasks/$id", params: { id } });
-          assistant.openTaskChat();
-        }}
+        onOpen={() => assistant.openTaskChat()}
       />}
 
       <Dialog open={activityOpen} onOpenChange={setActivityOpen}>

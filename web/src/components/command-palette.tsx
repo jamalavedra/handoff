@@ -6,7 +6,6 @@ import { api, projectName, type Project, type Task } from "../lib";
 import { setTheme } from "../theme";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { useQuickAdd } from "./quickadd";
-import { useWide } from "./tasklink";
 import { typing } from "./shortcuts";
 import { useAssistant } from "./assistant";
 import { useTabs } from "./tabs";
@@ -50,7 +49,6 @@ function Palette({ query, setQuery, close, onShortcuts }: { query: string; setQu
   const navigate = useNavigate();
   const quick = useQuickAdd();
   const assistant = useAssistant();
-  const wide = useWide();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const currentProject = path.match(/^\/projects\/([^/]+)/)?.[1];
   const q = query.trim().toLowerCase();
@@ -100,8 +98,7 @@ function Palette({ query, setQuery, close, onShortcuts }: { query: string; setQu
   const shownPages = pages.filter((p) => match(p.label));
   const shownProjects = (projects.data?.projects ?? []).filter((p) => match(p.name)).slice(0, q ? 6 : 4);
   const found = debounced.length > 1 ? tasks.data?.tasks ?? [] : [];
-  // Same rule as TaskLink: the side panel on wide list pages, the full page otherwise (including from a task page).
-  const openTask = (id: string) => go(() => (wide && !path.startsWith("/tasks/") ? navigate({ to: ".", search: (p) => ({ ...p, task: id }) }) : navigate({ to: "/tasks/$id", params: { id } })), taskHref(id));
+  const openTask = (id: string) => go(() => navigate({ to: "/tasks/$id", params: { id } }), taskHref(id));
   return (
     <div
       className="contents"

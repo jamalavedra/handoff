@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useRouterState, useSearch } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { AlertCircle, ArrowUp, CalendarDays, Check, ChevronDown, ChevronRight, FileText, FolderKanban, ListPlus, MessageSquare, RotateCcw, Search, Sparkles, SquarePen, X } from "lucide-react";
 import { api, cn, projectName, type Me, type MemberRef, type Project, type Task } from "../lib";
 import { parseStored, stored, toApi, type Msg, type Step } from "../assistant-history";
@@ -131,8 +131,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
 export function useFab() {
   const a = useAssistant();
   const path = useRouterState({ select: (s) => s.location.pathname });
-  const panelTask = useSearch({ strict: false }).task;
-  const onTask = path.startsWith("/tasks/") || !!panelTask;
+  const onTask = path.startsWith("/tasks/");
   return { shown: !a.open && !onTask, onTask };
 }
 
@@ -167,8 +166,7 @@ export function AssistantFab() {
 // usePageContext is what the person is looking at: the open task, or the current project or page.
 function usePageContext() {
   const path = useRouterState({ select: (s) => s.location.pathname });
-  const panelTask = useSearch({ strict: false }).task;
-  const task = path.match(/^\/tasks\/([^/]+)/)?.[1] ?? panelTask;
+  const task = path.match(/^\/tasks\/([^/]+)/)?.[1];
   const project = task ? undefined : path.match(/^\/projects\/([^/]+)/)?.[1];
   const t = useQuery({ queryKey: ["task", task], queryFn: () => api.tool<{ task: Task }>("get_task", { id: task }), enabled: !!task, refetchInterval: false });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
