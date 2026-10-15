@@ -6,6 +6,7 @@ import { Card, ErrorText } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useMe } from "../main";
+import { safeNext } from "../next";
 
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-screen items-center justify-center p-4"><Card className="w-full max-w-sm p-6">{children}</Card></div>;
@@ -23,7 +24,7 @@ function DevLink({ link }: { link?: string }) {
 export function LoginPage() {
   const me = useMe();
   const params = new URLSearchParams(window.location.search);
-  const next = params.get("next") ?? "/";
+  const next = safeNext(params.get("next"));
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState<{ dev_link?: string } | null>(null);
   const [error, setError] = useState<unknown>(params.get("error") === "expired" ? "That link expired or was already used. Ask for a new one." : params.get("error") === "denied" ? "That account isn't a member of this workspace." : null);

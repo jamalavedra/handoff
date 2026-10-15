@@ -131,6 +131,30 @@ func (s *Service) EnsureSingleOrg(ctx context.Context, adminEmail string) error 
 	return err
 }
 
+// CanSignIn reports, without changing anything, whether this email may get a sign-in link:
+// an invited or active member, or an address on the workspace's allowed domain.
+func (s *Service) CanSignIn(ctx context.Context, org *Org, email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	return s.DB.InOrg(ctx, org.ID, func(tx pgx.Tx) error {
+		var status string
+		err := tx.QueryRow(ctx, `SELECT status FROM members WHERE kind = 'human' AND lower(email) = $1`, email).Scan(&status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			_, domain, _ := strings.Cut(email, "@")
+			if org.AllowedEmailDomain == "" || domain != org.AllowedEmailDomain {
+				return errf(ErrForbidden, "%s isn't a member of this workspace; ask an admin to invite you", email)
+			}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if status == "revoked" || status == "paused" {
+			return errf(ErrForbidden, "%s no longer has access to this workspace", email)
+		}
+		return nil
+	})
+}
+
 // MemberForLogin finds (or, for allowed email domains, creates) the human with this email.
 func (s *Service) MemberForLogin(ctx context.Context, org *Org, email, name string) (*Member, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
