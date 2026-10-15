@@ -170,8 +170,12 @@ func (s *Service) MemberForLogin(ctx context.Context, org *Org, email, name stri
 			if name == "" {
 				name = strings.Split(email, "@")[0]
 			}
-			m, err = scanMember(tx.QueryRow(ctx, `INSERT INTO members (org_id, kind, name, email) VALUES ($1, 'human', $2, $3) RETURNING `+memberCols,
-				org.ID, name, email))
+			// Two links for a new address can be opened at once; the second waits for the first insert and uses that row.
+			m, err = scanMember(tx.QueryRow(ctx, `INSERT INTO members (org_id, kind, name, email) VALUES ($1, 'human', $2, $3)
+				ON CONFLICT DO NOTHING RETURNING `+memberCols, org.ID, name, email))
+			if errors.Is(err, pgx.ErrNoRows) {
+				m, err = scanMember(tx.QueryRow(ctx, `SELECT `+memberCols+` FROM members WHERE kind = 'human' AND lower(email) = $1`, email))
+			}
 		}
 		if err != nil {
 			return err
