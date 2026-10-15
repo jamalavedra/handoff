@@ -274,7 +274,7 @@ func TestAssistantWritesWorkIntoTheTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(reqs()[0].Messages[0]["content"].(string), "the note is the artifact") {
+	if !strings.Contains(reqs()[0].Messages[0]["content"].(string), "put what you found in your reply") {
 		t.Fatal("system prompt doesn't steer work into the task")
 	}
 	if len(out.Steps) != 3 || out.Steps[0].Summary != "Updated “Pick a venue” text" || out.Steps[1].Error != "" || out.Steps[2].Error != "" {

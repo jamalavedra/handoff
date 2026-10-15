@@ -3,9 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { Bot, Check, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
-import { NoteCards, TaskText, Todos } from "../components/todos";
+import { TaskText, Todos } from "../components/todos";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { ago, api, cn, type Member, type MemberRef, type Note, type Project, type Task, statusLabel } from "../lib";
+import { ago, api, cn, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
 import { agentOnIt, dueLabel, repeatLabel } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck } from "../components/app";
 import { Button } from "@/components/ui/button";
@@ -159,7 +159,6 @@ function TaskView({ id }: { id: string }) {
   if (q.error) return <div>{back}<ErrorText error={q.error} /></div>;
   if (!q.data) return back;
   const { task: t, comments, events } = q.data;
-  const notes = (q.data as { notes?: Note[] }).notes ?? [];
   const closed = t.status === "done" || t.status === "cancelled";
   const locked = !!t.deleted_at;
   const err = update.error || close.error || trash.error || restore.error || link.error;
@@ -294,12 +293,11 @@ function TaskView({ id }: { id: string }) {
       <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 
-      {/* A task is its text and its todos; longer work is in its notes. -mx-2/px-2 line the frame up with the rows' hover areas. */}
+      {/* A task is its text and its todos. -mx-2/px-2 line the frame up with the rows' hover areas. */}
       <div className={cn("-mx-2 mb-2 rounded-lg px-2", agentOnIt(t, here) && "agent-border")}>
-        <div className="mb-3"><TaskText key={t.id} body={t.body ?? ""} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
+        <div className="mb-3"><TaskText key={t.id} id={t.id} body={t.body ?? ""} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
         <Todos key={`todos-${t.id}`} task={t.id} todos={t.todos ?? []} disabled={locked} />
       </div>
-      <NoteCards notes={notes} />
 
       {/* Dependencies are usually set by agents over the API; people see them and can drop them. */}
       {(t.blocked_by.length > 0 || t.blocks.length > 0) && (

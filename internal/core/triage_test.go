@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +18,9 @@ import (
 	"github.com/joalavedra/handoff/internal/testutil"
 )
 
+// lastModelRequest is the body of the last request any fakeModel got.
+var lastModelRequest atomic.Value
+
 // fakeModel is an OpenAI-compatible endpoint that answers every request with reply.
 // during, if set, runs while the "model" is thinking, to simulate concurrent edits.
 func fakeModel(t *testing.T, status int, reply map[string]any, gotAuth *atomic.Value, during ...func()) *httptest.Server {
@@ -27,6 +31,8 @@ func fakeModel(t *testing.T, status int, reply map[string]any, gotAuth *atomic.V
 			return
 		}
 		gotAuth.Store(r.Header.Get("Authorization"))
+		body, _ := io.ReadAll(r.Body)
+		lastModelRequest.Store(string(body))
 		for _, f := range during {
 			f()
 		}
@@ -120,9 +126,6 @@ func TestTriage(t *testing.T) {
 	if got.Body != "Done when the intro is under 30s." || len(got.Todos) != 2 || got.Todos[0].Text != "Trim the intro" ||
 		got.Todos[1].Text != "Export: by Thursday" || got.Todos[0].Done || got.TodoProgress == nil || got.TodoProgress.Total != 2 {
 		t.Fatalf("text and todos: %q %+v %+v", got.Body, got.Todos, got.TodoProgress)
-	}
-	if len(d.Notes) != 0 {
-		t.Fatalf("a note without work: %+v", d.Notes)
 	}
 	if len(d.Comments) != 1 || d.Comments[0].Author.ID != bot.Member.ID ||
 		d.Comments[0].Body != "I tidied the title, set it due Fri, Oct 16, moved it to Podcast, labelled it “audio”, added a line on what it's about and broke it into 2 todos. Mention me here if you want changes." {
@@ -314,8 +317,8 @@ func TestTriageDoesTheWork(t *testing.T) {
 	var auth atomic.Value
 	srv := fakeModel(t, http.StatusOK, map[string]any{
 		"title": "Compare Pixel 8 and Pixel 9", "labels": []string{"research"},
-		"work":      "Here's how they compare.\n\n| | Pixel 8 | Pixel 9 |\n|---|---|---|\n| Chip | Tensor G3 | Tensor G4 |",
-		"work_kind": "Comparison", "todos": []string{"Compare specs", "Pick one", "Order: by Friday"},
+		"work":  "Here's how they compare.\n\n| | Pixel 8 | Pixel 9 |\n|---|---|---|\n| Chip | Tensor G3 | Tensor G4 |",
+		"todos": []string{"Compare specs", "Pick one", "Order: by Friday"},
 	}, &auth)
 	e := triageEnv(t, srv)
 	admin := e.org(t, "triwork")
@@ -323,24 +326,24 @@ func TestTriageDoesTheWork(t *testing.T) {
 	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := e.s.CreateNote(e.ctx, admin, core.CreateNoteIn{Project: "Inbox", Title: "Phone budget", Body: "Under 800 euros."}); err != nil {
+		t.Fatal(err)
+	}
 	task := e.create(t, admin, core.NewTask{Title: "hey can u compare pixel 8 vs pixel 9"})[0]
 	d := waitTriage(t, e, admin, task.ID)
-	// The work is a note in the task's project, linked from the task; the task stays text and todos.
+	// The task stays text and todos; what triage found is in its chat message, and no note is made.
 	if d.Task.Body != "" || len(d.Task.Todos) != 3 || d.Task.Todos[2].Text != "Order: by Friday" {
 		t.Fatalf("task: %q %+v", d.Task.Body, d.Task.Todos)
 	}
-	if len(d.Notes) != 1 || d.Notes[0].Title != "Compare Pixel 8 and Pixel 9 — comparison" || d.Notes[0].Task == nil || d.Notes[0].Task.ID != task.ID ||
-		d.Notes[0].ProjectID != d.Task.ProjectID || d.Notes[0].CreatedBy.Name != "Acme Bot" {
-		t.Fatalf("notes: %+v", d.Notes)
-	}
-	n, err := e.s.GetNote(e.ctx, admin, core.NoteIDIn{ID: d.Notes[0].ID})
-	if err != nil || !strings.Contains(n.Note.Body, "| Chip | Tensor G3 | Tensor G4 |") {
-		t.Fatalf("note body: %+v %v", n.Note, err)
-	}
-	if len(d.Comments) != 1 || !strings.Contains(d.Comments[0].Body, "did what I could: it's in the note “Compare Pixel 8 and Pixel 9 — comparison”") {
+	if len(d.Comments) != 1 || !strings.HasPrefix(d.Comments[0].Body, "I tidied the title, labelled it “research”, broke it into 3 todos and looked into it. Here's what I found:\n\nHere's how they compare.") ||
+		!strings.Contains(d.Comments[0].Body, "| Chip | Tensor G3 | Tensor G4 |") {
 		t.Fatalf("triage comment: %+v", d.Comments)
 	}
-	if !slices.ContainsFunc(d.Events, func(ev core.EventOut) bool { return ev.Kind == "note_created" && ev.Data["note_id"] == n.Note.ID }) {
-		t.Fatalf("no note event on the task: %+v", d.Events)
+	if l, err := e.s.ListNotes(e.ctx, admin, core.ListNotesIn{}); err != nil || len(l.Notes) != 1 {
+		t.Fatalf("triage made a note: %+v %v", l.Notes, err)
+	}
+	// The project's notes went to the model as context.
+	if req, _ := lastModelRequest.Load().(string); !strings.Contains(req, "Notes in the Inbox project") || !strings.Contains(req, "Phone budget") || !strings.Contains(req, "Under 800 euros") {
+		t.Fatalf("project notes not in the triage request: %s", req)
 	}
 }

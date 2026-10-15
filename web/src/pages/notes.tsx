@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { ChevronLeft, History, Link2, MoreHorizontal, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ago, api, cn, type Event, type Note } from "../lib";
 import { Card, Empty, ErrorText } from "../components/app";
 import { DocEditor } from "../components/editor";
-import { TaskLink } from "../components/tasklink";
 import { undoable } from "../components/feedback";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -14,18 +13,26 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Skeleton } from "@/components/ui/skeleton";
 import { EventLine } from "./tasks";
 
-// Notes are markdown documents inside a project, for longer work: research, shortlists, drafts. A
-// note can be written for a task, which links to it.
+// Notes are markdown documents inside a project: what the team knows about it. They're made from the
+// project's Notes tab, and the workspace's agent reads them as context for the project's tasks.
 
 type NoteDetail = { note: Note; events: Event[] };
 
-export const projectNotesQuery = (project: string) => ({
-  queryKey: ["notes", "project", project],
-  queryFn: () => api.tool<{ notes: Note[] }>("list_notes", { project, limit: 200 }),
-});
+const pageSize = 100;
 
-// ProjectNotes lists a project's notes, newest first.
-export function ProjectNotes({ notes }: { notes?: Note[] }) {
+// useProjectNotes pages through a project's notes, newest first.
+export function useProjectNotes(project: string) {
+  const q = useInfiniteQuery({
+    queryKey: ["notes", "project", project],
+    queryFn: ({ pageParam }) => api.tool<{ notes: Note[] }>("list_notes", { project, limit: pageSize, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) => (last.notes.length < pageSize ? undefined : all.length * pageSize),
+  });
+  return { ...q, notes: q.data?.pages.flatMap((p) => p.notes) };
+}
+
+// ProjectNotes lists a project's notes, newest first, with more on request.
+export function ProjectNotes({ notes, more, loadingMore }: { notes?: Note[]; more?: () => void; loadingMore?: boolean }) {
   if (!notes) {
     return (
       <Card aria-busy="true" aria-label="Loading notes">
@@ -41,12 +48,17 @@ export function ProjectNotes({ notes }: { notes?: Note[] }) {
           <div className="min-w-0">
             <div className="truncate text-sm font-medium"><span aria-hidden className="mr-1.5">📝</span>{n.title}</div>
             <div className="truncate text-xs text-muted-foreground">
-              {n.created_by?.name ?? "Someone"}{n.on_behalf_of ? ` for ${n.on_behalf_of.name}` : ""}{n.task ? ` · for “${n.task.title}”` : ""}
+              {n.created_by?.name ?? "Someone"}{n.on_behalf_of ? ` for ${n.on_behalf_of.name}` : ""}{n.updated_by && n.updated_by.id !== n.created_by?.id ? ` · edited by ${n.updated_by.name}` : ""}
             </div>
           </div>
           <span className="shrink-0 text-xs text-muted-foreground/80">{ago(n.updated_at)}</span>
         </Link>
       ))}
+      {more && (
+        <button onClick={more} disabled={loadingMore} className="w-full border-t border-border px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60">
+          {loadingMore ? "Loading…" : "Show more"}
+        </button>
+      )}
     </Card>
   );
 }
@@ -178,7 +190,6 @@ export function NotePage() {
       <p className="mb-5 text-[13px] text-muted-foreground">
         {n.created_by?.name ?? "Someone"}{n.on_behalf_of ? ` for ${n.on_behalf_of.name}` : ""}
         {" · "}updated {ago(n.updated_at)}{n.updated_by && n.updated_by.id !== n.created_by?.id ? ` by ${n.updated_by.name}` : ""}
-        {n.task && <> · for <TaskLink id={n.task.id} className="font-medium text-foreground/80 underline-offset-2 hover:underline">{n.task.title}</TaskLink></>}
       </p>
       <ErrorText error={update.error || trash.error || restore.error} />
 

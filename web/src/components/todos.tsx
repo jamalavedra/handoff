@@ -1,21 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { Check, ChevronRight, GripVertical, Plus, X } from "lucide-react";
-import { ago, api, cn, type Note, type Task } from "../lib";
+import { Check, GripVertical, Plus, X } from "lucide-react";
+import { ago, api, cn, type Task } from "../lib";
 import { linkify, moveTodo, oneLine, patchTodo, type Todo } from "../todos";
 import { markLocal } from "./feedback";
 import { ErrorText } from "./app";
 
-// A task reads as its text, then its todos, then the notes written for it.
+// A task reads as its text, then its todos.
 
 const textStyle = "text-[15px] leading-relaxed text-foreground/80 sm:text-sm";
 
+// An edit whose save hasn't gone through waits here, per task, so leaving the page mid-save (or a
+// failed save after it) never loses it: the task offers it back next time.
+const draftKey = (id: string) => `handoff-text-draft:${id}`;
+const drafts = {
+  get: (id: string) => { try { return localStorage.getItem(draftKey(id)); } catch { return null; } },
+  set: (id: string, text: string) => { try { localStorage.setItem(draftKey(id), text); } catch { /* private mode */ } },
+  drop: (id: string) => { try { localStorage.removeItem(draftKey(id)); } catch { /* private mode */ } },
+};
+
 // TaskText is the task's own text: plain, a line or two. Click to edit; it saves on leaving the field
 // or ⌘/Ctrl+Enter, and Esc puts it back. Addresses in it are links.
-export function TaskText({ body, disabled, onSave }: { body: string; disabled: boolean; onSave: (body: string) => Promise<unknown> }) {
+export function TaskText({ id, body, disabled, onSave }: { id: string; body: string; disabled: boolean; onSave: (body: string) => Promise<unknown> }) {
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState(body);
+  const [lost, setLost] = useState(() => { const d = drafts.get(id); return d !== null && d !== body ? d : null; });
   const discard = useRef(false);
   useEffect(() => { if (!editing) setV(body); }, [body, editing]);
   const edit = () => { if (!disabled) setEditing(true); };
@@ -23,13 +32,23 @@ export function TaskText({ body, disabled, onSave }: { body: string; disabled: b
     if (discard.current) { discard.current = false; setV(body); setEditing(false); return; }
     const next = v.trim();
     if (next === body.trim()) return setEditing(false);
+    drafts.set(id, next);
     try {
       await onSave(next);
+      drafts.drop(id);
+      setLost(null);
       setEditing(false);
     } catch {
-      // the page shows the error; the text stays here to try again
+      // the page shows the error; the text stays here, and in drafts if the page is left
     }
   };
+  const recover = lost !== null && !disabled && !editing && (
+    <div className="mb-2 flex items-center gap-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      <span className="min-w-0 flex-1">Your last edit here didn't save.</span>
+      <button className="text-xs font-medium hover:underline" onClick={() => { setV(lost); setEditing(true); }}>Restore</button>
+      <button className="text-xs text-amber-700/70 hover:text-red-600" onClick={() => { drafts.drop(id); setLost(null); }}>Discard</button>
+    </div>
+  );
   if (editing) {
     return (
       <textarea
@@ -50,11 +69,11 @@ export function TaskText({ body, disabled, onSave }: { body: string; disabled: b
   }
   if (!body) {
     return disabled ? null : (
-      <button className="text-left text-sm text-muted-foreground/70 hover:text-foreground/80" onClick={edit}>Add details…</button>
+      <>{recover}<button className="text-left text-sm text-muted-foreground/70 hover:text-foreground/80" onClick={edit}>Add details…</button></>
     );
   }
   return (
-    <div
+    <>{recover}<div
       role={disabled ? undefined : "button"}
       tabIndex={disabled ? undefined : 0}
       aria-label={disabled ? undefined : "Edit task text"}
@@ -69,7 +88,7 @@ export function TaskText({ body, disabled, onSave }: { body: string; disabled: b
       {linkify(body).map((p, i) => p.url ? (
         <a key={i} href={p.url} target="_blank" rel="noreferrer noopener" className="underline decoration-foreground/30 underline-offset-2 hover:decoration-foreground">{p.text}</a>
       ) : p.text)}
-    </div>
+    </div></>
   );
 }
 
@@ -256,29 +275,5 @@ function TodoRow({ td, index, disabled, dragging, onToggle, onRename, onRemove, 
         </button>
       )}
     </li>
-  );
-}
-
-// NoteCards are the notes written for a task: each opens the note.
-export function NoteCards({ notes }: { notes: Note[] }) {
-  if (!notes.length) return null;
-  return (
-    <section aria-label="Notes" className="mb-6 flex flex-col gap-1.5">
-      {notes.map((n) => (
-        <Link
-          key={n.id}
-          to="/notes/$id"
-          params={{ id: n.id }}
-          className="flex min-h-11 items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted"
-        >
-          <span aria-hidden>📝</span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{n.title}</span>
-            <span className="block truncate text-xs text-muted-foreground">{n.project} · updated {ago(n.updated_at)}{n.updated_by ? ` by ${n.updated_by.name}` : ""}</span>
-          </span>
-          <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
-        </Link>
-      ))}
-    </section>
   );
 }

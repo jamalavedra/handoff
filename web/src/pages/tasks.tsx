@@ -18,7 +18,7 @@ import { completedText, patchTask, reopen, undoable, undoClose, useChangeFlash, 
 import { Skeleton } from "@/components/ui/skeleton";
 import { progressLabel } from "../todos";
 import { eventDetail, verb } from "../events";
-import { NewNote, ProjectNotes, projectNotesQuery } from "./notes";
+import { NewNote, ProjectNotes, useProjectNotes } from "./notes";
 
 export function useInvalidate() {
   const qc = useQueryClient();
@@ -250,7 +250,7 @@ export function ProjectPage() {
   const notesTab = (useSearch({ strict: false }) as { tab?: string }).tab === "notes";
   const navigate = useNavigate();
   const setTab = (tab?: string) => navigate({ to: ".", search: (s) => ({ ...s, tab }), replace: true });
-  const notes = useQuery(projectNotesQuery(id));
+  const notes = useProjectNotes(id);
   return (
     <>
       <PageHeader title={p ? projectName(p) : "Project"}>
@@ -261,10 +261,10 @@ export function ProjectPage() {
       </PageHeader>
       <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:px-0" role="tablist" aria-label="Show">
         <ProjectChip active={!notesTab} onClick={() => setTab(undefined)} name="Tasks" n={p?.open_tasks ?? q.data?.tasks.length ?? 0} />
-        <ProjectChip active={notesTab} onClick={() => setTab("notes")} name="Notes" n={notes.data?.notes.length ?? 0} />
+        <ProjectChip active={notesTab} onClick={() => setTab("notes")} name="Notes" n={notes.notes?.length ?? 0} />
       </div>
       <ErrorText error={setEmoji.error} />
-      {notesTab ? <><ErrorText error={notes.error} /><ProjectNotes notes={notes.data?.notes} /></> : view === "board" ? <Board tasks={q.data?.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled")} done={done.data?.tasks} /> : <TaskList tasks={q.data?.tasks} empty="No tasks here yet." />}
+      {notesTab ? <><ErrorText error={notes.error} /><ProjectNotes notes={notes.notes} more={notes.hasNextPage ? () => notes.fetchNextPage() : undefined} loadingMore={notes.isFetchingNextPage} /></> : view === "board" ? <Board tasks={q.data?.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled")} done={done.data?.tasks} /> : <TaskList tasks={q.data?.tasks} empty="No tasks here yet." />}
     </>
   );
 }
@@ -293,7 +293,6 @@ export function EventLine({ e, showTask = true, showNote = true, restoreKind = "
       <div className="min-w-0">
         <Who m={e.actor} by={e.on_behalf_of} /> <span className="text-muted-foreground">{verb(e)}</span>{" "}
         {note && <Link to="/notes/$id" params={{ id: note.id }} className="font-medium hover:underline">{note.title}</Link>}
-        {note && showTask && e.task_id && <span className="text-muted-foreground"> for </span>}
         {showTask && e.task_id && <TaskLink id={e.task_id} className="font-medium hover:underline">{e.task_title || e.task_id}</TaskLink>}
         {detail && <span className="text-muted-foreground"> — {detail}</span>}
         <span className="ml-2 hidden text-xs text-muted-foreground/70 sm:inline">via {e.via}</span>

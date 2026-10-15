@@ -6,8 +6,8 @@ import (
 	"fmt"
 )
 
-// The assistant's tools for a task's todos and notes: it ticks steps off with a one-line result and
-// keeps its longer work in the task's note.
+// The assistant's tools for a task's todos and a project's notes: it ticks steps off with a one-line
+// result, reads notes as context, and writes one only when the person asks.
 
 type aAddTodosIn struct {
 	Task  string   `json:"task" jsonschema:"task id"`
@@ -17,7 +17,7 @@ type aAddTodosIn struct {
 type aTodoIn struct {
 	ID     string  `json:"id" jsonschema:"todo id, from get_task"`
 	Done   *bool   `json:"done,omitempty" jsonschema:"tick (true) or untick (false)"`
-	Result *string `json:"result,omitempty" jsonschema:"one line: what you found or decided for this step, e.g. \"6 ideas (Dolly, Ghost Face…)\"; details go in the note"`
+	Result *string `json:"result,omitempty" jsonschema:"one line: what you found or decided for this step, e.g. \"6 ideas (Dolly, Ghost Face…)\"; details go in your reply"`
 	Text   *string `json:"text,omitempty" jsonschema:"rename the step"`
 }
 
@@ -31,21 +31,19 @@ type aNoteIDIn struct {
 
 type aListNotesIn struct {
 	Project string `json:"project,omitempty" jsonschema:"project name"`
-	Task    string `json:"task,omitempty" jsonschema:"task id: only its notes"`
 	Query   string `json:"query,omitempty" jsonschema:"text to find"`
 }
 
 type aCreateNoteIn struct {
-	Task    string `json:"task,omitempty" jsonschema:"the task it's for: it goes in that task's project and the task links to it"`
-	Project string `json:"project,omitempty" jsonschema:"project name, for a note that isn't for one task"`
-	Title   string `json:"title" jsonschema:"for a task's note: \"<task title> — <kind>\", e.g. \"Halloween costume — research\""`
-	Body    string `json:"body" jsonschema:"markdown: the finished result"`
+	Project string `json:"project" jsonschema:"project name: notes live inside a project"`
+	Title   string `json:"title"`
+	Body    string `json:"body" jsonschema:"markdown"`
 }
 
 type aUpdateNoteIn struct {
 	ID    string  `json:"id" jsonschema:"note id"`
 	Title *string `json:"title,omitempty"`
-	Body  string  `json:"body,omitempty" jsonschema:"the whole note as markdown, which replaces the current one: the current best result. Fold in what's still relevant, drop what's outdated; no questions, no changelog. The previous version is kept in the note's history."`
+	Body  *string `json:"body,omitempty" jsonschema:"the whole note as markdown, which replaces the current one: the current best result. Fold in what's still relevant, drop what's outdated; no questions, no changelog. The previous version is kept in the note's history."`
 }
 
 // taskTitle names a task for a step, falling back to its id.
@@ -114,18 +112,7 @@ func (a *assistantRun) removeTodo(ctx context.Context, raw json.RawMessage) (any
 
 // noteBrief is the note shape the model reads after a write: no body, it just sent it.
 func noteBrief(n NoteOut) map[string]any {
-	b := map[string]any{"id": n.ID, "title": n.Title, "project": n.Project}
-	if n.Task != nil {
-		b["task"] = n.Task.ID
-	}
-	return b
-}
-
-func noteRefs(n NoteOut) []AssistantTaskRef {
-	if n.Task == nil {
-		return nil
-	}
-	return []AssistantTaskRef{{ID: n.Task.ID, Title: n.Task.Title}}
+	return map[string]any{"id": n.ID, "title": n.Title, "project": n.Project}
 }
 
 func (a *assistantRun) getNote(ctx context.Context, raw json.RawMessage) (any, *AssistantStep, error) {
@@ -139,7 +126,7 @@ func (a *assistantRun) getNote(ctx context.Context, raw json.RawMessage) (any, *
 	}
 	b := noteBrief(d.Note)
 	b["body"] = clipBytes(d.Note.Body, 6000)
-	return b, &AssistantStep{Summary: "Read the note “" + clip(d.Note.Title, 60) + "”", Tasks: noteRefs(d.Note)}, nil
+	return b, &AssistantStep{Summary: "Read the note “" + clip(d.Note.Title, 60) + "”"}, nil
 }
 
 func (a *assistantRun) listNotes(ctx context.Context, raw json.RawMessage) (any, *AssistantStep, error) {
@@ -147,7 +134,7 @@ func (a *assistantRun) listNotes(ctx context.Context, raw json.RawMessage) (any,
 	if err := decodeArgs(raw, &in); err != nil {
 		return nil, nil, err
 	}
-	res, err := a.s.ListNotes(ctx, a.agent, ListNotesIn{Project: in.Project, Task: in.Task, Query: in.Query, Limit: 30})
+	res, err := a.s.ListNotes(ctx, a.agent, ListNotesIn{Project: in.Project, Query: in.Query, Limit: 30})
 	if err != nil {
 		return nil, &AssistantStep{Summary: "Couldn't list notes"}, err
 	}
@@ -163,11 +150,11 @@ func (a *assistantRun) createNote(ctx context.Context, raw json.RawMessage) (any
 	if err := decodeArgs(raw, &in); err != nil {
 		return nil, nil, err
 	}
-	res, err := a.s.CreateNote(ctx, a.agent, CreateNoteIn{Task: in.Task, Project: in.Project, Title: in.Title, Body: in.Body})
+	res, err := a.s.CreateNote(ctx, a.agent, CreateNoteIn{Project: in.Project, Title: in.Title, Body: in.Body})
 	if err != nil {
 		return nil, &AssistantStep{Summary: "Couldn't write the note"}, err
 	}
-	return map[string]any{"note": noteBrief(res.Note)}, &AssistantStep{Summary: "Wrote the note “" + clip(res.Note.Title, 60) + "”", Tasks: noteRefs(res.Note)}, nil
+	return map[string]any{"note": noteBrief(res.Note)}, &AssistantStep{Summary: "Wrote the note “" + clip(res.Note.Title, 60) + "”"}, nil
 }
 
 func (a *assistantRun) updateNote(ctx context.Context, raw json.RawMessage) (any, *AssistantStep, error) {
@@ -175,13 +162,10 @@ func (a *assistantRun) updateNote(ctx context.Context, raw json.RawMessage) (any
 	if err := decodeArgs(raw, &in); err != nil {
 		return nil, nil, err
 	}
-	upd := UpdateNoteIn{ID: in.ID, Title: in.Title}
-	if in.Body != "" {
-		upd.Body = &in.Body
-	}
-	res, err := a.s.UpdateNote(ctx, a.agent, upd)
+	// A pointer, so an empty body clears the note rather than being left out.
+	res, err := a.s.UpdateNote(ctx, a.agent, UpdateNoteIn{ID: in.ID, Title: in.Title, Body: in.Body})
 	if err != nil {
 		return nil, &AssistantStep{Summary: "Couldn't update note " + clip(in.ID, 30)}, err
 	}
-	return map[string]any{"note": noteBrief(res.Note)}, &AssistantStep{Summary: "Updated the note “" + clip(res.Note.Title, 60) + "”", Tasks: noteRefs(res.Note)}, nil
+	return map[string]any{"note": noteBrief(res.Note)}, &AssistantStep{Summary: "Updated the note “" + clip(res.Note.Title, 60) + "”"}, nil
 }

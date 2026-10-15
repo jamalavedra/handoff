@@ -1,5 +1,5 @@
--- A task is a short text plus todos, its steps. Longer work (research, shortlists, drafts) lives in
--- notes: markdown documents inside a project, optionally written for one task.
+-- A task is a short text plus todos, its steps. Notes are markdown documents inside a project: what
+-- the team knows about it, which the agent reads as context when it works on the project's tasks.
 CREATE TABLE task_todos (
     id         uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
     org_id     uuid NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
@@ -22,8 +22,6 @@ CREATE TABLE notes (
     org_id       uuid NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
     id           text NOT NULL,
     project_id   uuid NOT NULL,
-    -- task_id is the task the note was written for, if any.
-    task_id      text,
     title        text NOT NULL,
     body         text NOT NULL DEFAULT '',
     created_by   uuid NOT NULL,
@@ -35,14 +33,12 @@ CREATE TABLE notes (
     deleted_by   uuid,
     PRIMARY KEY (org_id, id),
     FOREIGN KEY (org_id, project_id) REFERENCES projects(org_id, id),
-    FOREIGN KEY (org_id, task_id) REFERENCES tasks(org_id, id) ON DELETE SET NULL (task_id),
     FOREIGN KEY (org_id, created_by) REFERENCES members(org_id, id),
     FOREIGN KEY (org_id, on_behalf_of) REFERENCES members(org_id, id),
     FOREIGN KEY (org_id, updated_by) REFERENCES members(org_id, id),
     FOREIGN KEY (org_id, deleted_by) REFERENCES members(org_id, id)
 );
 CREATE INDEX notes_project ON notes (org_id, project_id, updated_at DESC) WHERE deleted_at IS NULL;
-CREATE INDEX notes_task ON notes (org_id, task_id) WHERE task_id IS NOT NULL;
 
 DO $$
 DECLARE t text;
@@ -57,8 +53,8 @@ BEGIN
     END LOOP;
 END $$;
 
--- Note events go in events like any other, with data {note_id, title, project_id} and task_id set to
--- the note's task when it has one. Open screens hear them by the note's project.
+-- Note events go in events like any other, with no task and data {note_id, title, project_id}. Open
+-- screens hear them by the note's project.
 CREATE INDEX events_note ON events (org_id, (data->>'note_id'), id) WHERE (data->>'note_id') IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION notify_event() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -73,23 +69,54 @@ END $$;
 
 -- checklist_split takes a markdown checklist out of a task body: each "- [ ] step" line (any list
 -- marker, outside code fences) becomes a todo, in order, and the lines indented under an item become
--- its result, joined into one line. rest is everything else, the task's plain text.
+-- its result, joined into one line. rest is everything else, the task's plain text. Nothing is lost:
+-- details too long for a one-line result (over 300 characters) stay in rest under the step's name,
+-- and so does a step too long for a todo.
 CREATE FUNCTION checklist_split(body text, OUT todos jsonb, OUT rest text) LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE
+    lines    text[] := string_to_array(coalesce(body, ''), E'\n');
     line     text;
     m        text[];
     in_fence bool := false;
     cur      int := -1;  -- index of the todo whose sub-lines we're reading, or -1
     cur_ind  int := 0;
+    subs     text[] := '{}'; -- its sub-lines' text
+    raw      text[] := '{}'; -- and the lines as written
     kept     text[] := '{}';
+    joined   text;
     sub      text;
+    step     text;
 BEGIN
     todos := '[]';
-    FOREACH line IN ARRAY string_to_array(coalesce(body, ''), E'\n')
-    LOOP
+    FOR i IN 1 .. coalesce(array_length(lines, 1), 0) + 1 LOOP
+        line := lines[i]; -- NULL past the end: finish the last step
+        IF cur >= 0 AND line IS NOT NULL AND NOT in_fence AND (btrim(line) = ''
+            OR (line ~ '^\s+\S' AND length(substring(line FROM '^\s*')) > cur_ind AND line !~ '^\s*(```|~~~)'
+                AND line !~ '^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]')) THEN
+            raw := raw || line;
+            sub := btrim(regexp_replace(line, '^\s*(?:(?:[-*+]|\d+[.)])\s+)?', ''));
+            IF sub <> '' THEN
+                subs := subs || sub;
+            END IF;
+            CONTINUE;
+        END IF;
+        IF cur >= 0 THEN
+            joined := array_to_string(subs, '; ');
+            IF length(joined) <= 300 THEN
+                todos := jsonb_set(todos, ARRAY[cur::text, 'result'], to_jsonb(joined));
+                IF raw[array_length(raw, 1)] = '' OR btrim(raw[array_length(raw, 1)]) = '' THEN
+                    kept := kept || ''::text;
+                END IF;
+            ELSE
+                kept := kept || ((todos->cur->>'text') || ':') || raw;
+            END IF;
+            cur := -1;
+            subs := '{}';
+            raw := '{}';
+        END IF;
+        EXIT WHEN line IS NULL;
         IF line ~ '^\s*(```|~~~)' THEN
             in_fence := NOT in_fence;
-            cur := -1;
             kept := kept || line;
             CONTINUE;
         END IF;
@@ -99,24 +126,17 @@ BEGIN
         END IF;
         m := regexp_match(line, '^(\s*)(?:[-*+]|\d+[.)])\s+\[([ xX])\]\s*(.*)$');
         IF m IS NOT NULL THEN
-            IF btrim(m[3]) = '' THEN
-                cur := -1;
+            step := btrim(m[3]);
+            IF step = '' THEN
                 CONTINUE; -- an empty box says nothing
             END IF;
-            todos := todos || jsonb_build_array(jsonb_build_object('text', left(btrim(m[3]), 300), 'done', m[2] <> ' ', 'result', ''));
+            todos := todos || jsonb_build_array(jsonb_build_object('text', left(step, 300), 'done', m[2] <> ' ', 'result', ''));
+            IF length(step) > 300 THEN
+                kept := kept || step;
+            END IF;
             cur := jsonb_array_length(todos) - 1;
             cur_ind := length(m[1]);
             CONTINUE;
-        END IF;
-        IF cur >= 0 AND line ~ '^\s+\S' AND length(substring(line FROM '^\s*')) > cur_ind THEN
-            sub := btrim(regexp_replace(line, '^\s*(?:(?:[-*+]|\d+[.)])\s+)?', ''));
-            IF sub <> '' THEN
-                todos := jsonb_set(todos, ARRAY[cur::text, 'result'], to_jsonb(left(concat_ws('; ', nullif(todos->cur->>'result', ''), sub), 500)));
-            END IF;
-            CONTINUE;
-        END IF;
-        IF btrim(line) <> '' THEN
-            cur := -1;
         END IF;
         kept := kept || line;
     END LOOP;

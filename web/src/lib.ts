@@ -74,14 +74,13 @@ export type Task = {
   todo_progress?: TodoProgress;
 };
 
-// A note is a markdown document inside a project, for longer work; it can be written for a task.
+// A note is a markdown document inside a project: the team's context for it, which the agent reads too.
 export type Note = {
   id: string;
   title: string;
   body?: string;
   project: string;
   project_id: string;
-  task?: { id: string; title: string };
   created_by?: MemberRef;
   on_behalf_of?: MemberRef;
   updated_by?: MemberRef;
