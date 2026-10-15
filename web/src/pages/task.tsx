@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { Bot, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { Bot, Check, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { BodyEditor } from "../components/editor";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -125,19 +125,8 @@ function TaskView({ id }: { id: string }) {
     return () => document.removeEventListener("visibilitychange", read);
   }, [id, loaded, commentCount, qc]);
   const dueRef = useRef<HTMLInputElement>(null);
-  // Assignee, priority, repeat and project show as pills only when set; the ⋯ menu reveals one and opens its picker.
-  const pickers = useRef<Partial<Record<Extra, HTMLSelectElement | null>>>({});
-  const [revealed, setRevealed] = useState<Extra[]>([]);
+  // Assignee, priority, repeat and project show as pills only when set; the ⋯ menu sets them from a picker.
   const [picking, setPicking] = useState<Extra | null>(null);
-  useEffect(() => setRevealed([]), [id]);
-  useEffect(() => {
-    if (!picking) return;
-    const el = pickers.current[picking];
-    setPicking(null);
-    if (!el) return;
-    el.focus();
-    try { el.showPicker(); } catch { /* not supported: focused, so arrows and Space still open it */ }
-  }, [picking]);
   const [activityOpen, setActivityOpen] = useState(false);
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
   // A patch can name its task: a body draft saved as the view switches tasks still belongs to the old one.
@@ -185,8 +174,22 @@ function TaskView({ id }: { id: string }) {
     repeat: !!t.repeat,
     project: t.project !== defaultProject,
   };
-  const shows = (k: Extra) => configured[k] || revealed.includes(k);
-  const pick = (k: Extra) => { setRevealed((r) => (r.includes(k) ? r : [...r, k])); setPicking(k); };
+  const pickers: Record<Extra, Picker> = {
+    assignee: {
+      title: "Assign to",
+      value: t.assignee?.id ?? "",
+      options: [{ value: "", label: "Unassigned" }, ...people.map((m) => ({ value: m.id, label: m.kind === "agent" ? `${m.name} (agent)` : m.name }))],
+      set: (v) => update.mutate({ assignee: v }),
+    },
+    priority: { title: "Priority", value: String(t.priority), options: priorityText.map((p, i) => ({ value: String(i), label: p })), set: (v) => update.mutate({ priority: Number(v) }) },
+    repeat: {
+      title: "Repeat",
+      value: t.repeat ?? "",
+      options: [{ value: "", label: "Doesn't repeat" }, ...(Object.keys(repeatLabel) as (keyof typeof repeatLabel)[]).map((r) => ({ value: r, label: repeatLabel[r] }))],
+      set: (v) => update.mutate({ repeat: v }),
+    },
+    project: { title: "Move to project", value: t.project_id, options: projects.data?.projects.map((p) => ({ value: p.id, label: p.name })) ?? [], set: (v) => update.mutate({ project: v }) },
+  };
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] max-w-3xl flex-col motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:min-h-[calc(100dvh-4rem)] md:animate-none">
@@ -215,10 +218,10 @@ function TaskView({ id }: { id: string }) {
               {!locked && (
                 <>
                   <div role="separator" className="my-1 h-px bg-border" />
-                  <MenuItem icon={User} onClick={() => { done(); pick("assignee"); }}>Assign…</MenuItem>
-                  <MenuItem icon={Flag} onClick={() => { done(); pick("priority"); }}>Priority…</MenuItem>
-                  <MenuItem icon={RepeatIcon} onClick={() => { done(); pick("repeat"); }}>Repeat…</MenuItem>
-                  <MenuItem icon={Folder} onClick={() => { done(); pick("project"); }}>Move to project…</MenuItem>
+                  <MenuItem icon={User} onClick={() => { done(); setPicking("assignee"); }}>Assign…</MenuItem>
+                  <MenuItem icon={Flag} onClick={() => { done(); setPicking("priority"); }}>Priority…</MenuItem>
+                  <MenuItem icon={RepeatIcon} onClick={() => { done(); setPicking("repeat"); }}>Repeat…</MenuItem>
+                  <MenuItem icon={Folder} onClick={() => { done(); setPicking("project"); }}>Move to project…</MenuItem>
                   <div role="separator" className="my-1 h-px bg-border" />
                 </>
               )}
@@ -240,25 +243,25 @@ function TaskView({ id }: { id: string }) {
           <input ref={dueRef} type="date" className={overlay} value={t.due ?? ""} onClick={() => { try { dueRef.current?.showPicker(); } catch { /* not supported */ } }} onChange={(e) => update.mutate({ due: e.target.value })} aria-label="Due" />
         )}>{due ? due.text : "No date"}</Pill>
         {t.due && !locked && <button onClick={() => update.mutate({ due: "" })} aria-label="Clear due date" className="-ml-1.5 flex size-7 items-center justify-center rounded-full text-muted-foreground/70 hover:bg-accent"><X className="size-3.5" /></button>}
-        {shows("assignee") && <Pill label="Assignee" icon={t.assignee?.kind === "agent" ? Bot : User} className={t.assignee?.kind === "agent" ? "bg-violet-50 text-violet-700" : ""} select={!locked && (
-          <select ref={(el) => { pickers.current.assignee = el; }} className={overlay} value={t.assignee?.id ?? ""} onChange={(e) => update.mutate({ assignee: e.target.value })} aria-label="Assignee">
+        {configured.assignee && <Pill label="Assignee" icon={t.assignee?.kind === "agent" ? Bot : User} className={t.assignee?.kind === "agent" ? "bg-violet-50 text-violet-700" : ""} select={!locked && (
+          <select className={overlay} value={t.assignee?.id ?? ""} onChange={(e) => update.mutate({ assignee: e.target.value })} aria-label="Assignee">
             <option value="">Unassigned</option>
             {people.map((m) => <option key={m.id} value={m.id}>{m.name}{m.kind === "agent" ? " (agent)" : ""}</option>)}
           </select>
         )}>{t.assignee?.name ?? "Unassigned"}</Pill>}
-        {shows("priority") && <Pill label="Priority" icon={Flag} className={cn(t.priority === 0 && "bg-red-50 text-red-700", t.priority === 1 && "bg-orange-50 text-orange-700")} select={!locked && (
-          <select ref={(el) => { pickers.current.priority = el; }} className={overlay} value={t.priority} onChange={(e) => update.mutate({ priority: Number(e.target.value) })} aria-label="Priority">
+        {configured.priority && <Pill label="Priority" icon={Flag} className={cn(t.priority === 0 && "bg-red-50 text-red-700", t.priority === 1 && "bg-orange-50 text-orange-700")} select={!locked && (
+          <select className={overlay} value={t.priority} onChange={(e) => update.mutate({ priority: Number(e.target.value) })} aria-label="Priority">
             {priorityText.map((p, i) => <option key={i} value={i}>{p}</option>)}
           </select>
         )}>{priorityText[t.priority]}</Pill>}
-        {shows("repeat") && <Pill label="Repeat" icon={RepeatIcon} select={!locked && (
-          <select ref={(el) => { pickers.current.repeat = el; }} className={overlay} value={t.repeat ?? ""} onChange={(e) => update.mutate({ repeat: e.target.value })} aria-label="Repeat">
+        {configured.repeat && <Pill label="Repeat" icon={RepeatIcon} select={!locked && (
+          <select className={overlay} value={t.repeat ?? ""} onChange={(e) => update.mutate({ repeat: e.target.value })} aria-label="Repeat">
             <option value="">Doesn't repeat</option>
             {(Object.keys(repeatLabel) as (keyof typeof repeatLabel)[]).map((r) => <option key={r} value={r}>{repeatLabel[r]}</option>)}
           </select>
         )}>{t.repeat ? repeatLabel[t.repeat] : "Doesn't repeat"}</Pill>}
-        {shows("project") && <Pill label="Project" icon={Folder} select={!locked && (
-          <select ref={(el) => { pickers.current.project = el; }} className={overlay} value={t.project_id} onChange={(e) => update.mutate({ project: e.target.value })} aria-label="Project">
+        {configured.project && <Pill label="Project" icon={Folder} select={!locked && (
+          <select className={overlay} value={t.project_id} onChange={(e) => update.mutate({ project: e.target.value })} aria-label="Project">
             {projects.data?.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         )}>{t.project}</Pill>}
@@ -322,6 +325,8 @@ function TaskView({ id }: { id: string }) {
         onOpen={() => assistant.openTaskChat()}
       />}
 
+      <PickerDialog picker={picking ? pickers[picking] : undefined} onClose={() => setPicking(null)} />
+
       <Dialog open={activityOpen} onOpenChange={setActivityOpen}>
         <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-2xl sm:max-w-lg">
           <DialogTitle>Activity</DialogTitle>
@@ -331,6 +336,35 @@ function TaskView({ id }: { id: string }) {
       </Dialog>
 
     </div>
+  );
+}
+
+type Picker = { title: string; value: string; options: { value: string; label: string }[]; set: (value: string) => void };
+
+// PickerDialog lists a field's options as buttons: a picker every browser shows, unlike opening a
+// native select from script.
+function PickerDialog({ picker, onClose }: { picker?: Picker; onClose: () => void }) {
+  return (
+    <Dialog open={!!picker} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-2xl sm:max-w-xs">
+        <DialogTitle>{picker?.title}</DialogTitle>
+        <DialogDescription className="sr-only">Choose an option</DialogDescription>
+        <div className="-mx-2 flex flex-col">
+          {picker?.options.map((o) => (
+            <button
+              key={o.value}
+              aria-pressed={o.value === picker.value}
+              autoFocus={o.value === picker.value}
+              onClick={() => { if (o.value !== picker.value) picker.set(o.value); onClose(); }}
+              className="flex items-center gap-2 rounded-lg px-2 py-2.5 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+            >
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              {o.value === picker.value && <Check className="size-4 shrink-0 text-muted-foreground" />}
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
