@@ -166,10 +166,12 @@ type Service struct {
 	// outboundHTTP is the shared guarded client, built on first use.
 	outboundHTTP *http.Client
 	outboundOnce sync.Once
+	hooksBusy    sync.Map      // workspaces with a webhook round running
+	hookSlots    chan struct{} // bounds how many workspaces deliver at once
 }
 
 func New(d *db.DB, cfg *config.Config) *Service {
-	return &Service{DB: d, Cfg: cfg, triageJobs: make(chan triageJob, 1024), replyJobs: make(chan replyJob, 256)}
+	return &Service{DB: d, Cfg: cfg, triageJobs: make(chan triageJob, 1024), replyJobs: make(chan replyJob, 256), hookSlots: make(chan struct{}, 8)}
 }
 
 // call wraps a principal-scoped transaction and loads the per-call view of the org.

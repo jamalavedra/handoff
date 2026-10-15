@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -228,5 +230,55 @@ func TestWebhookEdgeCases(t *testing.T) {
 		if n > 1 {
 			t.Fatalf("delivery %s sent %d times", id, n)
 		}
+	}
+}
+
+func TestSlowWebhookOnlyDelaysItsWorkspace(t *testing.T) {
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	defer close(release)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}))
+	t.Cleanup(slow.Close)
+	fast := &hookInbox{t: t}
+	fsrv := httptest.NewServer(fast)
+	t.Cleanup(fsrv.Close)
+	base, _ := url.Parse("http://handoff.test")
+	s := core.New(testutil.DB(t), &config.Config{BaseURL: base, Secret: []byte("s")})
+	s.OutboundHTTP = fsrv.Client()
+	e := &env{s: s, ctx: context.Background()}
+	for _, w := range []struct {
+		slug, url string
+		in        *hookInbox
+	}{{"slowhook", slow.URL, nil}, {"fasthook", fsrv.URL, fast}} {
+		admin := e.org(t, w.slug)
+		e.agent(t, admin, "Bot", nil)
+		hook, err := s.SetWebhook(e.ctx, admin, core.SetWebhookIn{Agent: "Bot", URL: w.url})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w.in != nil {
+			w.in.secret = hook.Secret
+		}
+		e.create(t, admin, core.NewTask{Title: "Ping", Assignee: "Bot"})
+	}
+	go s.DeliverWebhooks(e.ctx)
+	<-started
+	done := make(chan struct{})
+	go func() { s.DeliverWebhooks(e.ctx); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a slow endpoint held up the next round")
+	}
+	for i := 0; !slices.Contains(fast.types(), "task.assigned"); i++ {
+		if i == 50 {
+			t.Fatalf("fast workspace not delivered: %v", fast.types())
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
