@@ -328,7 +328,7 @@ type geo struct {
 
 // The geocoder is OpenStreetMap's Nominatim by default (HANDOFF_GEOCODER_URL to use another
 // Nominatim-compatible one). Its policy asks for at most one request a second and a real User-Agent;
-// answers are kept for the life of the process.
+// answers are kept for the life of the process, up to geoCacheMax.
 var geocoder = struct {
 	sync.Mutex
 	last  time.Time
@@ -341,7 +341,10 @@ type geoHit struct {
 	at time.Time
 }
 
-const geoMissFor = 10 * time.Minute
+const (
+	geoMissFor  = 10 * time.Minute
+	geoCacheMax = 10000
+)
 
 func geocoderURL() string {
 	if u := os.Getenv("HANDOFF_GEOCODER_URL"); u != "" {
@@ -353,18 +356,22 @@ func geocoderURL() string {
 func (s *Service) geocode(ctx context.Context, q string) (*geo, error) {
 	key := strings.ToLower(q)
 	geocoder.Lock()
-	defer geocoder.Unlock()
 	if h, ok := geocoder.cache[key]; ok && (h.g != nil || time.Since(h.at) < geoMissFor) {
+		geocoder.Unlock()
 		return h.g, nil
 	}
-	if wait := time.Second - time.Since(geocoder.last); wait > 0 {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(wait):
-		}
+	// Book the next free second, then wait and ask without holding the lock.
+	slot := geocoder.last.Add(time.Second)
+	if now := time.Now(); slot.Before(now) {
+		slot = now
 	}
-	geocoder.last = time.Now()
+	geocoder.last = slot
+	geocoder.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(time.Until(slot)):
+	}
 	u := geocoderURL() + "?" + url.Values{"q": {q}, "format": {"jsonv2"}, "limit": {"1"}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -392,6 +399,11 @@ func (s *Service) geocode(ctx context.Context, q string) (*geo, error) {
 			addr, _ := rows[0]["display_name"].(string)
 			g = &geo{lat: lat, lng: lng, address: addr}
 		}
+	}
+	geocoder.Lock()
+	defer geocoder.Unlock()
+	if len(geocoder.cache) >= geoCacheMax {
+		clear(geocoder.cache) // shortcut: drops every answer at the cap, use an LRU if lookups ever repeat that much
 	}
 	geocoder.cache[key] = geoHit{g: g, at: time.Now()}
 	return g, nil
