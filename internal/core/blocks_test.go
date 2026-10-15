@@ -81,7 +81,7 @@ func TestAssistantBlocksFromLookup(t *testing.T) {
 	t.Cleanup(site.Close)
 	search := fakeSearchServer(t)
 	model, _ := scriptedModel(t,
-		calls(toolCall("c1", "ext_web_search__web_search", map[string]any{"query": site.URL + "/dolly"})),
+		calls(toolCall("c1", "ext_web_search__web_search", map[string]any{"query": "site " + strings.TrimPrefix(site.URL, "http://") + "/dolly"})),
 		calls(toolCall("c2", "show_images", map[string]any{"pages": []map[string]any{{"url": site.URL + "/dolly", "caption": "Dolly Parton"}, {"url": site.URL + "/other"}}})),
 		say("Here she is."),
 	)

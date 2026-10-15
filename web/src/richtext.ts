@@ -113,6 +113,16 @@ const TrailingParagraph = Extension.create({
   ],
 });
 
+// Pictures from elsewhere show as links while editing too: loading them would tell their host who
+// read the text. The markdown keeps the image as written.
+const OwnImages = Image.extend({
+  renderHTML({ node, HTMLAttributes }) {
+    const src = String(node.attrs.src ?? "");
+    if (/^\/(?!\/)/.test(src)) return ["img", HTMLAttributes];
+    return ["a", { href: src, target: "_blank", rel: "noreferrer noopener" }, String(node.attrs.alt || "Image")];
+  },
+});
+
 export function richExtensions(placeholder = ""): Extensions {
   return [
     StarterKit.configure({ text: false, hardBreak: false, bulletList: false }),
@@ -120,7 +130,7 @@ export function richExtensions(placeholder = ""): Extensions {
     Break,
     Bullets,
     Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true, HTMLAttributes: { rel: "noreferrer noopener", target: "_blank" } }),
-    Image.configure({ inline: true }),
+    OwnImages.configure({ inline: true }),
     Placeholder.configure({ placeholder }),
     Tasks,
     TaskItem.configure({ nested: true }),

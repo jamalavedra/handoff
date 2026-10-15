@@ -30,7 +30,11 @@ func fakeSearchServer(t *testing.T) *httptest.Server {
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "web_search", Description: "Search the web", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
 		func(_ context.Context, _ *mcp.CallToolRequest, in q) (*mcp.CallToolResult, any, error) {
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Pixel 9: 12GB RAM (store.google.com) for " + in.Query}}}, nil, nil
+			text := "Pixel 9: 12GB RAM (store.google.com) for " + in.Query
+			if host, ok := strings.CutPrefix(in.Query, "site "); ok {
+				text = "Top result: http://" + host
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 		})
 	mcp.AddTool(server, &mcp.Tool{Name: "plain", Description: "No hints"},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ q) (*mcp.CallToolResult, any, error) {

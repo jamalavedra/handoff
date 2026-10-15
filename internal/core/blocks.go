@@ -89,17 +89,38 @@ func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string
 	return `{"ok":true,"shown":"under your message; don't repeat it as text, refer to it"}`
 }
 
-var pageURL = regexp.MustCompile(`https?://[^\s"'<>\\)\]]+`)
+var pageURL = regexp.MustCompile(`https?://[^\s"'<>\\\]]+`)
 
-func normPage(u string) string { return strings.TrimRight(strings.TrimSpace(u), "/.,;:!?") }
+// normPage trims what ends a sentence around a URL: punctuation, and a ")" with no "(" in the URL,
+// so "https://en.wikipedia.org/wiki/Paris_(film)" keeps its own.
+func normPage(u string) string {
+	u = strings.TrimSpace(u)
+	for {
+		t := strings.TrimRight(u, "/.,;:!?")
+		if strings.HasSuffix(t, ")") && strings.Count(t, "(") < strings.Count(t, ")") {
+			t = t[:len(t)-1]
+		}
+		if t == u {
+			return u
+		}
+		u = t
+	}
+}
 
-// foundPages remembers the pages a lookup returned.
-func (a *assistantRun) foundPages(text string) {
-	if a.found == nil {
-		a.found = map[string]bool{}
+// foundPages remembers the pages a lookup returned, but not ones it was asked about: a search
+// that echoes its query would otherwise let the model vouch for a URL of its own.
+func (a *assistantRun) foundPages(text, args string) {
+	if a.turn.found == nil {
+		a.turn.found = map[string]bool{}
+	}
+	asked := map[string]bool{}
+	for _, u := range pageURL.FindAllString(args, 50) {
+		asked[normPage(u)] = true
 	}
 	for _, u := range pageURL.FindAllString(text, 500) {
-		a.found[normPage(u)] = true
+		if u = normPage(u); !asked[u] {
+			a.turn.found[u] = true
+		}
 	}
 }
 
@@ -112,7 +133,7 @@ func (a *assistantRun) onlyFoundPages(raw json.RawMessage) json.RawMessage {
 	}
 	pages := in.Pages[:0]
 	for _, p := range in.Pages {
-		if a.found[normPage(p.URL)] {
+		if a.turn.found[normPage(p.URL)] {
 			pages = append(pages, p)
 		}
 	}

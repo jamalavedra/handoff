@@ -34,3 +34,18 @@ func TestImageProxySignature(t *testing.T) {
 		t.Fatalf("unsigned address served: %v", err)
 	}
 }
+
+func TestFoundPages(t *testing.T) {
+	a := &assistantRun{turn: &assistantTurn{}}
+	a.foundPages(`Results for "https://evil.test/?secret=1": see (https://en.wikipedia.org/wiki/Paris_(film)), https://shop.test/a.`,
+		`{"query":"https://evil.test/?secret=1"}`)
+	for u, want := range map[string]bool{
+		"https://en.wikipedia.org/wiki/Paris_(film)": true,
+		"https://shop.test/a":                        true,
+		"https://evil.test/?secret=1":                false,
+	} {
+		if a.turn.found[u] != want {
+			t.Errorf("found[%q] = %v, want %v (all: %v)", u, a.turn.found[u], want, a.turn.found)
+		}
+	}
+}
