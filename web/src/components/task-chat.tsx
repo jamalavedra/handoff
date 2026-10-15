@@ -64,8 +64,9 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   const count = q.data?.comments.length ?? 0;
   useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
   const send = useMutation({
-    mutationFn: (v: { body: string; reply?: ReplyDraft | null }) => api.tool("comment", { id, body: v.body, ...replyArgs(v.reply ?? null) }),
-    onSuccess: (_, v) => { setComment(""); if (v.reply) setReply(null); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
+    // A quick answer stands alone: it drops the reply that was open (`drop`) instead of answering it.
+    mutationFn: (v: { body: string; reply?: ReplyDraft | null; drop?: ReplyDraft | null }) => api.tool("comment", { id, body: v.body, ...replyArgs(v.reply ?? null) }),
+    onSuccess: (_, v) => { setComment(""); const sent = v.reply ?? v.drop; if (sent) setReply((r) => (r === sent ? null : r)); lastTyping.current = 0; qc.invalidateQueries({ queryKey: ["task"] }); qc.invalidateQueries({ queryKey: ["tasks"] }); },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
@@ -112,7 +113,7 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
                 c={c} mine={c.author?.id === meId} mentions={memberNames} locked={locked}
                 // The agent's question, while the task waits on me: its answers are a tap away.
                 answers={i === comments.length - 1 && t?.waiting_on?.id === meId && !send.isPending ? c.options : undefined}
-                onAnswer={(a) => send.mutate({ body: a })}
+                onAnswer={(a) => send.mutate({ body: a, drop: reply })}
               />
             </ReplyTarget>
           ))}

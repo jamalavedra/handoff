@@ -58,7 +58,15 @@ func TestCommentReplies(t *testing.T) {
 	if r := last(t, d).ReplyTo; r == nil || r.Quoted || r.Excerpt != "Option A is the train. Option B is the night bus, cheaper but slow." {
 		t.Fatalf("reply_to without quote: %+v", r)
 	}
-	// A long quote is clipped.
+	// A quote of exactly the limit is kept whole; a longer one is clipped to it.
+	full := strings.Repeat("y", 500)
+	d, err = e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "full", ReplyTo: orig.ID, Quote: full})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := last(t, d).ReplyTo; r == nil || r.Excerpt != full {
+		t.Fatalf("500-char quote not kept whole: %+v", r)
+	}
 	d, err = e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "long", ReplyTo: orig.ID, Quote: strings.Repeat("x", 2000)})
 	if err != nil {
 		t.Fatal(err)

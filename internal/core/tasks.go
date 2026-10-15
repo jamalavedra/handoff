@@ -1232,6 +1232,16 @@ type commentExtra struct {
 // maxQuote is how much of a message a reply can quote.
 const maxQuote = 500
 
+// clipQuote folds a quote to one line and keeps at most maxQuote characters, ending in … when cut
+// (as the web app does).
+func clipQuote(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > maxQuote {
+		return string(r[:maxQuote-1]) + "…"
+	}
+	return s
+}
+
 func (s *Service) Comment(ctx context.Context, p *Principal, in CommentIn) (TaskDetailOut, error) {
 	err := s.run(ctx, p, func(c *call) error {
 		if err := p.require(ActUpdate); err != nil {
@@ -1280,7 +1290,7 @@ func (c *call) addComment(taskID, body string, x commentExtra) error {
 			return err
 		}
 		replyTo = &id
-		if q := clip(strings.Join(strings.Fields(x.quote), " "), maxQuote-1); q != "" {
+		if q := clipQuote(x.quote); q != "" {
 			quote = &q
 		}
 	}

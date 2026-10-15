@@ -89,7 +89,9 @@ export function SelectionReply({ scroller, comments }: { scroller: RefObject<HTM
   useEffect(() => {
     const el = scroller.current;
     if (!el || !reply) return;
-    const msgOf = (n: Node | null) => (n instanceof Element ? n : n?.parentElement)?.closest<HTMLElement>("[data-reply-id]")?.dataset.replyId ?? null;
+    // Only a message's own text can be quoted: not its quoted header, names or reactions.
+    const bodyOf = (n: Node | null) => (n instanceof Element ? n : n?.parentElement)?.closest<HTMLElement>(".md") ?? null;
+    const msgOf = (b: HTMLElement | null) => b?.closest<HTMLElement>("[data-reply-id]")?.dataset.replyId ?? null;
     let frame = 0;
     const check = (e: PointerEvent) => {
       if (e.pointerType !== "mouse") return;
@@ -98,7 +100,8 @@ export function SelectionReply({ scroller, comments }: { scroller: RefObject<HTM
       frame = requestAnimationFrame(() => {
         const sel = window.getSelection();
         if (!sel || sel.isCollapsed || !sel.rangeCount || !el.contains(sel.anchorNode)) return setSpot(null);
-        const s = selected(msgOf(sel.anchorNode), msgOf(sel.focusNode), sel.toString());
+        const body = bodyOf(sel.anchorNode);
+        const s = body && body === bodyOf(sel.focusNode) ? selected(msgOf(body), msgOf(body), sel.toString()) : null;
         if (!s) return setSpot(null);
         const r = sel.getRangeAt(0).getBoundingClientRect();
         const box = el.getBoundingClientRect();
