@@ -6,7 +6,7 @@ import { TaskLink } from "../components/tasklink";
 import { TaskText, Todos } from "../components/todos";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ago, api, cn, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
-import { agentOnIt, dueLabel, repeatLabel } from "../quickadd";
+import { agentOnIt, dueLabel, isoDate, repeatLabel } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { EventLine, useInvalidate } from "./tasks";
@@ -164,7 +164,7 @@ function TaskView({ id }: { id: string }) {
   // A patch can name its task: a body draft saved as the view switches tasks still belongs to the old one.
   const update = useMutation({ mutationFn: ({ id: on = id, ...patch }: { id?: string } & Record<string, unknown>) => { markLocal(on); return api.tool("update_task", { id: on, ...patch }); }, onSuccess: invalidate });
   const close = useMutation({
-    mutationFn: (status: string) => { markLocal(id); return api.tool<{ next?: Task }>("close_task", { id, status }); },
+    mutationFn: (status: string) => { markLocal(id); return api.tool<{ next?: Task }>("close_task", { id, status, today: isoDate(new Date()) }); },
     onSuccess: (r, status) => { invalidate(); undoable(qc, completedText(status === "done" ? "Task completed" : "Task archived", r.next), () => undoClose(id, r.next)); },
   });
   const trash = useMutation({
