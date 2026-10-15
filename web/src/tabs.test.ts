@@ -11,6 +11,7 @@ test("reads what a location shows", () => {
   assert.deepEqual(target("/?task=acme-1"), { kind: "page", path: "/" });
   assert.deepEqual(target("/projects/p1?view=board"), { kind: "project", id: "p1" });
   assert.deepEqual(target("/activity"), { kind: "page", path: "/activity" });
+  assert.deepEqual(target("/notes/acme-n4b2i"), { kind: "note", id: "acme-n4b2i" });
   assert.deepEqual(target("/"), { kind: "page", path: "/" });
 });
 

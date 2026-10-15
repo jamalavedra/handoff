@@ -134,8 +134,8 @@ func TestTriageQuestionsGoToChat(t *testing.T) {
 	}
 	task := e.create(t, admin, core.NewTask{Title: "find restaurants above 30 in sf"})[0]
 	d := waitTriage(t, e, admin, task.ID)
-	if strings.Contains(d.Task.Body, "?") || d.Task.Body != "## Italian\n- Delfina" {
-		t.Fatalf("questions leaked into the details: %q", d.Task.Body)
+	if d.Task.Body != "" {
+		t.Fatalf("task text: %q", d.Task.Body)
 	}
 	if len(d.Comments) != 1 || !strings.Contains(d.Comments[0].Body, "- Any neighbourhood?\n- Lunch or dinner?") {
 		t.Fatalf("questions not in the chat: %+v", d.Comments)

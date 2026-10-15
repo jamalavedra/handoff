@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
-import { Bot, CircleAlert, Flag, Lock, MessageCircleQuestion, Plus, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { Bot, CircleAlert, Flag, ListChecks, Lock, MessageCircleQuestion, Plus, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
 import { ago, api, cn, projectName, type Event, type Project, type Task } from "../lib";
 import { EmojiPicker } from "../components/emoji";
 import { Avatar, Card, DuePill, Empty, ErrorText, PageHeader, TaskCheck, Who } from "../components/app";
@@ -16,6 +16,9 @@ import { Board, useView, ViewToggle } from "./board";
 import { TaskLink } from "../components/tasklink";
 import { completedText, patchTask, reopen, undoable, undoClose, useChangeFlash, useTriageReveal } from "../components/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
+import { progressLabel } from "../todos";
+import { eventDetail, verb } from "../events";
+import { NewNote, ProjectNotes, useProjectNotes } from "./notes";
 
 export function useInvalidate() {
   const qc = useQueryClient();
@@ -79,6 +82,11 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
         {waiting && <span title={`Waits on ${t.blocked_by.join(", ")}`} className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"><Lock className="size-3" /><span className="hidden sm:inline">Waiting</span></span>}
         {showAssignee && <Avatar m={t.assignee!} />}
         {t.repeat && !closed && <RepeatIcon aria-label={`Repeats: ${t.repeat}`} className="size-3.5 shrink-0 text-muted-foreground" />}
+        {progressLabel(t.todo_progress) && (
+          <span title={`${t.todo_progress!.done} of ${t.todo_progress!.total} todos done`} className={cn("flex shrink-0 items-center gap-1 text-xs tabular-nums", t.todo_progress!.done === t.todo_progress!.total ? "text-green-700 dark:text-green-400" : "text-muted-foreground")}>
+            <ListChecks aria-hidden className="size-3.5" />{progressLabel(t.todo_progress)}
+          </span>
+        )}
         {t.due && <DuePill due={t.due} done={closed} />}
         {action}
       </div>
@@ -238,16 +246,25 @@ export function ProjectPage() {
   const p = projects.data?.projects.find((x) => x.id === id);
   const invalidate = useInvalidate();
   const setEmoji = useMutation({ mutationFn: (emoji: string) => api.tool("update_project", { project: id, emoji }), onSuccess: invalidate });
+  // Tasks or the project's notes, kept in the address so Back from a note lands on the notes.
+  const notesTab = (useSearch({ strict: false }) as { tab?: string }).tab === "notes";
+  const navigate = useNavigate();
+  const setTab = (tab?: string) => navigate({ to: ".", search: (s) => ({ ...s, tab }), replace: true });
+  const notes = useProjectNotes(id);
   return (
     <>
       <PageHeader title={p ? projectName(p) : "Project"}>
         {p && <EmojiPicker value={p.emoji ?? ""} onChange={(emoji) => setEmoji.mutate(emoji)} label="Project emoji" />}
-        {view === "list" && <label className="flex items-center gap-1.5 text-[13px] text-foreground/70"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
-        <ViewToggle view={view} onChange={setView} />
-        <NewTask project={id} />
+        {!notesTab && view === "list" && <label className="flex items-center gap-1.5 text-[13px] text-foreground/70"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
+        {!notesTab && <ViewToggle view={view} onChange={setView} />}
+        {notesTab ? <NewNote project={id} /> : <NewTask project={id} />}
       </PageHeader>
+      <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:px-0" role="tablist" aria-label="Show">
+        <ProjectChip active={!notesTab} onClick={() => setTab(undefined)} name="Tasks" n={p?.open_tasks ?? q.data?.tasks.length ?? 0} />
+        <ProjectChip active={notesTab} onClick={() => setTab("notes")} name="Notes" n={notes.notes?.length ?? 0} />
+      </div>
       <ErrorText error={setEmoji.error} />
-      {view === "board" ? <Board tasks={q.data?.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled")} done={done.data?.tasks} /> : <TaskList tasks={q.data?.tasks} empty="No tasks here yet." />}
+      {notesTab ? <><ErrorText error={notes.error} /><ProjectNotes notes={notes.notes} more={notes.hasNextPage ? () => notes.fetchNextPage() : undefined} loadingMore={notes.isFetchingNextPage} /></> : view === "board" ? <Board tasks={q.data?.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled")} done={done.data?.tasks} /> : <TaskList tasks={q.data?.tasks} empty="No tasks here yet." />}
     </>
   );
 }
@@ -264,24 +281,18 @@ export function TrashPage() {
   );
 }
 
-const verbs: Record<string, string> = {
-  created: "created", updated: "updated", claimed: "started working on", released: "released", closed: "closed", commented: "commented on",
-  linked: "added a dependency to", unlinked: "removed a dependency from", trashed: "trashed", restored: "restored",
-  approval_requested: "asked to delete", approval_approved: "approved deleting", approval_rejected: "rejected deleting",
-  agent_added: "added an agent", agent_revoked: "revoked an agent", agent_permissions_changed: "changed an agent's permissions",
-  api_key_created: "created an API key", api_key_revoked: "revoked an API key", project_created: "created a project",
-  triaged: "triaged", triage_failed: "couldn't triage", repeat_ended: "ended the repeating series of", run_now: "ran",
-  member_invited: "invited someone", member_changed: "changed a member", org_changed: "changed workspace settings", project_changed: "changed a project",
-};
-
-export function EventLine({ e, showTask = true, onRestore }: { e: Event; showTask?: boolean; onRestore?: (body: string) => void }) {
-  const previous = e.kind === "updated" && typeof e.data.previous_body === "string" ? (e.data.previous_body as string) : undefined;
-  const detail = e.kind === "closed" ? `${e.data.status}${e.data.reason ? `: ${e.data.reason}` : ""}` : e.kind === "updated" ? Object.keys(e.data).filter((k) => k !== "from_project_id" && k !== "previous_body").map((k) => (k === "body" ? "details" : k)).join(", ") : e.kind === "commented" ? String(e.data.excerpt ?? "") : e.kind === "triaged" ? ((e.data.changed as string[] | undefined) ?? []).join(", ") : e.kind === "triage_failed" ? String(e.data.error ?? "") : e.kind === "linked" || e.kind === "unlinked" ? `waits on ${e.data.blocker}` : e.kind === "run_now" ? String(e.data.agent ?? "") : "";
+// EventLine is one change in a history. restoreKind names the events whose previous_body it offers to
+// restore (a task's updates, or a note's).
+export function EventLine({ e, showTask = true, showNote = true, restoreKind = "updated", onRestore }: { e: Event; showTask?: boolean; showNote?: boolean; restoreKind?: string; onRestore?: (body: string) => void }) {
+  const previous = e.kind === restoreKind && typeof e.data.previous_body === "string" ? (e.data.previous_body as string) : undefined;
+  const detail = eventDetail(e);
+  const note = showNote && typeof e.data.note_id === "string" ? { id: e.data.note_id, title: String(e.data.title ?? "a note") } : undefined;
   return (
     <div className="flex gap-3 py-1.5 text-sm">
       <span className="w-14 shrink-0 text-xs leading-5 text-muted-foreground/70 sm:w-20">{ago(e.at)}</span>
       <div className="min-w-0">
-        <Who m={e.actor} by={e.on_behalf_of} /> <span className="text-muted-foreground">{verbs[e.kind] ?? e.kind}</span>{" "}
+        <Who m={e.actor} by={e.on_behalf_of} /> <span className="text-muted-foreground">{verb(e)}</span>{" "}
+        {note && <Link to="/notes/$id" params={{ id: note.id }} className="font-medium hover:underline">{note.title}</Link>}
         {showTask && e.task_id && <TaskLink id={e.task_id} className="font-medium hover:underline">{e.task_title || e.task_id}</TaskLink>}
         {detail && <span className="text-muted-foreground"> — {detail}</span>}
         <span className="ml-2 hidden text-xs text-muted-foreground/70 sm:inline">via {e.via}</span>

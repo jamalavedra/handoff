@@ -10,6 +10,7 @@ import { api, cn, projectName, type Me, type Project } from "./lib";
 import { AuthorizePage, LoginPage, SignupPage } from "./pages/auth";
 import { ActivityPage, MyTasksPage, ProjectPage, ProjectsPage, TrashPage } from "./pages/tasks";
 import { TaskPage } from "./pages/task";
+import { NotePage } from "./pages/notes";
 import { TeamPage } from "./pages/team";
 import { NotificationsPage, useInbox } from "./pages/notifications";
 import { AgentsPage } from "./pages/agents";
@@ -385,7 +386,11 @@ function MoreContent({ onNavigate }: { onNavigate?: () => void }) {
 
 const root = createRootRoute({
   component: Shell,
-  validateSearch: (s: Record<string, unknown>): { task?: string } => ({ ...s, task: typeof s.task === "string" && s.task ? s.task : undefined }),
+  validateSearch: (s: Record<string, unknown>): { task?: string; tab?: string } => ({
+    ...s,
+    task: typeof s.task === "string" && s.task ? s.task : undefined,
+    tab: typeof s.tab === "string" && s.tab ? s.tab : undefined,
+  }),
   // Tasks used to open in a side panel at ?task=<id>; those links now land on the task's page.
   beforeLoad: ({ search }) => {
     if (search.task) throw redirect({ to: "/tasks/$id", params: { id: search.task }, replace: true });
@@ -402,6 +407,7 @@ const router = createRouter({
     r("/projects", ProjectsPage),
     r("/projects/$id", ProjectPage),
     r("/tasks/$id", TaskPage),
+    r("/notes/$id", NotePage),
     r("/automations", AutomationsPage),
     r("/trash", TrashPage),
     r("/settings", AdminPage),

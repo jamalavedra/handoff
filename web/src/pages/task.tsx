@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { Bot, Check, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
-import { BodyEditor } from "../components/editor";
+import { TaskText, Todos } from "../components/todos";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ago, api, cn, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
 import { agentOnIt, dueLabel, repeatLabel } from "../quickadd";
@@ -293,8 +293,11 @@ function TaskView({ id }: { id: string }) {
       <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 
-      {/* -mx-2/px-2 cancel out: the frame lines up with the details' own hover area. */}
-      <div className={cn("-mx-2 mb-6 rounded-lg px-2", agentOnIt(t, here) && "agent-border")}><BodyEditor key={t.id} t={t} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
+      {/* A task is its text and its todos. -mx-2/px-2 line the frame up with the rows' hover areas. */}
+      <div className={cn("-mx-2 mb-2 rounded-lg px-2", agentOnIt(t, here) && "agent-border")}>
+        <div className="mb-3"><TaskText key={t.id} id={t.id} body={t.body ?? ""} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
+        <Todos key={`todos-${t.id}`} task={t.id} todos={t.todos ?? []} disabled={locked} />
+      </div>
 
       {/* Dependencies are usually set by agents over the API; people see them and can drop them. */}
       {(t.blocked_by.length > 0 || t.blocks.length > 0) && (
@@ -331,7 +334,7 @@ function TaskView({ id }: { id: string }) {
         <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-2xl sm:max-w-lg">
           <DialogTitle>Activity</DialogTitle>
           <DialogDescription>Created by {t.created_by?.name ?? "someone"}{t.on_behalf_of ? ` for ${t.on_behalf_of.name}` : ""} · {ago(t.created_at)}</DialogDescription>
-          <div>{activity.map((e) => <EventLine key={e.id} e={e} showTask={false} onRestore={locked ? undefined : (body) => update.mutate({ body, body_mode: "replace", confirm: true }, { onSuccess: () => { toast("Previous version restored"); setActivityOpen(false); } })} />)}</div>
+          <div>{activity.map((e) => <EventLine key={e.id} e={e} showTask={false} restoreKind="updated" onRestore={locked ? undefined : (body) => update.mutate({ body, body_mode: "replace", confirm: true }, { onSuccess: () => { toast("Previous version restored"); setActivityOpen(false); } })} />)}</div>
         </DialogContent>
       </Dialog>
 

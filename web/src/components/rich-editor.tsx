@@ -42,7 +42,7 @@ export default function RichEditor({ body, draft, changed, placeholder, caret, o
     extensions: richExtensions(placeholder),
     content: draft ?? body,
     editorProps: {
-      attributes: { class: "md min-h-24 outline-none", role: "textbox", "aria-multiline": "true", "aria-label": "Details" },
+      attributes: { class: "md min-h-24 outline-none", role: "textbox", "aria-multiline": "true", "aria-label": "Note" },
       // These keys are the editor's alone: the window-level ones (⌘K menu, Esc closing the panel) stand down.
       handleKeyDown: (_view, e) => {
         const cmd = e.metaKey || e.ctrlKey;

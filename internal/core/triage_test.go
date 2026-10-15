@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +18,9 @@ import (
 	"github.com/joalavedra/handoff/internal/testutil"
 )
 
+// lastModelRequest is the body of the last request any fakeModel got.
+var lastModelRequest atomic.Value
+
 // fakeModel is an OpenAI-compatible endpoint that answers every request with reply.
 // during, if set, runs while the "model" is thinking, to simulate concurrent edits.
 func fakeModel(t *testing.T, status int, reply map[string]any, gotAuth *atomic.Value, during ...func()) *httptest.Server {
@@ -27,6 +31,8 @@ func fakeModel(t *testing.T, status int, reply map[string]any, gotAuth *atomic.V
 			return
 		}
 		gotAuth.Store(r.Header.Get("Authorization"))
+		body, _ := io.ReadAll(r.Body)
+		lastModelRequest.Store(string(body))
 		for _, f := range during {
 			f()
 		}
@@ -75,7 +81,7 @@ func TestTriage(t *testing.T) {
 	var auth atomic.Value
 	srv := fakeModel(t, http.StatusOK, map[string]any{
 		"title": "Edit the episode 14 intro", "due": "2026-10-16", "priority": 0, "project": "Podcast",
-		"labels": []string{"audio"}, "assignee": "Acme Bot", "plan": "Done when the intro is under 30s.\n- Trim\n- Export",
+		"labels": []string{"audio"}, "assignee": "Acme Bot", "text": "Done when the intro is under 30s.", "todos": []string{"Trim the intro", " ", "Export: by Thursday"},
 	}, &auth)
 	e := triageEnv(t, srv)
 	admin := e.org(t, "tri")
@@ -116,12 +122,13 @@ func TestTriage(t *testing.T) {
 		got.Project != "Podcast" || !slices.Equal(got.Labels, []string{"audio"}) || got.Assignee == nil || got.Assignee.ID != admin.Member.ID {
 		t.Fatalf("triaged task: %+v (error %q)", got, got.TriageError)
 	}
-	// The plan is the task's document; the chat gets a one-line note.
-	if !strings.HasPrefix(got.Body, "Done when the intro") {
-		t.Fatalf("plan not in the body: %q", got.Body)
+	// A task is text and todos; the chat gets a one-line note.
+	if got.Body != "Done when the intro is under 30s." || len(got.Todos) != 2 || got.Todos[0].Text != "Trim the intro" ||
+		got.Todos[1].Text != "Export: by Thursday" || got.Todos[0].Done || got.TodoProgress == nil || got.TodoProgress.Total != 2 {
+		t.Fatalf("text and todos: %q %+v %+v", got.Body, got.Todos, got.TodoProgress)
 	}
 	if len(d.Comments) != 1 || d.Comments[0].Author.ID != bot.Member.ID ||
-		d.Comments[0].Body != "I tidied the title, set it due Fri, Oct 16, moved it to Podcast, labelled it “audio” and wrote a plan in the details. Mention me here if you want changes." {
+		d.Comments[0].Body != "I tidied the title, set it due Fri, Oct 16, moved it to Podcast, labelled it “audio”, added a line on what it's about and broke it into 2 todos. Mention me here if you want changes." {
 		t.Fatalf("triage note: %+v", d.Comments)
 	}
 	if !strings.HasPrefix(got.AgentNote, "I tidied the title") {
@@ -310,8 +317,8 @@ func TestTriageDoesTheWork(t *testing.T) {
 	var auth atomic.Value
 	srv := fakeModel(t, http.StatusOK, map[string]any{
 		"title": "Compare Pixel 8 and Pixel 9", "labels": []string{"research"},
-		"work": "Here's how they compare.\n\n| | Pixel 8 | Pixel 9 |\n|---|---|---|\n| Chip | Tensor G3 | Tensor G4 |",
-		"plan": "should be ignored when there is work",
+		"work":  "Here's how they compare.\n\n| | Pixel 8 | Pixel 9 |\n|---|---|---|\n| Chip | Tensor G3 | Tensor G4 |",
+		"todos": []string{"Compare specs", "Pick one", "Order: by Friday"},
 	}, &auth)
 	e := triageEnv(t, srv)
 	admin := e.org(t, "triwork")
@@ -319,12 +326,24 @@ func TestTriageDoesTheWork(t *testing.T) {
 	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: srv.URL + "/v1", Model: "m", Credential: "k"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := e.s.CreateNote(e.ctx, admin, core.CreateNoteIn{Project: "Inbox", Title: "Phone budget", Body: "Under 800 euros."}); err != nil {
+		t.Fatal(err)
+	}
 	task := e.create(t, admin, core.NewTask{Title: "hey can u compare pixel 8 vs pixel 9"})[0]
 	d := waitTriage(t, e, admin, task.ID)
-	if !strings.Contains(d.Task.Body, "| Chip | Tensor G3 | Tensor G4 |") || strings.Contains(d.Task.Body, "ignored") {
-		t.Fatalf("work not in the body: %q", d.Task.Body)
+	// The task stays text and todos; what triage found is in its chat message, and no note is made.
+	if d.Task.Body != "" || len(d.Task.Todos) != 3 || d.Task.Todos[2].Text != "Order: by Friday" {
+		t.Fatalf("task: %q %+v", d.Task.Body, d.Task.Todos)
 	}
-	if len(d.Comments) != 1 || !strings.Contains(d.Comments[0].Body, "did it: the result is in the details") {
-		t.Fatalf("note: %+v", d.Comments)
+	if len(d.Comments) != 1 || !strings.HasPrefix(d.Comments[0].Body, "I tidied the title, labelled it “research”, broke it into 3 todos and looked into it. Here's what I found:\n\nHere's how they compare.") ||
+		!strings.Contains(d.Comments[0].Body, "| Chip | Tensor G3 | Tensor G4 |") {
+		t.Fatalf("triage comment: %+v", d.Comments)
+	}
+	if l, err := e.s.ListNotes(e.ctx, admin, core.ListNotesIn{}); err != nil || len(l.Notes) != 1 {
+		t.Fatalf("triage made a note: %+v %v", l.Notes, err)
+	}
+	// The project's notes went to the model as context.
+	if req, _ := lastModelRequest.Load().(string); !strings.Contains(req, "Notes in the Inbox project") || !strings.Contains(req, "Phone budget") || !strings.Contains(req, "Under 800 euros") {
+		t.Fatalf("project notes not in the triage request: %s", req)
 	}
 }
