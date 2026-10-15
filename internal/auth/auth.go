@@ -87,18 +87,23 @@ func (s *Store) DeleteSession(ctx context.Context, orgID, tok string) error {
 
 // ---- email login links ----
 
-func (s *Store) CreateLoginToken(ctx context.Context, orgID, email, name, next string) (string, error) {
+// CreateLoginToken caps emailed links per address; Google sign-ins (emailed false) are already verified, so they skip the cap.
+func (s *Store) CreateLoginToken(ctx context.Context, orgID, email, name, next string, emailed bool) (string, error) {
 	tok := NewToken("")
 	err := s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM login_tokens WHERE expires_at < now()`); err != nil {
 			return err
 		}
-		var n int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM login_tokens WHERE email = $1`, strings.ToLower(email)).Scan(&n); err != nil {
-			return err
-		}
-		if n >= loginLinksPerEmail {
-			return ErrBusy
+		if emailed {
+			// The lock makes count-then-insert atomic per address across requests and processes.
+			var n int
+			if err := tx.QueryRow(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('login:' || $1, 0)), (SELECT count(*) FROM login_tokens WHERE email = $1 AND used_at IS NULL)`,
+				strings.ToLower(email)).Scan(nil, &n); err != nil {
+				return err
+			}
+			if n >= loginLinksPerEmail {
+				return ErrBusy
+			}
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO login_tokens (token_hash, org_id, email, name, next_path, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 			Hash(tok), orgID, strings.ToLower(email), name, next, time.Now().Add(LoginTokenTTL))
@@ -193,7 +198,7 @@ func (s *Store) SaveRequest(ctx context.Context, orgID string, r *Request) error
 			return err
 		}
 		var n int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM oauth_requests`).Scan(&n); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('oauth:' || $1, 0)), (SELECT count(*) FROM oauth_requests)`, orgID).Scan(nil, &n); err != nil {
 			return err
 		}
 		if n >= oauthRequestsPerOrg {

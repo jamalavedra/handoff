@@ -31,7 +31,7 @@ func safeNext(next string) string {
 
 // sendLoginLink emails a one-time link; in dev mode the link is also returned.
 func (s *Server) sendLoginLink(r *http.Request, org *core.Org, email, name, next string) (string, error) {
-	tok, err := s.Auth.CreateLoginToken(r.Context(), org.ID, email, name, safeNext(next))
+	tok, err := s.Auth.CreateLoginToken(r.Context(), org.ID, email, name, safeNext(next), true)
 	if err != nil {
 		return "", err
 	}
@@ -220,7 +220,7 @@ func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.Cfg.OrgURL(org.Slug)+"/login?error=denied", http.StatusSeeOther)
 		return
 	}
-	tok, err := s.Auth.CreateLoginToken(r.Context(), org.ID, email, name, parts[1])
+	tok, err := s.Auth.CreateLoginToken(r.Context(), org.ID, email, name, parts[1], false)
 	if err != nil {
 		fail("internal error", err)
 		return
