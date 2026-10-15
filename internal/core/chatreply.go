@@ -132,6 +132,8 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 	var agentID, title, body, project string
 	type line struct {
 		author, name, kind, body string
+		replyAuthor, replyName   string // the message it replies to, if any
+		quote                    string // the part of it replied to, or its start
 	}
 	var chat []line
 	err = s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
@@ -151,8 +153,12 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 			return pgx.ErrNoRows
 		}
 		// The conversation up to and including the message that asked.
-		rows, err := tx.Query(ctx, `SELECT c.author_id::text, m.name, m.kind, c.body FROM comments c
+		rows, err := tx.Query(ctx, `SELECT c.author_id::text, m.name, m.kind, c.body,
+				coalesce(rc.author_id::text, ''), coalesce(rm.name, ''), coalesce(c.quote, left(rc.body, 300), '')
+			FROM comments c
 			JOIN members m ON m.org_id = c.org_id AND m.id = c.author_id
+			LEFT JOIN comments rc ON rc.id = c.reply_to
+			LEFT JOIN members rm ON rm.org_id = rc.org_id AND rm.id = rc.author_id
 			WHERE c.task_id = $1 AND ($2 = '' OR c.created_at <= (SELECT created_at FROM comments WHERE id::text = $2))
 			ORDER BY c.created_at DESC LIMIT 20`, task, comment)
 		if err != nil {
@@ -160,7 +166,7 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		}
 		chat, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (line, error) {
 			var l line
-			return l, r.Scan(&l.author, &l.name, &l.kind, &l.body)
+			return l, r.Scan(&l.author, &l.name, &l.kind, &l.body, &l.replyAuthor, &l.replyName, &l.quote)
 		})
 		return err
 	})
@@ -178,7 +184,7 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		title + "\n\n" + clipBytes(strings.TrimSpace(body), 6500) + "\n>>>"}}
 	for i := len(chat) - 1; i >= 0; i-- {
 		l := chat[i]
-		role, text := "user", l.name+": "+l.body
+		role, text := "user", l.name+": "+replyPrefix(l.replyAuthor, l.replyName, l.quote, agentID)+l.body
 		if l.author == agentID {
 			role, text = "assistant", l.body
 		}
@@ -284,7 +290,7 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		if !finished {
 			out.asked = nil // no question was posted: nothing to wait on
 		}
-		extra := commentExtra{lookups: lookups(out.Steps), activity: activity(out.Steps), options: out.asked}
+		extra := commentExtra{lookups: lookups(out.Steps), activity: activity(out.Steps), options: out.asked, blocks: out.Blocks}
 		if finished && out.asked == nil { // a question it handed back is announced as that, not as done
 			extra.done = person.Member
 		}
@@ -307,6 +313,18 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 		}
 	}
 	finish()
+}
+
+// replyPrefix says which message, and which part of it, a person's message replies to, so the agent
+// knows exactly what is meant: (replying to you: “…”).
+func replyPrefix(author, name, quote, agentID string) string {
+	if author == "" {
+		return ""
+	}
+	if author == agentID {
+		name = "you"
+	}
+	return "(replying to " + name + ": “" + strings.Join(strings.Fields(quote), " ") + "”) "
 }
 
 // agentReact sets or clears the agent's own reaction on a comment. Unlike React it isn't a toggle, so a

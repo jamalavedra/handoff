@@ -87,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	org.HandleFunc("GET /api/me", s.me)
 	org.HandleFunc("POST /api/tools/{name}", s.callTool)
 	org.HandleFunc("GET /api/live", s.liveStream)
+	org.HandleFunc("GET /api/image", s.blockImage)
 	org.HandleFunc("GET /api/oauth/request/{id}", s.oauthRequest)
 	org.HandleFunc("POST /api/oauth/consent", s.consent)
 	org.HandleFunc("GET /api/agents/{id}/keys", s.listKeys)
@@ -471,4 +472,22 @@ func clientIP(r *http.Request) string {
 		ip = ip[:i]
 	}
 	return ip
+}
+
+// blockImage serves a picture an agent's block shows, fetched by the server so viewers never contact
+// the site it comes from. Only signed addresses are served (see core.ProxyImage).
+func (s *Server) blockImage(w http.ResponseWriter, r *http.Request) {
+	if p := s.apiPrincipal(w, r); p == nil {
+		return
+	}
+	ct, b, err := s.Svc.ProxyImage(r.Context(), r.URL.Query().Get("u"), r.URL.Query().Get("s"))
+	if err != nil {
+		writeCoreErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(b)
 }

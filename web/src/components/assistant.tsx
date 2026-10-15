@@ -8,6 +8,7 @@ import { Markdown } from "./markdown";
 import { Avatar } from "./app";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TaskChat } from "./task-chat";
+import { Blocks, type Block } from "../blocks";
 import { ActivityTrail } from "./activity-trail";
 import { useAgentActivity } from "../agent-activity";
 import { fromSteps } from "../activity";
@@ -18,7 +19,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 // makes changes as that agent, for the person asking. The conversation lives in this tab only.
 
 type Status = { enabled: boolean; agent?: MemberRef };
-type Reply = { reply: string; steps: Step[]; agent?: MemberRef; changed: boolean; error?: string };
+type Reply = { reply: string; steps: Step[]; blocks?: Block[]; agent?: MemberRef; changed: boolean; error?: string };
 
 // The panel shows one of two conversations: the open task's chat with the team and its agents
 // ("task"), or this person's private assistant across the workspace ("global").
@@ -299,7 +300,7 @@ function AssistantChat({ me, onClose, drawer, page, active }: { me: Me; onClose:
       if (v.id !== chatId.current) return; // a new chat started meanwhile
       if (r.changed) qc.invalidateQueries();
       // A turn that stopped early still shows what it did; Try again resumes it on the server.
-      setMsgs((m) => [...m, r.error ? { role: "assistant", content: r.error, steps: r.steps, error: true } : { role: "assistant", content: r.reply, steps: r.steps }]);
+      setMsgs((m) => [...m, r.error ? { role: "assistant", content: r.error, steps: r.steps, error: true } : { role: "assistant", content: r.reply, steps: r.steps, blocks: r.blocks }]);
     },
     onError: (e, v) => {
       if (v.id !== chatId.current) return;
@@ -479,6 +480,7 @@ function AssistantMessage({ m, agent, onNavigate }: { m: Msg; agent?: MemberRef;
         ) : (
           <Markdown text={m.content} className="text-[15px] leading-relaxed text-foreground/90 sm:text-sm" />
         )}
+        <Blocks blocks={m.blocks} />
         {m.steps && m.steps.length > 0 && <ActivityTrail steps={fromSteps(m.steps)} onNavigate={onNavigate} className="mt-1.5" />}
       </div>
     </div>
