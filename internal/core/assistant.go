@@ -481,7 +481,7 @@ func (s *Service) assistantComplete(ctx context.Context, st *triageSettings, cre
 type aSearchIn struct {
 	Query       string   `json:"query,omitempty" jsonschema:"text to find in title or body, or a task id"`
 	Project     string   `json:"project,omitempty" jsonschema:"project name"`
-	Status      []string `json:"status,omitempty" jsonschema:"open, in_progress, blocked, done or cancelled; default excludes done and cancelled"`
+	Status      []string `json:"status,omitempty" jsonschema:"open, in_progress, done or archived; default excludes done and archived"`
 	Assignee    string   `json:"assignee,omitempty" jsonschema:"'me', 'unassigned', a member name or id"`
 	Label       string   `json:"label,omitempty"`
 	IncludeDone bool     `json:"include_done,omitempty"`
@@ -516,7 +516,7 @@ type aUpdateIn struct {
 	ID       string   `json:"id" jsonschema:"task id"`
 	Title    *string  `json:"title,omitempty"`
 	Body     string   `json:"body,omitempty" jsonschema:"the task's text, which replaces the current one: a line or two of plain text. Work goes in the task's note, steps in todos. The previous version is kept in the task's history."`
-	Status   string   `json:"status,omitempty" jsonschema:"open, in_progress or blocked; use close_task to finish"`
+	Status   string   `json:"status,omitempty" jsonschema:"open or in_progress; use close_task to finish or archive"`
 	Priority *int     `json:"priority,omitempty" jsonschema:"0 (urgent) to 4 (someday)"`
 	Assignee *string  `json:"assignee,omitempty" jsonschema:"'me', a member name or id; empty string unassigns"`
 	Due      *string  `json:"due,omitempty" jsonschema:"YYYY-MM-DD; empty string clears"`
@@ -526,7 +526,7 @@ type aUpdateIn struct {
 
 type aCloseIn struct {
 	ID     string `json:"id" jsonschema:"task id"`
-	Status string `json:"status,omitempty" jsonschema:"done (default) or cancelled"`
+	Status string `json:"status,omitempty" jsonschema:"done (default) or archived"`
 	Reason string `json:"reason,omitempty" jsonschema:"short note on the outcome"`
 }
 
@@ -543,13 +543,13 @@ type assistantTool struct {
 }
 
 var assistantTools = []assistantTool{
-	{name: "search_tasks", desc: "Find tasks by text, project, status, assignee or label. Excludes done and cancelled tasks unless asked.", schema: schemaOf[aSearchIn](), run: (*assistantRun).search},
+	{name: "search_tasks", desc: "Find tasks by text, project, status, assignee or label. Excludes done and archived tasks unless asked.", schema: schemaOf[aSearchIn](), run: (*assistantRun).search},
 	{name: "get_task", desc: "One task with its text, todos (ids, done, results) and recent comments.", schema: schemaOf[aTaskIn](), run: (*assistantRun).getTask},
 	{name: "list_projects", desc: "Projects the person can see, with open task counts.", schema: schemaOf[struct{}](), run: (*assistantRun).listProjects},
 	{name: "list_members", desc: "People and agents in the workspace, for assigning tasks.", schema: schemaOf[struct{}](), run: (*assistantRun).listMembers},
 	{name: "create_tasks", desc: "Create 1 to 10 tasks.", schema: schemaOf[aCreateIn](), write: true, run: (*assistantRun).createTasks},
 	{name: "update_task", desc: "Change a task's title, text, status, priority, assignee, due date, labels or project.", schema: schemaOf[aUpdateIn](), write: true, run: (*assistantRun).updateTask},
-	{name: "close_task", desc: "Mark a task done or cancelled.", schema: schemaOf[aCloseIn](), write: true, run: (*assistantRun).closeTask},
+	{name: "close_task", desc: "Mark a task done, or archive it when it won't be done.", schema: schemaOf[aCloseIn](), write: true, run: (*assistantRun).closeTask},
 	{name: "comment", desc: "Add a comment to a task: conversation with the team, not deliverables (those go in the task's note).", schema: schemaOf[aCommentIn](), write: true, run: (*assistantRun).comment},
 	{name: "add_todos", desc: "Add steps to a task's todos, in order.", schema: schemaOf[aAddTodosIn](), write: true, run: (*assistantRun).addTodos},
 	{name: "update_todo", desc: "Tick or untick a todo, rename it, or set its result: one line on what you found or decided for the step.", schema: schemaOf[aTodoIn](), write: true, run: (*assistantRun).updateTodo},
@@ -961,7 +961,7 @@ func (a *assistantRun) closeTask(ctx context.Context, raw json.RawMessage) (any,
 	}
 	verb := "Completed"
 	if res.Task.Status == "cancelled" {
-		verb = "Cancelled"
+		verb = "Archived"
 	}
 	return map[string]any{"task": brief(res.Task)}, &AssistantStep{Summary: verb + " “" + clip(res.Task.Title, 60) + "”", Tasks: refs(res.Task)}, nil
 }

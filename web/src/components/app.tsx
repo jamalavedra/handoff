@@ -14,7 +14,6 @@ export function Badge({ className, ...props }: React.HTMLAttributes<HTMLSpanElem
 const statusColor: Record<Task["status"], string> = {
   open: "border-input bg-card text-foreground/80",
   in_progress: "border-blue-200 bg-blue-50 text-blue-700",
-  blocked: "border-amber-200 bg-amber-50 text-amber-700",
   done: "border-green-200 bg-green-50 text-green-700",
   cancelled: "border-border bg-accent text-muted-foreground",
 };
@@ -105,6 +104,6 @@ export function StatusCircle({ t, small, interactive }: { t: Pick<Task, "status"
   if (t.status === "done") return <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground", size)}><Check className={small ? "size-2.5" : "size-3.5"} strokeWidth={3} /></span>;
   if (t.status === "cancelled") return <span className={cn("flex shrink-0 items-center justify-center rounded-full border-input text-muted-foreground/70", size, ring)}><X className={small ? "size-2" : "size-3"} strokeWidth={3} /></span>;
   if (working) return <svg viewBox="0 0 20 20" className={cn("shrink-0 text-amber-500", size)} aria-hidden><circle cx="10" cy="10" r="8.25" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M10 3.5a6.5 6.5 0 0 0 0 13z" fill="currentColor" /></svg>;
-  const waiting = t.status === "blocked" || (!t.ready && t.blocked_by.length > 0);
+  const waiting = !t.ready && t.blocked_by.length > 0;
   return <span className={cn("shrink-0 rounded-full transition-colors", size, ring, waiting ? "border-dashed border-input" : "border-foreground/40", !waiting && interactive && "hover:border-foreground hover:bg-accent")} />;
 }

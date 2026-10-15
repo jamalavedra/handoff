@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { Bot, Check, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X, XCircle } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, Check, MessageCircleQuestion, History, Link2, Repeat as RepeatIcon, ShieldQuestion, CalendarDays, ChevronDown, ChevronLeft, Flag, Folder, Lock, MoreHorizontal, RotateCcw, Trash2, User, X } from "lucide-react";
 import { TaskLink } from "../components/tasklink";
 import { TaskText, Todos } from "../components/todos";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -14,13 +14,13 @@ import { completedText, markLocal, undoable, undoClose } from "../components/fee
 import { toast } from "sonner";
 import { ChatPreview, names, taskQuery } from "../components/task-chat";
 import { useMe } from "../main";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAssistant, useTaskChatShown } from "../components/assistant";
 
 
 const statusTone: Record<Task["status"], string> = {
   open: "bg-accent text-foreground/80",
   in_progress: "bg-amber-50 text-amber-800",
-  blocked: "bg-red-50 text-red-700",
   done: "bg-green-50 text-green-700",
   cancelled: "bg-accent text-muted-foreground",
 };
@@ -38,6 +38,38 @@ function Pill({ icon: Icon, children, className, label, select }: { icon?: typeo
       {select && <span className="sr-only">{label}</span>}
       {select}
     </span>
+  );
+}
+
+// StatusSwitch is the status button: one click opens Open · In progress · Done, one more moves it.
+// Archived isn't one of them (it's in the ⋯ menu); picking one here brings an archived task back.
+function StatusSwitch({ status, disabled, onPick }: { status: Task["status"]; disabled: boolean; onPick: (s: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const pill = (
+    <span className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium", statusTone[status])}>
+      {statusLabel[status]}{!disabled && <ChevronDown className="size-3 opacity-50" />}
+    </span>
+  );
+  if (disabled) return pill;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button" aria-label={`Status: ${statusLabel[status]}`} className="rounded-full outline-none hover:brightness-95 focus-visible:ring-2 focus-visible:ring-foreground/40">{pill}</button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="flex w-auto gap-1 rounded-full p-1">
+        {(["open", "in_progress", "done"] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            aria-pressed={status === s}
+            onClick={() => { setOpen(false); if (s !== status) onPick(s); }}
+            className={cn("h-8 rounded-full px-3 text-[13px] font-medium transition-colors", status === s ? statusTone[s] + " ring-1 ring-foreground/15" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
+          >
+            {statusLabel[s]}
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -133,7 +165,7 @@ function TaskView({ id }: { id: string }) {
   const update = useMutation({ mutationFn: ({ id: on = id, ...patch }: { id?: string } & Record<string, unknown>) => { markLocal(on); return api.tool("update_task", { id: on, ...patch }); }, onSuccess: invalidate });
   const close = useMutation({
     mutationFn: (status: string) => { markLocal(id); return api.tool<{ next?: Task }>("close_task", { id, status }); },
-    onSuccess: (r, status) => { invalidate(); undoable(qc, completedText(status === "done" ? "Task completed" : "Task cancelled", r.next), () => undoClose(id, r.next)); },
+    onSuccess: (r, status) => { invalidate(); undoable(qc, completedText(status === "done" ? "Task completed" : "Task archived", r.next), () => undoClose(id, r.next)); },
   });
   const trash = useMutation({
     mutationFn: () => { markLocal(id); return api.tool("trash_task", { id }); },
@@ -225,7 +257,9 @@ function TaskView({ id }: { id: string }) {
                   <div role="separator" className="my-1 h-px bg-border" />
                 </>
               )}
-              {!closed && !locked && <MenuItem icon={XCircle} onClick={() => { close.mutate("cancelled"); done(); }}>Cancel task</MenuItem>}
+              {!locked && (t.status === "cancelled"
+                ? <MenuItem icon={ArchiveRestore} onClick={() => { setStatus("open"); done(); }}>Unarchive</MenuItem>
+                : <MenuItem icon={Archive} onClick={() => { close.mutate("cancelled"); done(); }}>Archive</MenuItem>)}
               {locked ? <MenuItem icon={RotateCcw} onClick={() => { restore.mutate(); done(); }}>Restore</MenuItem> : <MenuItem icon={Trash2} danger onClick={() => { trash.mutate(); done(); }}>Move to trash</MenuItem>}
             </>
           )}
@@ -234,11 +268,7 @@ function TaskView({ id }: { id: string }) {
 
       {/* One scrollable row on phones so the title stays near the top; wrapped on wider screens. */}
       <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
-        <Pill label="Status" className={statusTone[t.status]} select={!locked && (
-          <select className={overlay} value={t.status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-            {(["open", "in_progress", "blocked", "done", "cancelled"] as const).map((s) => <option key={s} value={s}>{statusLabel[s]}</option>)}
-          </select>
-        )}>{statusLabel[t.status]}</Pill>
+        <StatusSwitch status={t.status} disabled={locked} onPick={setStatus} />
         <Pill label="Due" icon={CalendarDays} className={cn(due?.tone === "overdue" && !closed && "bg-red-50 text-red-700", due?.tone === "today" && !closed && "bg-blue-50 text-blue-700")} select={!locked && (
           <input ref={dueRef} type="date" className={overlay} value={t.due ?? ""} onClick={() => { try { dueRef.current?.showPicker(); } catch { /* not supported */ } }} onChange={(e) => update.mutate({ due: e.target.value })} aria-label="Due" />
         )}>{due ? due.text : "No date"}</Pill>

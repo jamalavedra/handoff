@@ -41,7 +41,8 @@ export type Task = {
   id: string;
   title: string;
   body?: string;
-  status: "open" | "in_progress" | "blocked" | "done" | "cancelled";
+  // cancelled is shown as Archived: out of the lists, not a step of the work.
+  status: "open" | "in_progress" | "done" | "cancelled";
   priority: number;
   project: string;
   project_id: string;
@@ -153,9 +154,8 @@ export function ago(iso?: string) {
 export const statusLabel: Record<Task["status"], string> = {
   open: "Open",
   in_progress: "In progress",
-  blocked: "Blocked",
   done: "Done",
-  cancelled: "Cancelled",
+  cancelled: "Archived",
 };
 
 export const projectName = (p: { name: string; emoji?: string }) => (p.emoji ? `${p.emoji} ${p.name}` : p.name);
