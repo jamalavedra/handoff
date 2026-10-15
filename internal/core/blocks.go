@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -100,7 +101,7 @@ type imageOut struct {
 var imagesPlugin = blockPlugin{
 	tool:   "show_images",
 	kind:   "images",
-	desc:   "Show pictures under your message: give the pages you found (search results about a product, place, costume…) and each page's own main picture is shown with a link to it. Use it when seeing helps choose.",
+	desc:   "Show pictures under your message: give pages you found, one per item, each a page about that one item (a product page, a place's page), and each page's own main picture is shown with a link to it. A list article has one picture for the whole list, so don't use it for several items. Use it when seeing helps choose.",
 	schema: schemaOf[imagesIn](),
 	resolve: func(ctx context.Context, s *Service, raw json.RawMessage) (any, string, error) {
 		var in imagesIn
@@ -126,9 +127,10 @@ var imagesPlugin = blockPlugin{
 			}()
 		}
 		wg.Wait()
+		// One picture once: two captions on the same page's picture would mislabel one of them.
 		var found []imageOut
 		for _, o := range out {
-			if o.Src != "" {
+			if o.Src != "" && !slices.ContainsFunc(found, func(f imageOut) bool { return f.Src == o.Src || f.Page == o.Page }) {
 				found = append(found, o)
 			}
 		}
