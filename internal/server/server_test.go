@@ -145,9 +145,6 @@ func TestOAuthAndMCP(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("token: %d %v", code, tok)
 	}
-	if code, _ := f.do("POST", acme+"/oauth/token", form.Encode(), ct); code != 400 {
-		t.Fatal("code reused")
-	}
 	access := tok["access_token"].(string)
 
 	// The token is useless on another workspace.
@@ -196,11 +193,30 @@ func TestOAuthAndMCP(t *testing.T) {
 	}
 	// Refresh rotates.
 	rf := url.Values{"grant_type": {"refresh_token"}, "client_id": {clientID}, "refresh_token": {tok["refresh_token"].(string)}}
-	if code, _ := f.do("POST", acme+"/oauth/token", rf.Encode(), ct); code != 200 {
+	code, refreshed := f.do("POST", acme+"/oauth/token", rf.Encode(), ct)
+	if code != 200 {
 		t.Fatalf("refresh: %d", code)
 	}
 	if code, _ := f.do("POST", acme+"/oauth/token", rf.Encode(), ct); code != 400 {
 		t.Fatal("refresh token reused")
+	}
+	mcpWith := func(tok string) int {
+		code, _ := f.do("POST", acme+"/mcp", "{}", map[string]string{"Content-Type": "application/json", "Authorization": "Bearer " + tok})
+		return code
+	}
+	if mcpWith(refreshed["access_token"].(string)) == 401 {
+		t.Fatal("refreshed token refused")
+	}
+	// Replaying the used code means it leaked: everything it led to stops working.
+	if code, _ := f.do("POST", acme+"/oauth/token", form.Encode(), ct); code != 400 {
+		t.Fatal("code reused")
+	}
+	if code := mcpWith(refreshed["access_token"].(string)); code != 401 {
+		t.Fatalf("token still works after the code was replayed: %d", code)
+	}
+	nf := url.Values{"grant_type": {"refresh_token"}, "client_id": {clientID}, "refresh_token": {refreshed["refresh_token"].(string)}}
+	if code, _ := f.do("POST", acme+"/oauth/token", nf.Encode(), ct); code != 400 {
+		t.Fatalf("refresh still works after the code was replayed: %d", code)
 	}
 }
 
