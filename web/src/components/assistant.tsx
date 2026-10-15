@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useMedia } from "@/hooks/use-mobile";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { AlertCircle, ArrowUp, CalendarDays, Check, ChevronDown, ChevronRight, FileText, FolderKanban, ListPlus, MessageSquare, RotateCcw, Search, Sparkles, SquarePen, X } from "lucide-react";
@@ -35,16 +36,6 @@ export const useAssistant = () => useContext(AssistantContext);
 
 const desktop = window.matchMedia("(min-width: 768px)");
 const roomy = window.matchMedia("(min-width: 1280px)");
-
-function useMedia(mq: MediaQueryList) {
-  return useSyncExternalStore(
-    (l) => {
-      mq.addEventListener("change", l);
-      return () => mq.removeEventListener("change", l);
-    },
-    () => mq.matches,
-  );
-}
 
 // From the sidebar breakpoint up the assistant is a side panel; below it, a drawer.
 const useDesktop = () => useMedia(desktop);

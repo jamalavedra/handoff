@@ -1,6 +1,6 @@
 import { lazy, Suspense, useRef, useState } from "react";
 import { toast } from "sonner";
-import { cn } from "../lib";
+import { cn, localDrafts } from "../lib";
 import { Markdown } from "./markdown";
 import type { Caret } from "./rich-editor";
 
@@ -12,12 +12,7 @@ const readStyle = "text-[15px] leading-relaxed text-foreground/80 sm:text-sm";
 
 // A draft whose save failed after its editor was gone waits here, per document, until it's restored
 // and saved or discarded.
-const draftKey = (id: string) => `handoff-draft:${id}`;
-const drafts = {
-  get: (id: string) => { try { return localStorage.getItem(draftKey(id)); } catch { return null; } },
-  set: (id: string, md: string) => { try { localStorage.setItem(draftKey(id), md); } catch { /* private mode */ } },
-  drop: (id: string) => { try { localStorage.removeItem(draftKey(id)); } catch { /* private mode */ } },
-};
+const drafts = localDrafts("handoff-draft:");
 
 // DocEditor shows a markdown document (a note: agents write their longer work here) and edits it in
 // place: click into the text and it becomes a rich editor at that spot, saved back as markdown.

@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/joalavedra/handoff/internal/auth"
 	"github.com/joalavedra/handoff/internal/config"
 )
 
@@ -43,12 +43,6 @@ type oauthSecret struct {
 	ClientID      string    `json:"client_id"`
 	TokenEndpoint string    `json:"token_endpoint"`
 	Resource      string    `json:"resource"`
-}
-
-func randomToken(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // callbackBase checks the address the admin is on: it must be this workspace's host (any port), so a
@@ -177,7 +171,7 @@ func (s *Service) StartConnectionOAuth(ctx context.Context, p *Principal, in Sta
 		return out, err
 	}
 	redirect := base + "/oauth/mcp/callback"
-	verifier, state := randomToken(32), randomToken(24)
+	verifier, state := auth.NewToken(""), auth.NewToken("")
 	if h := strings.TrimPrefix(base, "http://"); h != base && strings.HasSuffix(strings.Split(h, ":")[0], ".localhost") {
 		// Local development: services accept http only for plain localhost, so the sign-in comes back
 		// there and LoopbackCallback forwards it to the workspace named at the start of the state.

@@ -170,3 +170,10 @@ export type Notification = {
   read: boolean;
   at: string;
 };
+
+// localDrafts keeps unsaved text per document in localStorage, so a failed or interrupted save never loses it.
+export const localDrafts = (prefix: string) => ({
+  get: (id: string) => { try { return localStorage.getItem(prefix + id); } catch { return null; } },
+  set: (id: string, text: string) => { try { localStorage.setItem(prefix + id, text); } catch { /* private mode */ } },
+  drop: (id: string) => { try { localStorage.removeItem(prefix + id); } catch { /* private mode */ } },
+});

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, GripVertical, Plus, X } from "lucide-react";
-import { ago, api, cn, type Task } from "../lib";
+import { ago, api, cn, localDrafts, type Task } from "../lib";
 import { linkify, moveTodo, oneLine, patchTodo, type Todo } from "../todos";
 import { markLocal } from "./feedback";
 import { ErrorText } from "./app";
@@ -12,12 +12,7 @@ const textStyle = "text-[15px] leading-relaxed text-foreground/80 sm:text-sm";
 
 // An edit whose save hasn't gone through waits here, per task, so leaving the page mid-save (or a
 // failed save after it) never loses it: the task offers it back next time.
-const draftKey = (id: string) => `handoff-text-draft:${id}`;
-const drafts = {
-  get: (id: string) => { try { return localStorage.getItem(draftKey(id)); } catch { return null; } },
-  set: (id: string, text: string) => { try { localStorage.setItem(draftKey(id), text); } catch { /* private mode */ } },
-  drop: (id: string) => { try { localStorage.removeItem(draftKey(id)); } catch { /* private mode */ } },
-};
+const drafts = localDrafts("handoff-text-draft:");
 
 // TaskText is the task's own text: plain, a line or two. Click to edit; it saves on leaving the field
 // or ⌘/Ctrl+Enter, and Esc puts it back. Addresses in it are links.
