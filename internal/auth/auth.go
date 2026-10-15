@@ -229,6 +229,7 @@ type Tokens struct {
 // ExchangeCode redeems a single-use code. Replaying a used code revokes the tokens it minted.
 func (s *Store) ExchangeCode(ctx context.Context, orgID, clientID, code, redirectURI, verifier string) (*Tokens, error) {
 	var t *Tokens
+	var replayed struct{ member, client string }
 	err := s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
 		var member, redirect, challenge, cid string
 		var used *time.Time
@@ -242,7 +243,7 @@ func (s *Store) ExchangeCode(ctx context.Context, orgID, clientID, code, redirec
 			return err
 		}
 		if used != nil {
-			_, _ = tx.Exec(ctx, `UPDATE oauth_tokens SET revoked_at = now() WHERE member_id = $1 AND client_id = $2 AND revoked_at IS NULL`, member, cid)
+			replayed.member, replayed.client = member, cid
 			return ErrInvalid
 		}
 		if cid != clientID || redirect != redirectURI || time.Now().After(expires) || !VerifyPKCE(verifier, challenge) {
@@ -254,6 +255,16 @@ func (s *Store) ExchangeCode(ctx context.Context, orgID, clientID, code, redirec
 		t, err = mint(ctx, tx, orgID, clientID, member)
 		return err
 	})
+	// The error rolls the exchange back, so the revocation commits on its own.
+	if replayed.member != "" {
+		if rerr := s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `UPDATE oauth_tokens SET revoked_at = now() WHERE member_id = $1 AND client_id = $2 AND revoked_at IS NULL`,
+				replayed.member, replayed.client)
+			return err
+		}); rerr != nil {
+			return nil, rerr
+		}
+	}
 	return t, err
 }
 
