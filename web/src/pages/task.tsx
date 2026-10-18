@@ -229,7 +229,7 @@ function TaskView({ id }: { id: string }) {
   };
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] max-w-3xl flex-col motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-8 motion-safe:duration-300 md:min-h-[calc(100dvh-4rem)] md:animate-none">
+    <div className="mx-auto flex min-h-[calc(100dvh-1rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] max-w-3xl flex-col animate-in fade-in-0 duration-300 ease-drawer motion-safe:slide-in-from-right-8 md:min-h-[calc(100dvh-4rem)] md:animate-none">
       <div className="mb-3 flex items-center gap-1">
         {/* Phones have no app bars on a task; wider screens go back from the tab strip. */}
         <button onClick={() => goBack()} className="-ml-2 flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent md:hidden" aria-label="Back">

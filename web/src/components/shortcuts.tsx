@@ -92,7 +92,7 @@ const groups: { title: string; keys: [string, string][] }[] = [
 export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-describedby={undefined} className="rounded-2xl sm:max-w-md">
+      <DialogContent instant aria-describedby={undefined} className="rounded-2xl sm:max-w-md">
         <DialogTitle>Keyboard shortcuts</DialogTitle>
         <div className="flex flex-col gap-4">
           {groups.map((g) => (
