@@ -9,6 +9,10 @@
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Space Grotesk Variable", "Inter Variable", ui-sans-serif, sans-serif;
+  /* Strong curves (the built-in ones are too weak for UI); these replace Tailwind's ease-out / ease-in-out. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @theme inline {
@@ -266,6 +270,18 @@
 @media (prefers-reduced-motion: reduce) {
   .agent-shimmer { animation: none; color: var(--muted-foreground); background: none; }
   .triage-reveal { animation: none; }
+}
+
+/* Disclosures open instead of snapping, where the browser can animate to an auto height. */
+details { interpolate-size: allow-keywords; }
+details::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition: block-size 200ms var(--ease-out), content-visibility 200ms allow-discrete;
+}
+details[open]::details-content { block-size: auto; }
+@media (prefers-reduced-motion: reduce) {
+  details::details-content { transition: none; }
 }
 
 /* Rendered markdown in task bodies and comments. */

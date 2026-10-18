@@ -89,7 +89,7 @@ export function TaskCheck({ t, onToggle, disabled }: { t: Task; onToggle: () => 
       title={label}
       disabled={disabled}
       onClick={onToggle}
-      className="-m-2 flex size-10 shrink-0 items-center justify-center rounded-full disabled:cursor-default sm:size-9"
+      className="-m-2 flex size-10 shrink-0 items-center justify-center rounded-full transition-transform duration-150 ease-out active:scale-95 disabled:cursor-default sm:size-9"
     >
       <StatusCircle t={t} interactive />
     </button>
