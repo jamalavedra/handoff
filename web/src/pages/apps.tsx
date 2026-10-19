@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bell, BookOpen, CalendarClock, CalendarDays, Check, CircleDot, Database, FileText, Folder, FolderGit2,
-  GitPullRequest, Hash, List, Mail, MessageSquare, MessagesSquare, Plug, Search, Sheet, UserSearch, Users,
+  Bell, BookOpen, CalendarClock, CalendarDays, CircleDot, Database, FileText, Folder, FolderGit2,
+  GitPullRequest, Hash, List, Mail, MessageSquare, MessagesSquare, Plug, Search, Sheet, Unplug, UserSearch, Users,
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib";
 import { Card, Empty, ErrorText } from "../components/app";
+import { ConfirmButton, IconTile, SettingsSection, StatusDot } from "../components/settings";
 import { Button } from "@/components/ui/button";
 import { SettingsHeader } from "./settings";
 import { toolLabel, type ToolIcon } from "../app-tools";
@@ -26,6 +27,8 @@ export function AppsPage() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["apps"], queryFn: () => api.tool<{ enabled: boolean; apps: App[] }>("list_apps") });
   const refresh = () => qc.invalidateQueries({ queryKey: ["apps"] });
+  const connected = q.data?.apps.filter((a) => a.connected) ?? [];
+  const rest = q.data?.apps.filter((a) => !a.connected) ?? [];
   // Coming back from Composio's sign-in page.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -40,21 +43,26 @@ export function AppsPage() {
   return (
     <>
       <SettingsHeader active="apps" />
-      <p className="mb-4 max-w-2xl text-sm text-foreground/70">
-        Connect your own accounts so the assistant can read them when you ask it something: your email, your calendar, your files. Only your chats use them, and it only reads; it doesn't send, change or delete anything.
-      </p>
-      <ErrorText error={q.error} />
-      {q.data && !q.data.enabled && (
-        <Card>
-          <Empty>Apps aren't set up on this server yet. An admin sets HANDOFF_COMPOSIO_API_KEY to turn them on.</Empty>
-        </Card>
-      )}
-      {q.isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
-      {q.data?.enabled && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {q.data.apps.map((a) => <AppCard key={a.slug} a={a} onChange={refresh} />)}
-        </div>
-      )}
+      <SettingsSection title="Your apps" description="Connect your own accounts so the assistant can read them when you ask: your email, calendar and files. Only your requests use them, and it only reads; it never sends, changes or deletes anything.">
+        <ErrorText error={q.error} />
+        {q.data && !q.data.enabled && (
+          <Card>
+            <Empty>Apps aren't set up on this server yet. An admin sets HANDOFF_COMPOSIO_API_KEY to turn them on.</Empty>
+          </Card>
+        )}
+        {q.isPending && <div className="grid gap-3 sm:grid-cols-2">{[0, 1, 2, 3].map((i) => <Card key={i} className="h-[76px] animate-pulse bg-muted" />)}</div>}
+        {q.data?.enabled && (
+          <>
+            {connected.length > 0 && <div className="mb-3 grid items-start gap-3 sm:grid-cols-2">{connected.map((a) => <AppCard key={a.slug} a={a} onChange={refresh} />)}</div>}
+            {rest.length > 0 && (
+              <>
+                {connected.length > 0 && <h3 className="mt-6 mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">More apps</h3>}
+                <div className="grid items-start gap-3 sm:grid-cols-2">{rest.map((a) => <AppCard key={a.slug} a={a} onChange={refresh} />)}</div>
+              </>
+            )}
+          </>
+        )}
+      </SettingsSection>
     </>
   );
 }
@@ -65,41 +73,31 @@ function AppCard({ a, onChange }: { a: App; onChange: () => void }) {
     mutationFn: () => api.tool<{ redirect_url: string }>("connect_app", { app: a.slug, origin: window.location.origin }),
     onSuccess: ({ redirect_url }) => { setLeaving(true); window.location.assign(redirect_url); },
   });
-  const disconnect = useMutation({
-    mutationFn: () => api.tool("disconnect_app", { app: a.slug }),
-    onSuccess: () => { toast(`${a.name} disconnected`); onChange(); },
-  });
+  const disconnect = async () => { await api.tool("disconnect_app", { app: a.slug }); toast(`${a.name} disconnected`); onChange(); };
   const pending = a.status && !a.connected;
   return (
-    <Card className="flex flex-col gap-3 p-4">
-      <div className="flex items-center gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-accent">
-          {a.logo ? <img src={a.logo} alt="" className="size-6 object-contain" /> : <Plug className="size-4" />}
-        </span>
+    <Card className="flex flex-col">
+      <div className="flex items-center gap-3 p-4">
+        <IconTile src={a.logo} icon={Plug} />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">{a.name}</div>
-          <div className="text-xs text-muted-foreground">
-            {a.connected ? (
-              <span className="inline-flex items-center gap-1 text-green-700"><Check className="size-3" />Connected</span>
-            ) : pending ? `Not finished (${a.status})` : "Not connected"}
-          </div>
+          {a.connected ? <StatusDot tone="on">Connected</StatusDot> : pending ? <StatusDot tone="warn">Not finished</StatusDot> : <StatusDot tone="off">Not connected</StatusDot>}
         </div>
         {a.connected ? (
-          <Button size="sm" variant="ghost" className="text-red-600" disabled={disconnect.isPending}
-            onClick={() => confirm(`Disconnect ${a.name}? The assistant stops reading it.`) && disconnect.mutate()}>
-            {disconnect.isPending ? "Disconnecting…" : "Disconnect"}
-          </Button>
+          <ConfirmButton icon={Unplug} label="Disconnect" title={`Disconnect ${a.name}?`} pendingLabel="Disconnecting…"
+            description={<>The assistant stops reading your {a.name}, and Composio forgets the sign-in. You can connect it again any time.</>}
+            onConfirm={disconnect} />
         ) : (
-          <Button size="sm" disabled={connect.isPending || leaving} onClick={() => connect.mutate()}>
+          <Button size="sm" variant={pending ? "outline" : "default"} disabled={connect.isPending || leaving} onClick={() => connect.mutate()}>
             {connect.isPending || leaving ? "Opening…" : pending ? "Try again" : "Connect"}
           </Button>
         )}
       </div>
-      {a.description && !a.connected && <p className="line-clamp-2 text-xs text-muted-foreground">{a.description}</p>}
+      {a.description && !a.connected && <div className="-mt-1 px-4 pb-4"><p className="line-clamp-2 text-xs text-muted-foreground">{a.description}</p></div>}
       {a.connected && a.tools.length > 0 && (
-        <div>
-          <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">The assistant can</div>
-          <ul className="flex flex-col gap-1" aria-label={`What the assistant can do with ${a.name}`}>
+        <div className="border-t border-border px-4 py-3">
+          <div className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">The assistant can</div>
+          <ul className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2" aria-label={`What the assistant can do with ${a.name}`}>
             {a.tools.map((slug) => {
               const { text, icon } = toolLabel(slug, a.slug);
               const Icon = icons[icon];
@@ -113,7 +111,7 @@ function AppCard({ a, onChange }: { a: App; onChange: () => void }) {
           </ul>
         </div>
       )}
-      <ErrorText error={connect.error || disconnect.error} />
+      {connect.error && <div className="px-4 pb-3"><ErrorText error={connect.error} /></div>}
     </Card>
   );
 }
