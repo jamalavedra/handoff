@@ -44,7 +44,7 @@ export function ActivityTrail({ steps, live, onNavigate, className }: { steps: A
   );
 }
 
-function Rows({ steps, live, onNavigate }: { steps: ActivityStep[]; live?: boolean; onNavigate?: () => void }) {
+export function Rows({ steps, live, onNavigate }: { steps: ActivityStep[]; live?: boolean; onNavigate?: () => void }) {
   return <>{steps.map((s, i) => {
     const Icon = icon(s);
     const running = live && i === steps.length - 1;
@@ -70,6 +70,9 @@ function Rows({ steps, live, onNavigate }: { steps: ActivityStep[]; live?: boole
   })}</>;
 }
 
+// The agent speaks as a person in the thread: a large dark avatar beside its message.
+export const agentAvatar = "mt-0.5 size-9 bg-foreground text-background [&_svg]:size-4.5";
+
 // LiveTrail shows the workspace's agent at work on a task, at the end of its chat, until it replies.
 export function LiveTrail({ task }: { task: string }) {
   const live = useAgentActivity({ task });
@@ -81,9 +84,9 @@ export function LiveTrail({ task }: { task: string }) {
   const agent = status.data?.agent ?? { id: "agent", name: "Agent", kind: "agent" as const };
   return (
     <div ref={ref} className="mt-3 flex gap-2.5" role="status">
-      <Avatar m={agent} className="agent-working mt-0.5" />
+      <Avatar m={agent} className={cn(agentAvatar, "agent-working")} />
       <div className="min-w-0 flex-1">
-        <div className="mb-1 text-xs text-muted-foreground">{agent.name} is working on it…</div>
+        <div className="mb-1 text-xs text-muted-foreground"><span className="text-sm font-semibold text-foreground">{agent.name}</span> is working on it…</div>
         <ActivityTrail steps={live.steps} live />
       </div>
     </div>
