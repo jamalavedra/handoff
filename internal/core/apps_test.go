@@ -226,8 +226,8 @@ func TestApps(t *testing.T) {
 	if res := toolResult(t, reqs(), "c1"); !strings.Contains(res, "Invoice #42") {
 		t.Fatalf("result: %s", res)
 	}
-	if sys := reqs()[0].Messages[0]["content"].(string); !strings.Contains(sys, "Gmail, Google Calendar") {
-		t.Fatalf("prompt doesn't say whose apps: %s", sys)
+	if sys := reqs()[0].Messages[0]["content"].(string); !strings.Contains(sys, "Gmail, Google Calendar") || !strings.Contains(sys, "Apps only read") {
+		t.Fatalf("prompt doesn't say whose apps, or that they only read: %s", sys)
 	}
 
 	// Someone else's chat never gets them.
@@ -246,6 +246,10 @@ func TestApps(t *testing.T) {
 		if strings.HasPrefix(tl.Function.Name, "ext_apps__") {
 			t.Fatalf("bob was offered %s", tl.Function.Name)
 		}
+	}
+	// Without apps the agent still knows where they're connected, rather than saying it has none.
+	if sys := reqs()[2].Messages[0]["content"].(string); !strings.Contains(sys, "None of the personal apps") || !strings.Contains(sys, "Settings → Apps") {
+		t.Fatalf("bob's prompt doesn't point to Settings → Apps: %s", sys)
 	}
 
 	// A session Composio forgot is made again; the connections are the user's, so they remain.
@@ -375,6 +379,10 @@ func TestAppsOnTasks(t *testing.T) {
 	_, other := offered(n)
 	if len(other) == 0 || slices.Contains(other, true) {
 		t.Fatalf("bob's turn was offered app tools: %v", other)
+	}
+	// His chat reply is told where to connect them, and that the agent can't send or post.
+	if sys := got[n].Messages[0]["content"].(string); !strings.Contains(sys, "Settings → Apps") || !strings.Contains(sys, "Drafting isn't sending") {
+		t.Fatalf("bob's reply prompt: %s", sys)
 	}
 }
 
