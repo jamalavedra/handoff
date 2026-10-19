@@ -26,15 +26,20 @@ the browser sign-in UI; CookieManager captures `handoff_session`).
 ## Dev server + emulator
 
 `adb reverse` doesn't help because orgs live on subdomains. Simplest path:
-run a single-org server, which ignores host routing:
+run a single-org server (ignores host routing) whose base URL is the
+emulator's host alias, so magic links/dev_link point somewhere reachable:
 
 ```sh
 make dev-db
-HANDOFF_SINGLE_ORG=<slug> HANDOFF_ADDR=:8081 HANDOFF_DEV=1 bin/handoff serve
+HANDOFF_SINGLE_ORG=<slug> HANDOFF_ADDR=:8081 \
+  HANDOFF_BASE_URL=http://10.0.2.2:8081 HANDOFF_DEV=1 bin/handoff serve
 ```
 
-On the emulator use host `http://10.0.2.2:8081` (cleartext is allowed in
-debug builds only, via `app/src/debug/AndroidManifest.xml`).
+On the emulator use host `http://10.0.2.2:8081`. Debug builds allow
+cleartext only for loopback/`10.0.2.2`/`*.localhost` (see
+`app/src/debug/res/xml/network_security_config.xml`). If the dev_link host
+is `*.localhost` instead, `adb reverse tcp:8081 tcp:8081` reaches the host
+server too.
 
 ## Notes
 

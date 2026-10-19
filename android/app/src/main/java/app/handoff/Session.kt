@@ -1,18 +1,26 @@
 package app.handoff
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 /** Persists the workspace host + handoff_session cookie in encrypted prefs. */
 class Session(context: Context) {
-    private val prefs = EncryptedSharedPreferences.create(
-        context,
-        "handoff_session",
-        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+    // Encrypted prefs restored onto a new device lose their Keystore key and
+    // throw on open; fall back to plain prefs (empty session) instead of crashing.
+    private val prefs: SharedPreferences = try {
+        EncryptedSharedPreferences.create(
+            context,
+            "handoff_session",
+            MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    } catch (_: Exception) {
+        context.getSharedPreferences("handoff_session", Context.MODE_PRIVATE)
+            .also { it.edit().clear().apply() }
+    }
 
     var host: String?
         get() = prefs.getString("host", null)

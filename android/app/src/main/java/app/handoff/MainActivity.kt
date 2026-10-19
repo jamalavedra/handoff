@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -24,6 +25,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -40,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -102,7 +105,10 @@ private fun Root() {
         }
     }
 
-    LaunchedEffect(Unit) {
+    var bootError by remember { mutableStateOf(false) }
+    var bootTick by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(bootTick) {
         val api = session.api
         if (api == null || session.cookie == null) {
             signedIn = false
@@ -113,7 +119,8 @@ private fun Root() {
         } catch (e: AuthException) {
             null
         } catch (e: Exception) {
-            signedIn = false // unreachable host; keep the cookie, user can retry
+            signedIn = false
+            bootError = true // unreachable host; cookie kept so retry can reuse it
             return@LaunchedEffect
         }
         if (me?.member != null) {
@@ -128,10 +135,22 @@ private fun Root() {
 
     when (signedIn) {
         null -> Box(Modifier.fillMaxSize()) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
-        false -> SignInScreen(session) {
-            member = it.member
-            orgName = it.orgName
-            signedIn = true
+        false -> Column(Modifier.fillMaxSize()) {
+            if (bootError) {
+                Text("Couldn't reach your workspace",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+                TextButton(onClick = {
+                    bootError = false
+                    signedIn = null
+                    bootTick++ // re-run the boot probe against the saved cookie
+                }) { Text("Retry with saved sign-in") }
+            }
+            SignInScreen(session) {
+                member = it.member
+                orgName = it.orgName
+                signedIn = true
+            }
         }
         true -> when (val s = screen) {
             is Screen.Detail -> TaskDetailScreen(

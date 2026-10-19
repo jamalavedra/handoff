@@ -95,7 +95,15 @@ fun TaskDetailScreen(
         val t = task
         if (t == null) {
             Box(Modifier.fillMaxSize().padding(pad)) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center))
+                if (error != null) {
+                    Column(Modifier.align(Alignment.Center)) {
+                        Text(error!!, color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { error = null; reload() }) { Text("Retry") }
+                    }
+                } else {
+                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                }
             }
             return@Scaffold
         }
@@ -135,9 +143,9 @@ fun TaskDetailScreen(
                             Button(enabled = !busy, onClick = {
                                 scope.launch {
                                     busy = true
-                                    callApi(onSignedOut, { error = it }) { api.close(t.id) }
+                                    val done = callApi(onSignedOut, { error = it }) { api.close(t.id) }
                                     busy = false
-                                    onBack()
+                                    if (done != null) onBack()
                                 }
                             }) {
                                 Text("Mark done")
@@ -201,8 +209,15 @@ fun TaskDetailScreen(
                     enabled = !busy && draft.isNotBlank(),
                     onClick = {
                         val body = draft
-                        draft = ""
-                        act { comment(t.id, body) }
+                        scope.launch {
+                            busy = true
+                            val sent = callApi(onSignedOut, { error = it }) { api.comment(t.id, body) }
+                            busy = false
+                            if (sent != null) {
+                                draft = ""
+                                reload()
+                            }
+                        }
                     },
                 ) { Text("Send") }
             }

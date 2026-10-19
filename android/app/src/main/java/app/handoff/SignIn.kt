@@ -88,7 +88,14 @@ fun SignInScreen(session: Session, onSignedIn: (Api.Me) -> Unit) {
         scope.launch {
             busy = true
             error = null
-            val api = Api(session.host!!, null)
+            // A pasted link carries its own workspace host; redeem there so the
+            // token never crosses workspaces (and a wrong typed host still works).
+            val linkHost = Regex("https?://[^/\\s]+").find(raw)?.value?.let { normalizeHost(it) }
+            val host = linkHost ?: session.host!!
+            if (linkHost != null && linkHost != session.host) {
+                session.host = linkHost
+            }
+            val api = Api(host, null)
             try {
                 val cookie = withContext(Dispatchers.IO) { api.verifyToken(token) }
                 api.cookie = cookie
@@ -255,7 +262,6 @@ fun WebSignIn(host: String, onCookie: (String) -> Unit, onClose: () -> Unit) {
                             settings.domStorageEnabled = true
                             val cm = CookieManager.getInstance()
                             cm.setAcceptCookie(true)
-                            cm.setAcceptThirdPartyCookies(this, true)
                             webViewClient = object : WebViewClient() {
                                 override fun onPageFinished(view: WebView, url: String) {
                                     val raw = cm.getCookie("$host/") ?: return

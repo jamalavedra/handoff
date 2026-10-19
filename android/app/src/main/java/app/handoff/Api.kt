@@ -165,9 +165,9 @@ class Api(private val host: String, var cookie: String?) {
             ?.map { json.decodeFromJsonElement(TaskItem.serializer(), it) } ?: emptyList()
 
     fun searchTasks(query: String = ""): List<TaskItem> =
-        tasks("tasks", tool("search_tasks", buildJsonObject { put("query", query) }))
+        tasks("tasks", tool("search_tasks", buildJsonObject { put("query", query); put("limit", 500) }))
 
-    fun readyTasks(): List<TaskItem> = tasks("tasks", tool("list_ready", buildJsonObject { put("limit", 50) }))
+    fun readyTasks(): List<TaskItem> = tasks("tasks", tool("list_ready", buildJsonObject { put("limit", 100) }))
 
     fun projects(): List<Project> =
         (tool("list_projects")["projects"] as? kotlinx.serialization.json.JsonArray)
