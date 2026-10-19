@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Bot, ChevronDown, Sparkles } from "lucide-react";
+import { Bot, ChevronDown, Sparkles, UserMinus } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, cn, type Member } from "../lib";
 import { Badge, Card, ErrorText } from "../components/app";
+import { ConfirmButton } from "../components/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -47,7 +48,11 @@ export function AdminPage() {
             <div className="min-w-40 flex-1"><div className="font-medium">{m.name}</div><div className="text-xs text-muted-foreground">{m.email}</div></div>
             {m.status === "invited" && <Badge>invited</Badge>}
             <NativeSelect value={m.role} onChange={(e) => change.mutate({ id: m.id, role: e.target.value })} aria-label={`Role for ${m.name}`}><option value="member">Member</option><option value="admin">Admin</option></NativeSelect>
-            {m.id !== me.data?.member?.id && <Button size="sm" variant="ghost" className="text-red-600" onClick={() => confirm(`Remove ${m.name}? Their agents are disconnected too.`) && change.mutate({ id: m.id, remove: true })}>Remove</Button>}
+            {m.id !== me.data?.member?.id && (
+              <ConfirmButton icon={UserMinus} label="Remove" title={`Remove ${m.name}?`} pendingLabel="Removing…"
+                description={<>They lose access to the workspace and their agents are disconnected. Their tasks and comments stay.</>}
+                onConfirm={() => change.mutateAsync({ id: m.id, remove: true })} />
+            )}
           </div>
         ))}
         <div className="px-4"><ErrorText error={change.error} /></div>
