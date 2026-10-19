@@ -172,16 +172,17 @@ function ArrangedList({ tasks, prefs, query, empty, onClear }: { tasks?: Task[];
   ));
 }
 
-// Chips and groups need the whole list, so page through search_tasks at its max page size.
-async function allMyOpenTasks() {
+// Search, sort and filter run over the whole list, so page through search_tasks at its max page size.
+async function allTasks(query: Record<string, unknown>) {
   const page = 500;
   const tasks: Task[] = [];
   for (;;) {
-    const r = await api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", limit: page, offset: tasks.length });
+    const r = await api.tool<{ tasks: Task[] }>("search_tasks", { ...query, limit: page, offset: tasks.length });
     tasks.push(...r.tasks);
     if (r.tasks.length < page) return { tasks };
   }
 }
+const allMyOpenTasks = () => allTasks({ assignee: "me" });
 
 function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: () => void; name: string; n: number }) {
   return (
@@ -238,7 +239,7 @@ export function ProjectPage() {
   const [view, setView] = useView();
   const done = useQuery({ queryKey: ["tasks", "project", id, "done"], enabled: view === "board", queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, status: ["done"], sort: "recent", limit: 20 }) });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
-  const q = useQuery({ queryKey: ["tasks", "project", id, showDone], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, include_done: showDone, limit: 500 }) });
+  const q = useQuery({ queryKey: ["tasks", "project", id, showDone], queryFn: () => allTasks({ project: id, include_done: showDone }) });
   const p = projects.data?.projects.find((x) => x.id === id);
   const invalidate = useInvalidate();
   const setEmoji = useMutation({ mutationFn: (emoji: string) => api.tool("update_project", { project: id, emoji }), onSuccess: invalidate });
@@ -264,7 +265,7 @@ export function ProjectPage() {
         <>
           <InlineNewTask project={id} />
           {view === "board"
-            ? <Board tasks={q.data && filterTasks(q.data.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled"), prefs.filter, undefined, query)} done={done.data?.tasks} />
+            ? <Board tasks={q.data && filterTasks(q.data.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled"), prefs.filter, undefined, query)} done={done.data && filterTasks(done.data.tasks, prefs.filter, undefined, query)} />
             : <ArrangedList tasks={q.data?.tasks} prefs={prefs} query={query} onClear={() => { setPrefs({ filter: emptyFilter }); setQuery(""); }} empty="No tasks here yet." />}
         </>
       )}

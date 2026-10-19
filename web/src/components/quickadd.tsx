@@ -219,10 +219,10 @@ export function InlineNewTask({ project }: { project?: string }) {
         .then(async (r) => { if (v.started && r.tasks[0]) await api.tool("update_task", { id: r.tasks[0].id, status: "in_progress" }); }),
     onSuccess: () => qc.invalidateQueries(),
   });
+  // The draft stays until the task is saved, so a failed save can be retried as it was.
   const submit = () => {
     if (!parsed.title || m.isPending) return;
-    m.mutate({ title: parsed.title, started });
-    reset();
+    m.mutate({ title: parsed.title, started }, { onSuccess: reset });
     input.current?.focus();
   };
   const open = focused || !!text;
