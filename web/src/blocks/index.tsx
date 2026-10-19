@@ -1,9 +1,12 @@
 import { lazy, Suspense, type ComponentType } from "react";
 import { ImagesBlock } from "./images";
+import { PeopleBlock } from "./people";
+import { ReminderBlock } from "./reminder";
 
-// Blocks are the rich pieces the agent attaches to a message (images, a map). The server resolves
-// each kind (internal/core/blocks.go); here each kind has a renderer, and kinds this version doesn't
-// know are skipped. Adding a kind is one renderer here and one plugin there.
+// Blocks are the small artifacts the agent attaches to a message instead of a wall of text: images,
+// a map, a route, a reminder, people to connect with. The server resolves each kind
+// (internal/core/blocks.go, blocks_artifacts.go); here each kind has a renderer, and kinds this
+// version doesn't know are skipped. Adding a kind is one renderer here and one plugin there.
 
 export type Block = { type: string; data: unknown };
 
@@ -11,6 +14,9 @@ export type Block = { type: string; data: unknown };
 const renderers: Record<string, ComponentType<{ data: any }>> = {
   images: ImagesBlock,
   map: lazy(() => import("./map")), // Leaflet only loads when a map is shown
+  route: lazy(() => import("./route")),
+  reminder: ReminderBlock,
+  people: PeopleBlock,
 };
 
 export function Blocks({ blocks, className }: { blocks?: Block[]; className?: string }) {
