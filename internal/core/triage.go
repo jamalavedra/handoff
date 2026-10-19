@@ -809,7 +809,8 @@ func (s *Service) applyTriage(ctx context.Context, agent *Principal, cl *triageC
 		}
 		// What it found goes in its chat message, after the line on what it changed.
 		work := clipBytes(strings.TrimSpace(sugg.Work), 3000)
-		if work != "" {
+		// A map or pictures alone are found work too: they need a message to sit under.
+		if work != "" || len(sugg.blocks) > 0 {
 			changed = append(changed, "work")
 		}
 		if len(changed) > 0 {
@@ -909,7 +910,7 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 	var looked []Lookup
 	step := func(a ActivityStep) { s.progressStep(ctx, pr, a) }
 	// Blocks resolve as they do in the assistant; this run only collects them and the pages found.
-	run := &assistantRun{s: s, out: &AssistantChatOut{}, turn: &assistantTurn{}, progress: pr}
+	run := &assistantRun{s: s, out: &AssistantChatOut{}, turn: &assistantTurn{}, progress: pr, task: pr.task}
 	msgs := []map[string]any{
 		{"role": "system", "content": triagePrompt + "\n\n" + triageResearchNote + note},
 		{"role": "user", "content": triageUserMessage(org, t, projects, members)},
