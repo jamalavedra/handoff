@@ -198,6 +198,12 @@ func (a *assistantRun) listMemory(ctx context.Context, raw json.RawMessage) (any
 	if err := decodeArgs(raw, &in); err != nil {
 		return nil, nil, err
 	}
+	// In a shared turn the result feeds a reply everyone on the task can read: no person facts,
+	// and only the task's own project — same rule as the memory block in the prompt.
+	if a.task != "" {
+		in.Shared = true
+		in.Project = *a.sharedProject(ctx)
+	}
 	res, err := a.s.ListMemory(ctx, a.agent, in)
 	if err != nil {
 		return nil, &AssistantStep{Summary: "Couldn't list memory"}, err

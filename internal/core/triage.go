@@ -525,13 +525,9 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 	if xerr != nil {
 		ext = nil
 	}
-	// What it remembers loads for the creator's turn: workspace facts, project facts the agent can
-	// see, and the creator's own person facts.
-	forWho := ""
-	if creator != nil {
-		forWho = creator.Member.ID
-	}
-	if t.Memory, err = s.memoryContext(ctx, agent, forWho); err != nil {
+	// Triage writes on a shared task: workspace facts and that project's facts — never the
+	// creator's person facts or other projects', which its viewers may not be allowed to see.
+	if t.Memory, err = s.memoryContext(ctx, agent, "", &d.Task.ProjectID); err != nil {
 		s.failTriage(ctx, cl, st.AgentID, err.Error())
 		return
 	}

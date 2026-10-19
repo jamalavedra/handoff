@@ -80,7 +80,7 @@ function FactGroup({ title, facts, canManage }: { title: string; facts: MemoryFa
 export function MemoryPage() {
   const me = useMe().data?.member;
   const admin = me?.role === "admin";
-  const q = useQuery({ queryKey: ["memory"], queryFn: () => api.tool<{ facts: MemoryFact[] }>("list_memory") });
+  const q = useQuery({ queryKey: ["memory"], queryFn: () => api.tool<{ facts: MemoryFact[] }>("list_memory", { limit: 500 }) });
   const facts = q.data?.facts ?? [];
   // People manage their own person facts; admins manage workspace and project facts.
   const canManage = (f: MemoryFact) => (f.scope === "person" ? f.member?.id === me?.id : admin);

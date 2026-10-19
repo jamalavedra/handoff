@@ -3,6 +3,7 @@ package core_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/joalavedra/handoff/internal/core"
 )
@@ -209,5 +210,119 @@ func TestMemoryPersonFactsStayPersonal(t *testing.T) {
 	sys = reqs()[1].Messages[0]["content"].(string)
 	if !strings.Contains(sys, "tax id") {
 		t.Fatalf("bob's own fact didn't load for him:\n%s", sys)
+	}
+}
+
+// A shared turn (a reply on a task) is read by everyone who can see it: workspace facts and the
+// task's project facts load, never person facts or another project's.
+func TestMemorySharedTurnsDontSeePersonFacts(t *testing.T) {
+	model, reqs := scriptedModel(t, say("done."))
+	e, admin, bot := assistantEnv(t, model, "memshared")
+	if _, err := e.s.CreateProject(e.ctx, admin, core.CreateProjectIn{Name: "Board", Visibility: "private"}); err != nil {
+		t.Fatal(err)
+	}
+	task := e.create(t, admin, core.NewTask{Title: "Plan the trip", Project: "Board"})[0]
+	waitTriage(t, e, admin, task.ID)
+	if _, err := e.s.Remember(e.ctx, admin, core.RememberIn{Text: "Admin's tax id is XX-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Remember(e.ctx, admin, core.RememberIn{Text: "Board trips leave Thursdays", Scope: "project", Project: "Board"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Remember(e.ctx, admin, core.RememberIn{Text: "Everyone ships Fridays", Scope: "workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Comment(e.ctx, bot, core.CommentIn{ID: task.ID, Body: "first note"}); err != nil {
+		t.Fatal(err)
+	}
+	orig := last(t, mustTask(t, e, admin, task.ID))
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot go", ReplyTo: orig.ID}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if c := last(t, d); c.Author.ID == bot.Member.ID && c.ID != orig.ID {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no answer")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	rs := reqs()
+	if len(rs) == 0 {
+		t.Fatal("model not called")
+	}
+	sys := rs[len(rs)-1].Messages[0]["content"].(string)
+	if strings.Contains(sys, "tax id") {
+		t.Fatalf("a person fact entered a shared turn:\n%s", sys)
+	}
+	if !strings.Contains(sys, "Board trips leave Thursdays") || !strings.Contains(sys, "Everyone ships Fridays") {
+		t.Fatalf("the task's project and workspace facts should load:\n%s", sys)
+	}
+}
+
+func mustTask(t *testing.T, e *env, p *core.Principal, id string) core.TaskDetailOut {
+	t.Helper()
+	d, err := e.s.GetTask(e.ctx, p, core.TaskIDIn{ID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestMemoryUntilAndSharedListing(t *testing.T) {
+	srv, _ := scriptedModel(t, say("hi"))
+	e, admin, _ := assistantEnv(t, srv, "memuntil")
+	if _, err := e.s.CreateProject(e.ctx, admin, core.CreateProjectIn{Name: "Open"}); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	future := time.Now().AddDate(0, 1, 0).Format("2006-01-02")
+
+	// An expired fact no longer lists; renewing a fact moves its date.
+	if _, err := e.s.Remember(e.ctx, admin, core.RememberIn{Text: "Old news", Scope: "workspace", Until: past}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := e.s.Remember(e.ctx, admin, core.RememberIn{Text: "Standup at 9:30", Scope: "workspace", Until: past})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, _ := e.s.ListMemory(e.ctx, admin, core.ListMemoryIn{})
+	if len(live.Facts) != 0 {
+		t.Fatalf("expired facts should not list: %+v", live.Facts)
+	}
+	again, err := e.s.Remember(e.ctx, admin, core.RememberIn{Text: "Standup at 9:30", Scope: "workspace", Until: future})
+	if err != nil || again.Added {
+		t.Fatalf("renewing should reuse the row: %+v %v", again, err)
+	}
+	live, _ = e.s.ListMemory(e.ctx, admin, core.ListMemoryIn{})
+	if len(live.Facts) != 1 || live.Facts[0].Until != future {
+		t.Fatalf("the renewed date should stick: %+v", live.Facts)
+	}
+	_ = r
+
+	// A shared listing: workspace + the named project only — no person facts, no other projects.
+	if _, err := e.s.Remember(e.ctx, admin, core.RememberIn{Text: "Open ships Tuesdays", Scope: "project", Project: "Open"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Remember(e.ctx, admin, core.RememberIn{Text: "Admin likes dark mode"}); err != nil {
+		t.Fatal(err)
+	}
+	open, err := e.s.ListMemory(e.ctx, admin, core.ListMemoryIn{Project: "Open"})
+	if err != nil || len(open.Facts) != 1 || open.Facts[0].Text != "Open ships Tuesdays" {
+		t.Fatalf("project filter: %+v %v", open, err)
+	}
+	shared, err := e.s.ListMemory(e.ctx, admin, core.ListMemoryIn{Shared: true, Project: open.Facts[0].ProjectID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(factTexts(shared.Facts), "\n")
+	if !strings.Contains(got, "Open ships Tuesdays") || !strings.Contains(got, "Standup at 9:30") {
+		t.Fatalf("shared should list workspace + that project: %s", got)
+	}
+	if strings.Contains(got, "dark mode") {
+		t.Fatal("a person fact leaked into a shared listing")
 	}
 }

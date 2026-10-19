@@ -148,7 +148,7 @@ func TestAssistantActsAsAgentForPerson(t *testing.T) {
 
 	// The model got the tools, the person's name, and the tool results.
 	rs := reqs()
-	if len(rs) != 3 || len(rs[0].Tools) != 20 { // 15 task and note tools, and 5 blocks (images, map, route, reminder, people)
+	if len(rs) != 3 || len(rs[0].Tools) != 22 { // 15 task and note tools, 2 memory tools, and 5 blocks (images, map, route, reminder, people)
 		t.Fatalf("requests: %d, tools %d", len(rs), len(rs[0].Tools))
 	}
 	if sys := rs[0].Messages[0]["content"].(string); !strings.Contains(sys, "Admin asst") || !strings.Contains(sys, "Podcast") {

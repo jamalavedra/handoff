@@ -479,8 +479,16 @@ func (a *assistantRun) systemPrompt(ctx context.Context, in AssistantChatIn) (st
 			}
 		}
 	}
-	// What it remembers from before loads for this person's turn.
-	mem, err := a.s.memoryContext(ctx, a.agent, a.p.Member.ID)
+	// What it remembers from before loads for this turn. In a shared turn (a task's replies or a
+	// take-on) the answer is posted where everyone who can see the task reads it: only workspace
+	// facts and that project's facts — never the person's own facts or other projects'.
+	forMember := a.p.Member.ID
+	var onlyProject *string
+	if a.task != "" {
+		forMember = ""
+		onlyProject = a.sharedProject(ctx)
+	}
+	mem, err := a.s.memoryContext(ctx, a.agent, forMember, onlyProject)
 	if err != nil {
 		return "", err
 	}
@@ -645,6 +653,20 @@ type assistantRun struct {
 	progress *progress
 	task     string // the task the server runs this turn on, when it does
 	open     string // in the private assistant, the task the person has open (checked visible to the agent)
+	// sharedProj is the shared turn's task's project — memory loads its facts alone (see memoryContext).
+	sharedProj *string
+}
+
+// sharedProject is the project of the task a shared turn runs on, fetched once. "" (task gone or
+// unseen) means no project facts load for the turn.
+func (a *assistantRun) sharedProject(ctx context.Context) *string {
+	if a.sharedProj == nil {
+		a.sharedProj = new(string)
+		if d, err := a.s.GetTask(ctx, a.agent, TaskIDIn{ID: a.task}); err == nil {
+			a.sharedProj = &d.Task.ProjectID
+		}
+	}
+	return a.sharedProj
 }
 
 // add records a step and shows it on open screens.
