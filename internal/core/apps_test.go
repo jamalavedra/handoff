@@ -27,6 +27,7 @@ type fakeComposio struct {
 	bodies   []map[string]any           // session create requests
 	links    []map[string]any           // link requests
 	server   *mcp.Server                // the sessions' MCP server, for tests to add tools to
+	sent     []map[string]any           // GMAIL_SEND_EMAIL calls, with their arguments
 }
 
 func newFakeComposio(t *testing.T) *fakeComposio {
@@ -42,8 +43,11 @@ func newFakeComposio(t *testing.T) *fakeComposio {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "From: Ana — Invoice #42 is due Friday (" + in.Query + ")"}}}, nil, nil
 		})
 	mcp.AddTool(server, &mcp.Tool{Name: "GMAIL_SEND_EMAIL", Description: "Send an email"},
-		func(_ context.Context, _ *mcp.CallToolRequest, _ q) (*mcp.CallToolResult, any, error) {
-			return &mcp.CallToolResult{}, nil, nil
+		func(_ context.Context, _ *mcp.CallToolRequest, in map[string]any) (*mcp.CallToolResult, any, error) {
+			f.mu.Lock()
+			f.sent = append(f.sent, in)
+			f.mu.Unlock()
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: `{"successful":true,"data":{"id":"m1"}}`}}}, nil, nil
 		})
 	mcp.AddTool(server, &mcp.Tool{Name: "GOOGLECALENDAR_EVENTS_LIST", Description: "List events"},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ q) (*mcp.CallToolResult, any, error) {
@@ -169,13 +173,13 @@ func TestApps(t *testing.T) {
 		t.Fatalf("agent listed apps: %v", err)
 	}
 
-	// The first look makes the person's session: the catalog's read-only tools, no Composio helpers.
+	// The first look makes the person's session: the catalog's tools and actions, no Composio helpers.
 	out, err := e.s.ListApps(e.ctx, admin, struct{}{})
 	if err != nil || !out.Enabled || len(out.Apps) != 7 || appsByName(out)["gmail"].Connected {
 		t.Fatalf("apps: %+v %v", out, err)
 	}
 	body := fake.bodies[0]
-	if body["user_id"] != user || body["tags"].(map[string]any)["enable"].([]any)[0] != "readOnlyHint" ||
+	if body["user_id"] != user || body["tags"] != nil || !slices.Contains(body["tools"].(map[string]any)["gmail"].(map[string]any)["enable"].([]any), any("GMAIL_SEND_EMAIL")) ||
 		body["manage_connections"].(map[string]any)["enable"] != false || body["workbench"].(map[string]any)["enable"] != false ||
 		body["tools"].(map[string]any)["gmail"].(map[string]any)["enable"].([]any)[0] != "GMAIL_FETCH_EMAILS" {
 		t.Fatalf("session: %v", body)
@@ -196,16 +200,16 @@ func TestApps(t *testing.T) {
 		t.Fatalf("link: %v", l)
 	}
 
-	// Signed in to Gmail and Calendar: only tools that read are kept, never Composio's own.
+	// Signed in to Gmail and Calendar: the catalog's tools and actions are kept, never Composio's own.
 	fake.connect(user, "gmail")
 	fake.connect(user, "googlecalendar")
 	out, err = e.s.ListApps(e.ctx, admin, struct{}{})
 	apps := appsByName(out)
-	if err != nil || !apps["gmail"].Connected || len(apps["gmail"].Tools) != 1 || !apps["googlecalendar"].Connected || len(apps["googlecalendar"].Tools) != 1 || apps["slack"].Connected {
+	if err != nil || !apps["gmail"].Connected || len(apps["gmail"].Tools) != 2 || !apps["googlecalendar"].Connected || len(apps["googlecalendar"].Tools) != 1 || apps["slack"].Connected {
 		t.Fatalf("connected apps: %+v %v", out, err)
 	}
 
-	// The person's assistant reads their email; sending isn't offered.
+	// The person's assistant reads their email; sending is offered as an action.
 	chat, err := e.s.AssistantChat(e.ctx, admin, ask("anything about invoices in my email?"))
 	if err != nil {
 		t.Fatal(err)
@@ -220,14 +224,14 @@ func TestApps(t *testing.T) {
 		}
 	}
 	slices.Sort(offered)
-	if !slices.Equal(offered, []string{"ext_apps__gmail_fetch_emails", "ext_apps__googlecalendar_events_list"}) {
+	if !slices.Equal(offered, []string{"ext_apps__gmail_fetch_emails", "ext_apps__gmail_send_email", "ext_apps__googlecalendar_events_list"}) {
 		t.Fatalf("offered: %v", offered)
 	}
 	if res := toolResult(t, reqs(), "c1"); !strings.Contains(res, "Invoice #42") {
 		t.Fatalf("result: %s", res)
 	}
-	if sys := reqs()[0].Messages[0]["content"].(string); !strings.Contains(sys, "Gmail, Google Calendar") || !strings.Contains(sys, "Apps only read") {
-		t.Fatalf("prompt doesn't say whose apps, or that they only read: %s", sys)
+	if sys := reqs()[0].Messages[0]["content"].(string); !strings.Contains(sys, "Gmail, Google Calendar") || !strings.Contains(sys, "nothing happens until the person taps Send") {
+		t.Fatalf("prompt doesn't say whose apps, or that actions wait for approval: %s", sys)
 	}
 
 	// Someone else's chat never gets them.
@@ -256,7 +260,7 @@ func TestApps(t *testing.T) {
 	fake.mu.Lock()
 	clear(fake.sessions)
 	fake.mu.Unlock()
-	if out, err = e.s.ListApps(e.ctx, admin, struct{}{}); err != nil || !appsByName(out)["gmail"].Connected || len(appsByName(out)["gmail"].Tools) != 1 {
+	if out, err = e.s.ListApps(e.ctx, admin, struct{}{}); err != nil || !appsByName(out)["gmail"].Connected || len(appsByName(out)["gmail"].Tools) != 2 {
 		t.Fatalf("after a lost session: %+v %v", out, err)
 	}
 
@@ -266,6 +270,17 @@ func TestApps(t *testing.T) {
 	}
 	if _, err := e.s.DisconnectApp(e.ctx, admin, core.AppIn{App: "gmail"}); !core.IsCode(err, core.ErrNotFound) {
 		t.Fatalf("disconnected twice: %v", err)
+	}
+	// X needs the server's own auth config: offered only with one, and the session names it.
+	if _, err := e.s.ConnectApp(e.ctx, admin, core.ConnectAppIn{App: "twitter", Origin: "http://apps.handoff.test"}); !core.IsCode(err, core.ErrInvalid) {
+		t.Fatalf("X offered without an auth config: %v", err)
+	}
+	e.s.Cfg.ComposioXAuthConfig = "ac_x"
+	if out, err = e.s.ListApps(e.ctx, admin, struct{}{}); err != nil || len(out.Apps) != 8 || appsByName(out)["twitter"].Name != "X" {
+		t.Fatalf("with X: %+v %v", out, err)
+	}
+	if ac := fake.bodies[len(fake.bodies)-1]["auth_configs"]; ac.(map[string]any)["twitter"] != "ac_x" {
+		t.Fatalf("auth configs: %v", ac)
 	}
 }
 
@@ -427,7 +442,7 @@ func TestAppsToolListRefreshes(t *testing.T) {
 	e.s.Cfg.ComposioAPIKey, e.s.Cfg.ComposioURL, e.s.Cfg.Dev = "ck-test", fake.srv.URL, true
 	fake.connect("handoff:"+admin.Org.ID+":"+admin.Member.ID, "gmail")
 	out, err := e.s.ListApps(e.ctx, admin, struct{}{})
-	if err != nil || len(appsByName(out)["gmail"].Tools) != 1 {
+	if err != nil || len(appsByName(out)["gmail"].Tools) != 2 {
 		t.Fatalf("before: %+v %v", appsByName(out)["gmail"], err)
 	}
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
@@ -436,12 +451,100 @@ func TestAppsToolListRefreshes(t *testing.T) {
 			return &mcp.CallToolResult{}, nil, nil
 		})
 	// Within the window the cache is used: no listing on every visit.
-	if out, _ = e.s.ListApps(e.ctx, admin, struct{}{}); len(appsByName(out)["gmail"].Tools) != 1 {
+	if out, _ = e.s.ListApps(e.ctx, admin, struct{}{}); len(appsByName(out)["gmail"].Tools) != 2 {
 		t.Fatalf("listed again inside the window: %v", appsByName(out)["gmail"].Tools)
 	}
 	// Once it's older, the new tool appears.
 	core.AgeAppTools(t, e.s, admin, 20*time.Minute)
-	if out, err = e.s.ListApps(e.ctx, admin, struct{}{}); err != nil || len(appsByName(out)["gmail"].Tools) != 2 {
+	if out, err = e.s.ListApps(e.ctx, admin, struct{}{}); err != nil || len(appsByName(out)["gmail"].Tools) != 3 {
 		t.Fatalf("after the window: %v %v", appsByName(out)["gmail"].Tools, err)
+	}
+}
+
+// An app action only runs when the person whose account it uses taps Send, exactly as the card showed it.
+func TestAppActions(t *testing.T) {
+	fake := newFakeComposio(t)
+	email := map[string]any{"recipient_email": "jaume@example.com", "subject": "Birthday", "body": "Hi! Dinner Saturday?"}
+	model, reqs := scriptedModel(t,
+		calls(toolCall("c1", "ext_apps__gmail_send_email", email)),
+		say("Your email to Jaume is ready: tap Send."),
+		calls(toolCall("c2", "ext_apps__gmail_send_email", map[string]any{"recipient_email": "x@example.com", "body": "nope"})),
+		say("Ready."),
+		calls(toolCall("c3", "ext_apps__gmail_send_email", map[string]any{"recipient_email": "y@example.com", "body": "later"})),
+		say("Ready again."),
+	)
+	e, admin, bot := assistantEnv(t, model, "appact")
+	e.s.Cfg.ComposioAPIKey, e.s.Cfg.ComposioURL = "ck-test", fake.srv.URL
+	fake.connect("handoff:"+admin.Org.ID+":"+admin.Member.ID, "gmail")
+	if _, err := e.s.ListApps(e.ctx, admin, struct{}{}); err != nil { // Settings → Apps makes the session
+		t.Fatal(err)
+	}
+
+	chat, err := e.s.AssistantChat(e.ctx, admin, ask("email Jaume about my birthday dinner"))
+	if err != nil || len(chat.Blocks) != 1 || chat.Blocks[0].Type != "action" {
+		t.Fatalf("chat: %+v %v", chat, err)
+	}
+	// The message carries what the card is, not what's in it; its owner reads that from the action.
+	var card core.ActionOut
+	_ = json.Unmarshal(chat.Blocks[0].Data, &card)
+	if card.Status != "pending" || card.Title != "Send an email" || card.Verb != "Send" || card.App != "Gmail" || len(card.Fields) != 0 {
+		t.Fatalf("card: %+v", card)
+	}
+	if mine, err := e.s.GetAppAction(e.ctx, admin, core.ActionIDIn{ID: card.ID}); err != nil || !mine.Mine || len(mine.Fields) != 3 {
+		t.Fatalf("owner's card: %+v %v", mine, err)
+	}
+	if res := toolResult(t, reqs(), "c1"); !strings.Contains(res, "NOT been sent") {
+		t.Fatalf("the model was told: %s", res)
+	}
+	if len(fake.sent) != 0 {
+		t.Fatal("sent before approval")
+	}
+
+	// Nobody else approves it: not an agent, not another person.
+	if _, err := e.s.DecideAppAction(e.ctx, bot, core.DecideActionIn{ID: card.ID, Approve: true}); !core.IsCode(err, core.ErrForbidden) {
+		t.Fatalf("agent approved: %v", err)
+	}
+	if _, err := e.s.Invite(e.ctx, admin, core.InviteIn{Email: "bob@appact.test"}); err != nil {
+		t.Fatal(err)
+	}
+	bob, _ := e.s.MemberForLogin(e.ctx, admin.Org, "bob@appact.test", "Bob")
+	bp, _ := e.s.Principal(e.ctx, admin.Org, bob.ID, "web")
+	if _, err := e.s.DecideAppAction(e.ctx, bp, core.DecideActionIn{ID: card.ID, Approve: true}); !core.IsCode(err, core.ErrNotFound) {
+		t.Fatalf("bob approved: %v", err)
+	}
+
+	// The owner's tap runs it once, with the arguments the card showed.
+	out, err := e.s.DecideAppAction(e.ctx, admin, core.DecideActionIn{ID: card.ID, Approve: true})
+	if err != nil || out.Status != "sent" || len(fake.sent) != 1 || fake.sent[0]["recipient_email"] != "jaume@example.com" || fake.sent[0]["body"] != "Hi! Dinner Saturday?" {
+		t.Fatalf("approve: %+v %v sent %v", out, err, fake.sent)
+	}
+	if _, err := e.s.DecideAppAction(e.ctx, admin, core.DecideActionIn{ID: card.ID, Approve: true}); !core.IsCode(err, core.ErrConflict) {
+		t.Fatalf("ran twice: %v", err)
+	}
+	if got, err := e.s.GetAppAction(e.ctx, admin, core.ActionIDIn{ID: card.ID}); err != nil || got.Status != "sent" || !got.Mine {
+		t.Fatalf("get: %+v %v", got, err)
+	}
+
+	// Cancelled, it never runs.
+	chat, err = e.s.AssistantChat(e.ctx, admin, ask("and one more"))
+	if err != nil || len(chat.Blocks) != 1 {
+		t.Fatalf("second chat: %+v %v", chat, err)
+	}
+	_ = json.Unmarshal(chat.Blocks[0].Data, &card)
+	if out, err := e.s.DecideAppAction(e.ctx, admin, core.DecideActionIn{ID: card.ID}); err != nil || out.Status != "cancelled" || len(fake.sent) != 1 {
+		t.Fatalf("cancel: %+v %v", out, err)
+	}
+
+	// Prepared, then the app is disconnected: approving fails without reaching it.
+	chat, err = e.s.AssistantChat(e.ctx, admin, ask("and again"))
+	if err != nil || len(chat.Blocks) != 1 {
+		t.Fatalf("third chat: %+v %v", chat, err)
+	}
+	_ = json.Unmarshal(chat.Blocks[0].Data, &card)
+	if _, err := e.s.DisconnectApp(e.ctx, admin, core.AppIn{App: "gmail"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := e.s.DecideAppAction(e.ctx, admin, core.DecideActionIn{ID: card.ID, Approve: true}); err != nil || out.Status != "failed" || !strings.Contains(out.Result, "isn't connected") || len(fake.sent) != 1 {
+		t.Fatalf("approve after disconnect: %+v %v", out, err)
 	}
 }

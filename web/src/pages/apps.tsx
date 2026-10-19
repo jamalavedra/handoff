@@ -43,7 +43,7 @@ export function AppsPage() {
   return (
     <>
       <SettingsHeader active="apps" />
-      <SettingsSection title="Your apps" description="Connect your own accounts so the assistant can read them when you ask: your email, calendar and files. Only your requests use them, and it only reads; it never sends, changes or deletes anything.">
+      <SettingsSection title="Your apps" description="Connect your own accounts so the assistant can use them when you ask: your email, calendar, files and messages. Only your requests use them. It reads on its own, but anything it would send, post or create waits as a card until you tap Send.">
         <ErrorText error={q.error} />
         {q.data && !q.data.enabled && (
           <Card>

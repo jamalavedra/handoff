@@ -516,6 +516,8 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 		if c, perr := s.Principal(ctx, org, cb.ID, "web"); perr == nil {
 			creator = c
 			apps, _ = s.personalTools(ctx, creator)
+			// Triage only reads: actions wait for a tap on a card, in the chat that follows.
+			apps = slices.DeleteFunc(apps, func(t extTool) bool { return t.action })
 			ext = append(ext, apps...)
 		}
 	}

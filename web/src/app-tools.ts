@@ -1,4 +1,4 @@
-// What each of an app's tools lets the assistant do, in words and an icon name, for Settings → Apps.
+// What each of an app's tools and actions lets the assistant do, in words and an icon name, for Settings → Apps.
 // Keys are Composio's tool slugs as the server's catalog chooses them (internal/core/apps.go).
 export type ToolIcon =
   | "search" | "mail" | "thread" | "contacts" | "calendar" | "event" | "free" | "list"
@@ -46,6 +46,20 @@ const labels: Record<string, [string, ToolIcon]> = {
   LINEAR_GET_LINEAR_ISSUE: ["Open an issue", "issue"],
   LINEAR_LIST_LINEAR_PROJECTS: ["List projects", "folder"],
   LINEAR_LIST_LINEAR_TEAMS: ["List teams", "team"],
+  TWITTER_USER_LOOKUP_ME: ["Your profile", "contacts"],
+  TWITTER_USER_LOOKUP_BY_USERNAME: ["Look up people", "contacts"],
+  TWITTER_GET_USER_MENTIONS: ["Your mentions", "bell"],
+  // Actions: prepared by the assistant, sent only when you tap Send.
+  GMAIL_SEND_EMAIL: ["Send emails, when you approve", "mail"],
+  GMAIL_REPLY_TO_THREAD: ["Reply to emails, when you approve", "thread"],
+  GMAIL_CREATE_EMAIL_DRAFT: ["Save drafts, when you approve", "mail"],
+  GOOGLECALENDAR_CREATE_EVENT: ["Create events, when you approve", "event"],
+  SLACK_SEND_MESSAGE: ["Send messages, when you approve", "message"],
+  NOTION_CREATE_NOTION_PAGE: ["Create pages, when you approve", "page"],
+  LINEAR_CREATE_LINEAR_ISSUE: ["Create issues, when you approve", "issue"],
+  LINEAR_CREATE_LINEAR_COMMENT: ["Comment on issues, when you approve", "message"],
+  TWITTER_CREATION_OF_A_POST: ["Post, when you approve", "message"],
+  TWITTER_SEND_A_NEW_MESSAGE_TO_A_USER: ["Send direct messages, when you approve", "message"],
 };
 
 export const knownTools = Object.keys(labels);

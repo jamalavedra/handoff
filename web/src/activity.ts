@@ -65,7 +65,10 @@ export function summary(steps: ActivityStep[]) {
   const label = n === 0 ? "reasoning" : n === 1 ? "1 step" : `${n} steps`;
   const sources = [...new Set(steps.filter((s) => s.type === "lookup" && s.source).map((s) => s.source!))];
   const asked = steps.some((s) => s.tool === "ask_person" && !s.error);
+  // An app action it prepared waits on a card for the person's tap (internal/core/app_actions.go).
+  const prepared = steps.some((s) => s.tool?.startsWith("ext_apps__") && s.text.startsWith("Prepared:") && !s.error);
   const headline = asked ? "Needs your input"
+    : prepared ? "Ready for your approval"
     : sources.length ? `Looked up ${sources.join(", ")}`
     : wrote(steps) ? "Made changes"
     : n === 0 ? "Thought it through"
