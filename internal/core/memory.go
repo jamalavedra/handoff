@@ -216,6 +216,14 @@ func (c *call) remember(in RememberIn) (*memoryRow, bool, error) {
 				r.Until = until
 			}
 			return r, false, nil
+		case r.RemovedAt == nil && r.SupersededAt == nil:
+			// The same fact was said before but is dead by now: revive the row
+			// (no new until = good forever again) rather than filing a twin.
+			if _, err := c.tx.Exec(c.ctx, `UPDATE agent_memory SET until_date = $2, updated_at = now() WHERE id = $1`, r.ID, until); err != nil {
+				return nil, false, err
+			}
+			r.Until = until
+			return r, false, nil
 		case r.RemovedAt != nil && in.Noticed:
 			return nil, false, errf(ErrInvalid, "that fact was removed; it won't be noticed again")
 		}
