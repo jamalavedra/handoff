@@ -19,6 +19,7 @@ import { AdminPage } from "./pages/admin";
 import { ConnectionsPage } from "./pages/connections";
 import { AppsPage } from "./pages/apps";
 import { MemoryPage } from "./pages/memory";
+import { DevicesPage } from "./pages/devices";
 import { QuickAddProvider, useQuickAdd } from "./components/quickadd";
 import { PageHeader } from "./components/app";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
@@ -416,6 +417,7 @@ const router = createRouter({
     r("/settings/agents", AgentsPage),
     r("/settings/memory", MemoryPage),
     r("/settings/apps", AppsPage),
+    r("/settings/devices", DevicesPage),
     r("/settings/connections", ConnectionsPage),
     r("/settings/activity", ActivityPage),
     // Agents, Activity and Admin moved into Settings; old links still land there.
