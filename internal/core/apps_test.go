@@ -248,7 +248,7 @@ func TestApps(t *testing.T) {
 		}
 	}
 	// Without apps the agent still knows where they're connected, rather than saying it has none.
-	if sys := reqs()[2].Messages[0]["content"].(string); !strings.Contains(sys, "hasn't connected any apps") || !strings.Contains(sys, "Settings → Apps") {
+	if sys := reqs()[2].Messages[0]["content"].(string); !strings.Contains(sys, "None of the personal apps") || !strings.Contains(sys, "Settings → Apps") {
 		t.Fatalf("bob's prompt doesn't point to Settings → Apps: %s", sys)
 	}
 
