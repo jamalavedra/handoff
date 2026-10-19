@@ -130,6 +130,8 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "list_apps", ReadOnly: true, Description: "Your own apps (Gmail, Google Calendar…) that your assistant can read, and which are connected."}, s.ListApps),
 		def(Tool{Name: "connect_app", Description: "Begin connecting one of your own apps; returns the URL to sign in at."}, s.ConnectApp),
 		def(Tool{Name: "disconnect_app", Destructive: true, Description: "Disconnect one of your own apps; your assistant stops reading it."}, s.DisconnectApp),
+		def(Tool{Name: "get_app_action", ReadOnly: true, Description: "An action the assistant prepared in someone's app (an email, a post…), as its card shows it."}, s.GetAppAction),
+		def(Tool{Name: "decide_app_action", Description: "Send or cancel an action the assistant prepared in one of your own apps."}, s.DecideAppAction),
 		def(Tool{Name: "get_triage", ReadOnly: true, Description: "Admins: which agent and model triage new tasks."}, s.GetTriage),
 		def(Tool{Name: "set_triage", Description: "Admins: choose the agent that triages each new task people create, and the OpenAI-compatible model it uses."}, s.SetTriage),
 		def(Tool{Name: "test_triage", ReadOnly: true, Description: "Admins: ask a model one small question to check a key and model."}, s.TestTriage),

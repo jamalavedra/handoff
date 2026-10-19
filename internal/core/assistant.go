@@ -665,6 +665,9 @@ func (a *assistantRun) call(ctx context.Context, name, args string) string {
 	}
 	if tool == nil {
 		if i := slices.IndexFunc(a.ext, func(t extTool) bool { return t.fn == name }); i >= 0 {
+			if a.ext[i].action {
+				return a.proposeAction(ctx, a.ext[i], args)
+			}
 			return a.callExternal(ctx, a.ext[i], args)
 		}
 		a.add(ctx, AssistantStep{Type: "tool", Tool: clip(name, 40), Summary: "Tried a tool it doesn't have", Error: "not allowed"})

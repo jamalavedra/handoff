@@ -381,6 +381,7 @@ type extTool struct {
 	desc       string
 	schema     json.RawMessage
 	server     connServer
+	action     bool // an app action: prepared for the person's approval, never run by the model
 }
 
 var fnUnsafe = regexp.MustCompile(`[^A-Za-z0-9_]+`)

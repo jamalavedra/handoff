@@ -33,6 +33,9 @@ type Config struct {
 	// Composio, and their assistant can read them. ComposioURL is the API base (tests point it elsewhere).
 	ComposioAPIKey string
 	ComposioURL    string
+	// ComposioXAuthConfig is the Composio auth config (made with your own X developer app) that X
+	// needs: Composio has no shared one for it. Without it, X isn't offered.
+	ComposioXAuthConfig string
 
 	Secret []byte
 }
@@ -44,17 +47,18 @@ func ValidSlug(s string) bool { return slugRe.MatchString(s) }
 
 func Load() (*Config, error) {
 	c := &Config{
-		Addr:               env("HANDOFF_ADDR", ":8080"),
-		DatabaseURL:        os.Getenv("DATABASE_URL"),
-		SingleOrg:          strings.ToLower(os.Getenv("HANDOFF_SINGLE_ORG")),
-		SingleOrgName:      os.Getenv("HANDOFF_SINGLE_ORG_NAME"),
-		Dev:                truthy(os.Getenv("HANDOFF_DEV")),
-		SMTPURL:            os.Getenv("HANDOFF_SMTP_URL"),
-		MailFrom:           env("HANDOFF_MAIL_FROM", "Handoff <no-reply@localhost>"),
-		GoogleClientID:     os.Getenv("HANDOFF_GOOGLE_CLIENT_ID"),
-		GoogleClientSecret: os.Getenv("HANDOFF_GOOGLE_CLIENT_SECRET"),
-		ComposioAPIKey:     strings.TrimSpace(os.Getenv("HANDOFF_COMPOSIO_API_KEY")),
-		ComposioURL:        env("HANDOFF_COMPOSIO_URL", "https://backend.composio.dev/api/v3.1"),
+		Addr:                env("HANDOFF_ADDR", ":8080"),
+		DatabaseURL:         os.Getenv("DATABASE_URL"),
+		SingleOrg:           strings.ToLower(os.Getenv("HANDOFF_SINGLE_ORG")),
+		SingleOrgName:       os.Getenv("HANDOFF_SINGLE_ORG_NAME"),
+		Dev:                 truthy(os.Getenv("HANDOFF_DEV")),
+		SMTPURL:             os.Getenv("HANDOFF_SMTP_URL"),
+		MailFrom:            env("HANDOFF_MAIL_FROM", "Handoff <no-reply@localhost>"),
+		GoogleClientID:      os.Getenv("HANDOFF_GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:  os.Getenv("HANDOFF_GOOGLE_CLIENT_SECRET"),
+		ComposioAPIKey:      strings.TrimSpace(os.Getenv("HANDOFF_COMPOSIO_API_KEY")),
+		ComposioURL:         env("HANDOFF_COMPOSIO_URL", "https://backend.composio.dev/api/v3.1"),
+		ComposioXAuthConfig: strings.TrimSpace(os.Getenv("HANDOFF_COMPOSIO_X_AUTH_CONFIG")),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
