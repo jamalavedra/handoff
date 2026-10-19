@@ -5,7 +5,7 @@ import { api, cn } from "../lib";
 
 export type Action = {
   id: string; app: string; title: string; verb?: string; status: "pending" | "sending" | "sent" | "failed" | "cancelled";
-  fields: { label: string; value: string }[]; result?: string; mine: boolean;
+  fields?: { label: string; value: string }[]; result?: string; mine: boolean;
 };
 
 const statusText: Record<Action["status"], string> = { pending: "", sending: "Sending…", sent: "Sent", failed: "Didn't go through", cancelled: "Cancelled" };
@@ -15,8 +15,13 @@ const statusText: Record<Action["status"], string> = { pending: "", sending: "Se
 export function ActionBlock({ data }: { data: Action }) {
   const qc = useQueryClient();
   const key = ["app_action", data.id];
-  // The card in the message is how it was prepared; who may send it and how it went come from the server.
-  const q = useQuery({ queryKey: key, queryFn: () => api.tool<Action>("get_app_action", { id: data.id }), refetchInterval: (s) => (s.state.data?.status === "sending" ? 2000 : false) });
+  // The message only says what the card is; its contents (for its owner), and how it went, come from
+  // the server, checked again while it waits so another tab's tap shows here too.
+  const q = useQuery({
+    queryKey: key,
+    queryFn: () => api.tool<Action>("get_app_action", { id: data.id }),
+    refetchInterval: (s) => (s.state.data?.status === "sending" ? 2000 : s.state.data?.status === "pending" ? 15000 : false),
+  });
   const a = q.data ?? { ...data, mine: false };
   const decide = useMutation({
     mutationFn: (approve: boolean) => api.tool<Action>("decide_app_action", { id: data.id, approve }),
@@ -40,14 +45,14 @@ export function ActionBlock({ data }: { data: Action }) {
           </span>
         )}
       </div>
-      <dl className="mt-2 flex flex-col gap-1.5 border-l-2 border-border pl-3">
+      {!!a.fields?.length && <dl className="mt-2 flex flex-col gap-1.5 border-l-2 border-border pl-3">
         {a.fields.map((f) => (
           <div key={f.label} className="min-w-0">
             <dt className="text-[11px] tracking-wide text-muted-foreground uppercase">{f.label}</dt>
             <dd className="text-sm break-words whitespace-pre-wrap">{f.value}</dd>
           </div>
         ))}
-      </dl>
+      </dl>}
       {a.status === "failed" && a.result && <p className="mt-2 text-xs text-amber-700 dark:text-amber-500">{a.result}</p>}
       {pending && (a.mine ? (
         <div className="mt-3 flex gap-2">

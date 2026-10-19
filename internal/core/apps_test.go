@@ -470,6 +470,8 @@ func TestAppActions(t *testing.T) {
 		say("Your email to Jaume is ready: tap Send."),
 		calls(toolCall("c2", "ext_apps__gmail_send_email", map[string]any{"recipient_email": "x@example.com", "body": "nope"})),
 		say("Ready."),
+		calls(toolCall("c3", "ext_apps__gmail_send_email", map[string]any{"recipient_email": "y@example.com", "body": "later"})),
+		say("Ready again."),
 	)
 	e, admin, bot := assistantEnv(t, model, "appact")
 	e.s.Cfg.ComposioAPIKey, e.s.Cfg.ComposioURL = "ck-test", fake.srv.URL
@@ -482,10 +484,14 @@ func TestAppActions(t *testing.T) {
 	if err != nil || len(chat.Blocks) != 1 || chat.Blocks[0].Type != "action" {
 		t.Fatalf("chat: %+v %v", chat, err)
 	}
+	// The message carries what the card is, not what's in it; its owner reads that from the action.
 	var card core.ActionOut
 	_ = json.Unmarshal(chat.Blocks[0].Data, &card)
-	if card.Status != "pending" || card.Title != "Send an email" || card.App != "Gmail" || len(card.Fields) != 3 {
+	if card.Status != "pending" || card.Title != "Send an email" || card.Verb != "Send" || card.App != "Gmail" || len(card.Fields) != 0 {
 		t.Fatalf("card: %+v", card)
+	}
+	if mine, err := e.s.GetAppAction(e.ctx, admin, core.ActionIDIn{ID: card.ID}); err != nil || !mine.Mine || len(mine.Fields) != 3 {
+		t.Fatalf("owner's card: %+v %v", mine, err)
 	}
 	if res := toolResult(t, reqs(), "c1"); !strings.Contains(res, "NOT been sent") {
 		t.Fatalf("the model was told: %s", res)
@@ -527,5 +533,18 @@ func TestAppActions(t *testing.T) {
 	_ = json.Unmarshal(chat.Blocks[0].Data, &card)
 	if out, err := e.s.DecideAppAction(e.ctx, admin, core.DecideActionIn{ID: card.ID}); err != nil || out.Status != "cancelled" || len(fake.sent) != 1 {
 		t.Fatalf("cancel: %+v %v", out, err)
+	}
+
+	// Prepared, then the app is disconnected: approving fails without reaching it.
+	chat, err = e.s.AssistantChat(e.ctx, admin, ask("and again"))
+	if err != nil || len(chat.Blocks) != 1 {
+		t.Fatalf("third chat: %+v %v", chat, err)
+	}
+	_ = json.Unmarshal(chat.Blocks[0].Data, &card)
+	if _, err := e.s.DisconnectApp(e.ctx, admin, core.AppIn{App: "gmail"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := e.s.DecideAppAction(e.ctx, admin, core.DecideActionIn{ID: card.ID, Approve: true}); err != nil || out.Status != "failed" || !strings.Contains(out.Result, "isn't connected") || len(fake.sent) != 1 {
+		t.Fatalf("approve after disconnect: %+v %v", out, err)
 	}
 }

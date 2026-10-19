@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 // event), nothing runs. The call is saved with its exact arguments and shown under the agent's message
 // as a card with everything that would go out; it runs only when the person whose account it is taps
 // Send, and runs exactly what the card showed. The model never runs one, and nobody else can approve.
+// Others who see the task see that an action waits, never what's in it: an email or a DM is private.
 
 // maxActionsPerTurn bounds how many actions one message can prepare.
 const maxActionsPerTurn = 3
@@ -37,6 +39,10 @@ type ActionOut struct {
 	Result string        `json:"result,omitempty"`
 	Mine   bool          `json:"mine"` // whether the viewer is the one who can approve it
 }
+
+// actionStuck is how long a send may go unanswered before its card says so. It's never run again
+// by itself: it may have gone out.
+const actionStuck = 10 * time.Minute
 
 type ActionIDIn struct {
 	ID string `json:"id" jsonschema:"the action's id"`
@@ -90,6 +96,9 @@ func actionFields(args map[string]any) []ActionField {
 }
 
 func actionOut(id, tool string, args map[string]any, status, result string, mine bool) ActionOut {
+	if !mine {
+		args = nil
+	}
 	t := actionTitles[tool]
 	if t[0] == "" {
 		t = [2]string{strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(tool, strings.ToUpper(appOfTool(tool))+"_"), "_", " ")), "Approve"}
@@ -136,7 +145,8 @@ func (a *assistantRun) proposeAction(ctx context.Context, t extTool, args string
 		a.add(ctx, step)
 		return `{"error":"couldn't save the action"}`
 	}
-	card := actionOut(id, t.tool, in, "pending", "", true)
+	// The message keeps only what the card is; its contents are fetched by their owner (GetAppAction).
+	card := actionOut(id, t.tool, nil, "pending", "", false)
 	d, _ := json.Marshal(card)
 	a.out.Blocks = append(a.out.Blocks, Block{Type: "action", Data: d})
 	step.Summary = "Prepared: " + card.Title + " (" + card.App + ")"
@@ -145,26 +155,38 @@ func (a *assistantRun) proposeAction(ctx context.Context, t extTool, args string
 	if a.turn.done == nil {
 		a.turn.done = map[string]string{}
 	}
+	// Saved with the turn at once, card and all, so a retried turn shows this card instead of preparing another.
 	a.turn.done[key] = res
+	a.turn.blocks = slices.Clone(a.out.Blocks)
+	a.s.saveTurn(ctx, a.turn, true)
 	return res
 }
 
 type actionRow struct {
 	id, member, task, tool, status, result string
 	args                                   map[string]any
+	decided                                *time.Time
 }
 
 func scanAction(row pgx.Row) (actionRow, error) {
 	var r actionRow
 	var raw []byte
-	err := row.Scan(&r.id, &r.member, &r.task, &r.tool, &raw, &r.status, &r.result)
+	err := row.Scan(&r.id, &r.member, &r.task, &r.tool, &raw, &r.status, &r.result, &r.decided)
 	if err == nil {
 		err = json.Unmarshal(raw, &r.args)
 	}
 	return r, err
 }
 
-const actionCols = `id::text, member_id::text, coalesce(task_id, ''), tool, args, status, result`
+const actionCols = `id::text, member_id::text, coalesce(task_id, ''), tool, args, status, result, decided_at`
+
+// shown is how the card reads: a send that never came back (the server stopped mid-way) says so.
+func (r actionRow) shown(mine bool) ActionOut {
+	if r.status == "sending" && r.decided != nil && time.Since(*r.decided) > actionStuck {
+		r.status, r.result = "failed", "No answer from "+appName(appOfTool(r.tool))+": check there whether it went out before doing it again."
+	}
+	return actionOut(r.id, r.tool, r.args, r.status, r.result, mine)
+}
 
 // GetAppAction is an action's card as it stands. Its owner sees it, and so does anyone who can see
 // the task it was prepared on.
@@ -189,7 +211,7 @@ func (s *Service) GetAppAction(ctx context.Context, p *Principal, in ActionIDIn)
 			return ActionOut{}, errf(ErrNotFound, "no such action")
 		}
 	}
-	return actionOut(r.id, r.tool, r.args, r.status, r.result, r.member == p.Member.ID), nil
+	return r.shown(r.member == p.Member.ID), nil
 }
 
 // DecideAppAction runs or cancels an action. Only the person whose account it uses can, from the app.
@@ -226,9 +248,12 @@ func (s *Service) DecideAppAction(ctx context.Context, p *Principal, in DecideAc
 	}
 	r.status = next
 	if in.Approve {
-		r.status, r.result = s.runAppAction(ctx, p, r)
-		err := s.DB.InOrg(ctx, p.Org.ID, func(tx pgx.Tx) error {
-			_, err := tx.Exec(ctx, `UPDATE app_actions SET status = $2, result = $3 WHERE id::text = $1`, r.id, r.status, r.result)
+		// Once claimed it runs to the end and its outcome is kept, even if the person leaves the page.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+		defer cancel()
+		r.status, r.result = s.runAppAction(rctx, p, r)
+		err := s.DB.InOrg(rctx, p.Org.ID, func(tx pgx.Tx) error {
+			_, err := tx.Exec(rctx, `UPDATE app_actions SET status = $2, result = $3 WHERE id::text = $1`, r.id, r.status, r.result)
 			return err
 		})
 		if err != nil {
@@ -239,21 +264,24 @@ func (s *Service) DecideAppAction(ctx context.Context, p *Principal, in DecideAc
 }
 
 // runAppAction runs the saved action through the person's own session, as saved, and says how it went.
+// The session is checked first (made again if Composio forgot it), and the app must still be connected.
 func (s *Service) runAppAction(ctx context.Context, p *Principal, r actionRow) (status, result string) {
-	if !isAction(r.tool) {
+	app := appOfTool(r.tool)
+	if !isAction(r.tool) || !slices.ContainsFunc(s.catalog(), func(c catalogApp) bool { return c.Slug == app }) {
 		return "failed", "this action isn't offered any more"
 	}
-	a, err := s.loadAppSession(ctx, p.Org.ID, p.Member.ID)
-	if err != nil || a == nil {
-		return "failed", "connect " + appName(appOfTool(r.tool)) + " in Settings → Apps first"
+	a, items, err := s.sessionToolkits(ctx, p)
+	if err != nil {
+		return "failed", clip(err.Error(), 300)
+	}
+	if !slices.ContainsFunc(items, func(t composioToolkit) bool { return t.Slug == app && t.active() }) {
+		return "failed", appName(app) + " isn't connected: connect it in Settings → Apps, then ask again"
 	}
 	args, _ := json.Marshal(r.args)
 	sessions := extSessions{}
 	defer sessions.close()
-	rctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	t := extTool{conn: appName(appOfTool(r.tool)), tool: r.tool, server: s.appServer(p.Member.ID, a.mcpURL), action: true}
-	text, err := s.callExternal(rctx, sessions, t, args)
+	t := extTool{conn: appName(app), tool: r.tool, server: s.appServer(p.Member.ID, a.mcpURL), action: true}
+	text, err := s.callExternal(ctx, sessions, t, args)
 	if err != nil {
 		return "failed", clip(noURL(err), 300)
 	}
