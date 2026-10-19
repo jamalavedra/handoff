@@ -47,6 +47,10 @@ func newFakeComposio(t *testing.T) *fakeComposio {
 		func(_ context.Context, _ *mcp.CallToolRequest, _ q) (*mcp.CallToolResult, any, error) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Standup 9:00"}}}, nil, nil
 		})
+	mcp.AddTool(server, &mcp.Tool{Name: "GMAIL_GET_PROFILE", Description: "Read-only, but not one the catalog chose", Annotations: ro},
+		func(_ context.Context, _ *mcp.CallToolRequest, _ q) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{}, nil, nil
+		})
 	mcp.AddTool(server, &mcp.Tool{Name: "COMPOSIO_SEARCH_TOOLS", Description: "Search tools", Annotations: ro},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ q) (*mcp.CallToolResult, any, error) {
 			return &mcp.CallToolResult{}, nil, nil
@@ -162,7 +166,8 @@ func TestApps(t *testing.T) {
 	}
 	body := fake.bodies[0]
 	if body["user_id"] != user || body["tags"].(map[string]any)["enable"].([]any)[0] != "readOnlyHint" ||
-		body["manage_connections"].(map[string]any)["enable"] != false || body["workbench"].(map[string]any)["enable"] != false {
+		body["manage_connections"].(map[string]any)["enable"] != false || body["workbench"].(map[string]any)["enable"] != false ||
+		body["tools"].(map[string]any)["gmail"].(map[string]any)["enable"].([]any)[0] != "GMAIL_FETCH_EMAILS" {
 		t.Fatalf("session: %v", body)
 	}
 

@@ -1,5 +1,5 @@
 -- app_sessions: each person's Composio session for Settings → Apps (their own Gmail, Calendar…).
--- connected is which apps were connected when tools was last listed from the session's MCP server;
+-- toolkits marks the catalog the session was made for; connected is which apps were connected when tools was last listed from the session's MCP server;
 -- tools caches the read-only ones the person's assistant may use.
 CREATE TABLE app_sessions (
     org_id      uuid NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,

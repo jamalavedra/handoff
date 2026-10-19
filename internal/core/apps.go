@@ -3,6 +3,8 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,19 +23,43 @@ import (
 // them: not triage, not replies the server runs on a shared task. Composio keeps the tokens; Handoff
 // keeps one Composio session per person and a cache of the read-only tools that session offers.
 
-// appCatalog is what Settings → Apps offers, in order.
-var appCatalog = []struct{ Slug, Name string }{
-	{"gmail", "Gmail"},
-	{"googlecalendar", "Google Calendar"},
-	{"googledrive", "Google Drive"},
-	{"slack", "Slack"},
-	{"github", "GitHub"},
-	{"notion", "Notion"},
-	{"linear", "Linear"},
+// appCatalog is what Settings → Apps offers, in order, with the tools the assistant may use for each:
+// a few that read what people ask about. Composio marks nearly every tool read-only (GitHub alone
+// has hundreds, from secrets to model inference), so the list is chosen rather than taken whole.
+var appCatalog = []struct {
+	Slug, Name string
+	Tools      []string
+}{
+	{"gmail", "Gmail", []string{"GMAIL_FETCH_EMAILS", "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", "GMAIL_LIST_THREADS", "GMAIL_SEARCH_PEOPLE", "GMAIL_GET_CONTACTS"}},
+	{"googlecalendar", "Google Calendar", []string{"GOOGLECALENDAR_EVENTS_LIST", "GOOGLECALENDAR_FIND_EVENT", "GOOGLECALENDAR_EVENTS_GET", "GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS", "GOOGLECALENDAR_FIND_FREE_SLOTS", "GOOGLECALENDAR_LIST_CALENDARS"}},
+	{"googledrive", "Google Drive", []string{"GOOGLEDRIVE_FIND_FILE", "GOOGLEDRIVE_GET_DOCUMENT", "GOOGLEDRIVE_GET_FILE_METADATA", "GOOGLEDRIVE_EXPORT_GOOGLE_WORKSPACE_FILE", "GOOGLEDRIVE_READ_SPREADSHEET_VALUES", "GOOGLEDRIVE_FIND_FOLDER"}},
+	{"slack", "Slack", []string{"SLACK_SEARCH_MESSAGES", "SLACK_FETCH_CONVERSATION_HISTORY", "SLACK_FETCH_MESSAGE_THREAD_FROM_A_CONVERSATION", "SLACK_LIST_UNREAD_CHANNEL_MESSAGES", "SLACK_FIND_CHANNELS", "SLACK_FIND_USERS"}},
+	{"github", "GitHub", []string{"GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER", "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS", "GITHUB_GET_AN_ISSUE", "GITHUB_GET_A_PULL_REQUEST", "GITHUB_LIST_NOTIFICATIONS", "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER", "GITHUB_GET_REPOSITORY_CONTENT"}},
+	{"notion", "Notion", []string{"NOTION_SEARCH_NOTION_PAGE", "NOTION_GET_PAGE_MARKDOWN", "NOTION_RETRIEVE_PAGE", "NOTION_QUERY_DATABASE", "NOTION_FETCH_DATABASE"}},
+	{"linear", "Linear", []string{"LINEAR_SEARCH_ISSUES", "LINEAR_LIST_LINEAR_ISSUES", "LINEAR_GET_LINEAR_ISSUE", "LINEAR_LIST_LINEAR_PROJECTS", "LINEAR_LIST_LINEAR_TEAMS"}},
 }
 
 // maxAppTools bounds how many of a person's app tools one turn offers the model.
 const maxAppTools = 32
+
+// appTools is the session's tool config: only the chosen tools of each app.
+func appTools() map[string]any {
+	out := map[string]any{}
+	for _, a := range appCatalog {
+		out[a.Slug] = map[string]any{"enable": a.Tools}
+	}
+	return out
+}
+
+// chosen says whether a tool is one the catalog lets the assistant use.
+func chosen(name string) bool {
+	for _, a := range appCatalog {
+		if slices.Contains(a.Tools, name) {
+			return true
+		}
+	}
+	return false
+}
 
 type AppOut struct {
 	Slug        string `json:"slug"`
@@ -79,6 +105,16 @@ func appSlugs() []string {
 		out[i] = a.Slug
 	}
 	return out
+}
+
+// catalogMark is saved with each session: the apps, and a hash of their chosen tools. A session made
+// for another catalog is made again.
+func catalogMark() []string {
+	h := sha256.New()
+	for _, a := range appCatalog {
+		fmt.Fprintln(h, a.Slug, strings.Join(a.Tools, ","))
+	}
+	return append(appSlugs(), "#"+hex.EncodeToString(h.Sum(nil))[:12])
 }
 
 func (p *Principal) requirePerson() error {
@@ -191,7 +227,7 @@ func (s *Service) appSession(ctx context.Context, p *Principal, fresh bool) (*ap
 	if err != nil {
 		return nil, err
 	}
-	if a != nil && !fresh && slices.Equal(a.toolkits, appSlugs()) {
+	if a != nil && !fresh && slices.Equal(a.toolkits, catalogMark()) {
 		return a, nil
 	}
 	// Composio's user is the member: stable, and never shared across workspaces. The session offers
@@ -199,6 +235,7 @@ func (s *Service) appSession(ctx context.Context, p *Principal, fresh bool) (*ap
 	body := map[string]any{
 		"user_id":            "handoff:" + p.Org.ID + ":" + p.Member.ID,
 		"toolkits":           map[string]any{"enable": appSlugs()},
+		"tools":              appTools(),
 		"tags":               map[string]any{"enable": []string{"readOnlyHint"}},
 		"preload":            map[string]any{"tools": "all"},
 		"manage_connections": map[string]any{"enable": false},
@@ -222,14 +259,14 @@ func (s *Service) appSession(ctx context.Context, p *Principal, fresh bool) (*ap
 		_, err := c.tx.Exec(c.ctx, `INSERT INTO app_sessions (org_id, member_id, session_id, mcp_url, toolkits)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (org_id, member_id) DO UPDATE SET session_id = $3, mcp_url = $4, toolkits = $5, tools = '[]', connected = '{}', updated_at = now()`,
-			p.Org.ID, p.Member.ID, out.SessionID, out.MCP.URL, appSlugs())
+			p.Org.ID, p.Member.ID, out.SessionID, out.MCP.URL, catalogMark())
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	// Nothing is cached for a new session: its tools are listed on the next sync.
-	return &appSession{id: out.SessionID, mcpURL: out.MCP.URL, toolkits: appSlugs()}, nil
+	return &appSession{id: out.SessionID, mcpURL: out.MCP.URL, toolkits: catalogMark()}, nil
 }
 
 type composioToolkit struct {
@@ -303,21 +340,10 @@ func (s *Service) syncAppTools(ctx context.Context, p *Principal, a *appSession,
 	return tools, err
 }
 
-// readsOnly keeps tools that only read: marked so, or named for reading when unmarked. Composio's own
-// meta tools (search, connections, sandbox) are never offered.
+// readsOnly keeps the catalog's chosen tools, unless the server says one is destructive. Anything
+// else the session offers (Composio's own helpers, tools added since) is never used.
 func readsOnly(t connTool) bool {
-	if t.Destructive || strings.HasPrefix(t.Name, "COMPOSIO_") {
-		return false
-	}
-	if t.ReadOnly {
-		return true
-	}
-	for _, verb := range []string{"_GET", "_LIST", "_FETCH", "_SEARCH", "_FIND", "_READ"} {
-		if strings.Contains(t.Name, verb) {
-			return true
-		}
-	}
-	return false
+	return chosen(t.Name) && !t.Destructive
 }
 
 // appOfTool is the catalog app a Composio tool belongs to: its slug is the tool name's prefix.
