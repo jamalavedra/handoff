@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/joalavedra/handoff/internal/config"
 )
@@ -67,5 +68,54 @@ func TestImageProxyFollowsRedirects(t *testing.T) {
 	src := srv.URL + "/a"
 	if ct, b, err := s.ProxyImage(t.Context(), src, s.imageSig(src)); err != nil || ct != "image/png" || string(b) != "png" {
 		t.Fatalf("redirected image: %q %q %v", ct, b, err)
+	}
+}
+
+func TestParseReminder(t *testing.T) {
+	now := time.Date(2026, 10, 19, 15, 0, 0, 0, time.UTC)
+	for at, want := range map[string]string{
+		"2026-10-24":                "2026-10-24",
+		"2026-10-24T09:30":          "2026-10-24T09:30",
+		"2026-10-24T09:30:00-07:00": "2026-10-24T09:30",
+		"2026-10-18":                "2026-10-18", // yesterday somewhere
+		"2026-10-01":                "",
+		"2040-01-01":                "",
+		"next friday":               "",
+		"2026-13-01":                "",
+	} {
+		got, err := parseReminder(reminderIn{Title: "Order", At: at}, now)
+		if (err == nil) != (want != "") || got.At != want {
+			t.Errorf("%s: got %q (%v), want %q", at, got.At, err, want)
+		}
+		if err == nil && got.AllDay != (len(want) == 10) {
+			t.Errorf("%s: all_day %v", at, got.AllDay)
+		}
+	}
+}
+
+func TestProfileOf(t *testing.T) {
+	for raw, want := range map[string][2]string{
+		"https://www.linkedin.com/in/jane-doe/": {"linkedin", "jane-doe"},
+		"https://uk.linkedin.com/in/jane":       {"linkedin", "jane"},
+		"https://github.com/joalavedra":         {"github", "joalavedra"},
+		"https://twitter.com/jack":              {"x", "@jack"},
+		"https://x.com/jack/status/1":           {"x", "@jack"},
+		"https://www.instagram.com/someone/":    {"instagram", "@someone"},
+		"https://www.youtube.com/@creator":      {"youtube", "@creator"},
+		"https://mastodon.social/@gargron":      {"mastodon", "@gargron@mastodon.social"},
+		"https://janedoe.dev/about":             {"web", "janedoe.dev"},
+	} {
+		u, _ := url.Parse(raw)
+		if n, h := profileOf(u); n != want[0] || h != want[1] {
+			t.Errorf("%s: got %s %q, want %s %q", raw, n, h, want[0], want[1])
+		}
+	}
+}
+
+func TestRouteMode(t *testing.T) {
+	for in, want := range map[string]string{"": "walk", "Walking": "walk", "cycling": "bike", "car": "drive", "boat": ""} {
+		if got := routeMode(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
 	}
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, AtSign, ChevronDown, Globe, MessageSquare, Search, SmilePlus } from "lucide-react";
+import { ArrowUp, AtSign, Check, ChevronDown, Globe, MessageSquare, Search, SmilePlus, Sparkles } from "lucide-react";
 import { sources } from "../checklist";
 import { Blocks } from "../blocks";
 import { toast } from "sonner";
@@ -14,7 +14,9 @@ import { Avatar, ErrorText, Who } from "./app";
 import { MicButton } from "./dictation";
 import { useDictation } from "@/hooks/use-dictation";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ActivityTrail, LiveTrail } from "./activity-trail";
+import { LiveTrail, Rows, agentAvatar } from "./activity-trail";
+import { summary } from "../activity";
+import { Trace } from "@/components/ui/trace";
 import { useAgentLine, useChatInView } from "../agent-activity";
 import { cleanQuote, replyArgs, snippet, type ReplyDraft } from "../reply";
 import { QuotedReply, ReplyAction, ReplyChip, ReplyContext, ReplyTarget, SelectionReply } from "./reply";
@@ -66,7 +68,9 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   // Mounted only while the panel is open; active while it shows this chat.
   useChatInView(id, active);
   const count = q.data?.comments.length ?? 0;
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [count, id]);
   const send = useMutation({
     // A quick answer stands alone: it drops the reply that was open (`drop`) instead of answering it.
     mutationFn: (v: { body: string; at?: number; reply?: ReplyDraft | null; drop?: ReplyDraft | null }) => api.tool("comment", { id, body: v.body, ...replyArgs(v.reply ?? null) }),
@@ -95,13 +99,14 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   };
   const t = q.data?.task;
   const comments = q.data?.comments ?? [];
-  const typers = (q.data?.here ?? []).filter((h) => h.typing);
+  // An agent at work shows its live trail instead.
+  const typers = (q.data?.here ?? []).filter((h) => h.typing && h.member.kind !== "agent");
   // Nothing to write into until the task has loaded, and never into the trash.
   const locked = !t || !!t.deleted_at;
 
   return (
     <ReplyContext.Provider value={locked ? null : startReply}>
-      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
+      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-6" aria-live="polite">
         {q.error && <ErrorText error={q.error} />}
         {q.data && comments.length === 0 && (
           <div className="mt-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
@@ -124,6 +129,7 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
         </section>
         <SelectionReply scroller={scrollRef} comments={comments} />
         <LiveTrail task={id} />
+        {typers.length > 0 && <p aria-live="polite" className="mt-3 animate-pulse text-xs text-muted-foreground">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</p>}
         <div ref={endRef} />
       </div>
       {!locked && (
@@ -133,7 +139,6 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
         >
           {reply && <ReplyChip draft={reply} onCancel={() => { setReply(null); ref.current?.focus(); }} />}
           <MentionMenu items={suggestions} active={picked} onPick={insertMention} onHover={setPick} />
-          {typers.length > 0 && <span aria-live="polite" className="absolute -top-6 left-3 animate-pulse text-xs text-muted-foreground">{names(typers)} {typers.length === 1 ? "is" : "are"} typing…</span>}
           <textarea
             rows={1}
             ref={ref}
@@ -180,43 +185,86 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   );
 }
 
-// Bubble is one message; an agent's carries the trace of what it did underneath.
+// Bubble is one person's message; an agent's is an AgentMessage.
 function Bubble({ c, mine, mentions, locked, answers, onAnswer }: { c: Comment; mine: boolean; mentions: string[]; locked: boolean; answers?: string[]; onAnswer: (a: string) => void }) {
-  const cited = c.author?.kind === "agent" ? sources(c.body) : [];
+  if (c.author?.kind === "agent") return <AgentMessage c={c} mentions={mentions} locked={locked} answers={answers} onAnswer={onAnswer} />;
   return (
     <div className={cn("flex gap-2.5", mine && "flex-row-reverse")}>
       {!mine && <Avatar m={c.author} className="mt-0.5" />}
       <div className="flex min-w-0 max-w-[88%] flex-col gap-1.5">
-        <div className={cn("min-w-0 rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
+        <div className={cn("min-w-0 rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card")}>
           {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
           {!c.activity?.length && c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
           <QuotedReply r={c.reply_to} />
           <Markdown text={c.body} mentions={mentions} />
           <Blocks blocks={c.blocks} />
-          {cited.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-              Sources
-              {cited.map((s) => (
-                <a key={s.host} href={s.url} target="_blank" rel="noreferrer noopener" className="flex max-w-44 items-center gap-1 rounded-full border border-border px-2 py-0.5 hover:bg-muted hover:text-foreground">
-                  <Globe className="size-3 shrink-0" /><span className="truncate">{s.host}</span>
-                </a>
-              ))}
-            </div>
-          )}
           <Reactions c={c} disabled={locked} />
           {mine && <div className="mt-0.5 text-right text-[11px] text-muted-foreground/70">{ago(c.created_at)}</div>}
         </div>
-        {c.activity?.length ? <ActivityTrail steps={c.activity} className="px-1" /> : null}
-        {answers && answers.length > 0 && (
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Quick answers">
-            {answers.map((a) => (
-              <button key={a} type="button" onClick={() => onAnswer(a)} className="rounded-full border border-border bg-card px-3 py-1 text-sm hover:bg-[linear-gradient(var(--accent),var(--accent))]">
-                {a}
-              </button>
+        <Answers answers={answers} onAnswer={onAnswer} />
+      </div>
+    </div>
+  );
+}
+
+// AgentMessage is an agent's message laid out like a thread post, not a bubble: name, time and its
+// steps (folded to one line) on top, then the answer, its blocks and its sources.
+function AgentMessage({ c, mentions, locked, answers, onAnswer }: { c: Comment; mentions: string[]; locked: boolean; answers?: string[]; onAnswer: (a: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const steps = c.activity ?? [];
+  const s = steps.length ? summary(steps) : null;
+  const cited = sources(c.body);
+  const Icon = c.lookups?.length ? Search : Sparkles;
+  return (
+    <div className="flex gap-3">
+      {c.author && <Avatar m={c.author} className={agentAvatar} />}
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-[15px] sm:text-sm">
+        <div className="flex flex-wrap items-baseline gap-x-1.5 text-xs text-muted-foreground">
+          <span className="text-sm font-semibold text-foreground">{c.author?.name ?? "Agent"}</span>
+          {c.on_behalf_of && <span>for {c.on_behalf_of.name}</span>}
+          <span>{ago(c.created_at)}</span>
+          {s && <>
+            <span aria-hidden>·</span>
+            <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="inline-flex items-center gap-0.5 hover:text-foreground">
+              {s.label}{s.failed > 0 && ` · ${s.failed} failed`}<ChevronDown className={cn("size-3 transition-transform", open && "rotate-180")} />
+            </button>
+          </>}
+        </div>
+        {s && (open
+          ? <Trace><Rows steps={steps} /></Trace>
+          : <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground"><Icon className="size-3.5" />{s.headline}{!s.failed && <Check className="size-3" />}</div>)}
+        {!s && c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
+        <div>
+          <QuotedReply r={c.reply_to} />
+          <Markdown text={c.body} mentions={mentions} />
+        </div>
+        <Blocks blocks={c.blocks} />
+        {cited.length > 0 && (
+          <div className="-mr-4 flex items-center gap-1.5 overflow-x-auto pr-4 text-xs text-muted-foreground [scrollbar-width:none]">
+            <span className="shrink-0">Sources</span>
+            {cited.map((s) => (
+              <a key={s.host} href={s.url} target="_blank" rel="noreferrer noopener" className="flex shrink-0 items-center gap-1 rounded-full border border-border px-2.5 py-1 hover:bg-muted hover:text-foreground">
+                <Globe className="size-3 shrink-0" />{s.host}
+              </a>
             ))}
           </div>
         )}
+        <Reactions c={c} disabled={locked} />
+        <Answers answers={answers} onAnswer={onAnswer} />
       </div>
+    </div>
+  );
+}
+
+function Answers({ answers, onAnswer }: { answers?: string[]; onAnswer: (a: string) => void }) {
+  if (!answers?.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Quick answers">
+      {answers.map((a) => (
+        <button key={a} type="button" onClick={() => onAnswer(a)} className="rounded-full border border-border bg-card px-3 py-1 text-sm hover:bg-[linear-gradient(var(--accent),var(--accent))]">
+          {a}
+        </button>
+      ))}
     </div>
   );
 }

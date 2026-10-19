@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -356,5 +357,42 @@ func TestTriageDoesTheWork(t *testing.T) {
 	// The project's notes went to the model as context.
 	if req, _ := lastModelRequest.Load().(string); !strings.Contains(req, "Notes in the Inbox project") || !strings.Contains(req, "Phone budget") || !strings.Contains(req, "Under 800 euros") {
 		t.Fatalf("project notes not in the triage request: %s", req)
+	}
+}
+
+// A model that answers in text first still gets its map, after the one nudge.
+func TestTriageNudgesForMap(t *testing.T) {
+	geo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"lat":"37.7986","lon":"-122.4368","display_name":"Causwells, Chestnut St"}]`)
+	}))
+	t.Cleanup(geo.Close)
+	t.Setenv("HANDOFF_GEOCODER_URL", geo.URL)
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		last, _ := req.Messages[len(req.Messages)-1]["content"].(string)
+		msg := map[string]any{"content": "Causwells is a good pick."}
+		switch {
+		case strings.HasPrefix(last, "Before the JSON"):
+			args, _ := json.Marshal(map[string]any{"places": []map[string]any{{"name": "Causwells", "where": "Causwells, San Francisco"}}})
+			msg = map[string]any{"tool_calls": []map[string]any{{"id": "m1", "type": "function", "function": map[string]any{"name": "show_map", "arguments": string(args)}}}}
+		case strings.HasPrefix(last, "Now reply with the JSON"):
+			msg = map[string]any{"content": `{"work":"Causwells, on Chestnut St."}`}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": msg}}})
+	}))
+	t.Cleanup(model.Close)
+	e := triageEnv(t, model)
+	admin := e.org(t, "trimap")
+	e.agent(t, admin, "Acme Bot", nil)
+	if _, err := e.s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: model.URL + "/v1", Model: "m", Credential: "sk-test"}); err != nil {
+		t.Fatal(err)
+	}
+	task := e.create(t, admin, core.NewTask{Title: "Book a burger place in SF"})[0]
+	d := waitTriage(t, e, admin, task.ID)
+	if len(d.Comments) != 1 || len(d.Comments[0].Blocks) != 1 || d.Comments[0].Blocks[0].Type != "map" {
+		t.Fatalf("want one comment with a map, got %+v", d.Comments)
 	}
 }

@@ -277,7 +277,9 @@ function AssistantChat({ me, onClose, drawer, page, active }: { me: Me; onClose:
   const withContext = dropped !== page.key;
   useEffect(() => save(org, member, msgs), [org, member, msgs]);
   useEffect(() => { if (!drawer && active) inputRef.current?.focus(); }, [drawer, active]);
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [msgs.length]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [msgs.length]);
 
   const send = useMutation({
     mutationFn: (v: { history: Msg[]; turn: string; id: number }) =>
@@ -298,7 +300,9 @@ function AssistantChat({ me, onClose, drawer, page, active }: { me: Me; onClose:
       setMsgs((m) => [...m, { role: "assistant", content: e instanceof Error ? e.message : String(e), error: true }]);
     },
   });
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [send.isPending]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [send.isPending]);
 
   const ask = (text: string) => {
     const t = text.trim();

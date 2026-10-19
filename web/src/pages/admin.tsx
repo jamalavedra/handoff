@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Bot, ChevronDown, Sparkles } from "lucide-react";
+import { Bot, ChevronDown, Sparkles, UserMinus } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, cn, type Member } from "../lib";
 import { Badge, Card, ErrorText } from "../components/app";
+import { ConfirmButton } from "../components/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -47,7 +48,11 @@ export function AdminPage() {
             <div className="min-w-40 flex-1"><div className="font-medium">{m.name}</div><div className="text-xs text-muted-foreground">{m.email}</div></div>
             {m.status === "invited" && <Badge>invited</Badge>}
             <NativeSelect value={m.role} onChange={(e) => change.mutate({ id: m.id, role: e.target.value })} aria-label={`Role for ${m.name}`}><option value="member">Member</option><option value="admin">Admin</option></NativeSelect>
-            {m.id !== me.data?.member?.id && <Button size="sm" variant="ghost" className="text-red-600" onClick={() => confirm(`Remove ${m.name}? Their agents are disconnected too.`) && change.mutate({ id: m.id, remove: true })}>Remove</Button>}
+            {m.id !== me.data?.member?.id && (
+              <ConfirmButton icon={UserMinus} label="Remove" title={`Remove ${m.name}?`} pendingLabel="Removing…"
+                description={<>They lose access to the workspace and their agents are disconnected. Their tasks and comments stay.</>}
+                onConfirm={() => change.mutateAsync({ id: m.id, remove: true })} />
+            )}
           </div>
         ))}
         <div className="px-4"><ErrorText error={change.error} /></div>
@@ -183,7 +188,7 @@ function TriageSettings({ agents }: { agents: Member[] }) {
 
 const tokens = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
 
-// The model for the agent's background jobs (memory upkeep, reviews), and the monthly cap that stops them.
+// The model for the agent's background jobs (memory upkeep, reviews), and the monthly cap that pauses them.
 function BackgroundSettings({ t }: { t: Triage }) {
   const invalidate = useInvalidate();
   const [f, setF] = useState({ base_url: "", model: "", credential: "" });
@@ -224,7 +229,7 @@ function BackgroundSettings({ t }: { t: Triage }) {
             <Input type="number" min={0} step={1000} placeholder="No cap" value={cap} onChange={(e) => setCap(e.target.value)} />
             <Button type="submit" variant="outline" disabled={saveCap.isPending}>Save</Button>
           </div>
-          <span className="text-xs font-normal text-muted-foreground">Counts every model call this month. Once reached, background jobs stop; triage, chat and the assistant keep working.</span>
+          <span className="text-xs font-normal text-muted-foreground">Counts every model call this month. Once reached, background jobs pause until next month or a higher cap, then pick up where they left off; triage, chat and the assistant keep working.</span>
         </label>
         {u && (
           <p className={cn("text-xs", stopped ? "text-amber-700" : "text-muted-foreground")}>

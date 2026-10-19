@@ -183,6 +183,11 @@ function TaskView({ id }: { id: string }) {
     const beat = setInterval(watch, 15000);
     return () => { clearInterval(beat); watch({ leave: true }); };
   }, [id]);
+
+  // Opening a task opens its chat beside it on the side panel (desktop) / drawer (phone).
+  useEffect(() => {
+    assistant.openTaskChat();
+  }, [id, assistant.openTaskChat]);
   const link = useMutation({ mutationFn: (v: { blocker: string; remove?: boolean }) => api.tool("link_tasks", { blocker: v.blocker, blocked: id, remove: v.remove }), onSuccess: invalidate });
 
   // Back within the app when there is somewhere to go; a deep link (fresh tab) lands on My tasks.

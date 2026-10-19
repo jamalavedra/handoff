@@ -31,7 +31,9 @@ export function useMentionItems(query: string | null, members: Member[], exclude
 // focus; the composer drives it from the keyboard and passes the highlighted index.
 export function MentionMenu({ items, active, onPick, onHover }: { items: Item[]; active: number; onPick: (item: Item) => void; onHover: (i: number) => void }) {
   const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" }), [active]);
+  useEffect(() => {
+    listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
   if (!items.length) return null;
   const firstTask = items.findIndex((x) => x.kind === "task");
   const row = (item: Item, i: number) => (

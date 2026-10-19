@@ -21,7 +21,7 @@ Each company gets a workspace at `acme.<your-domain>` (or its own domain), or yo
   - **answers in task chats** when mentioned, and **works on tasks handed to it**, ticking todos with a one-line result. When it needs a decision it **hands the task back** to you with tappable answers, and picks it up again when you reply;
   - **runs automations**: repeating tasks assigned to it, on schedule or with Run now.
 - It reads the project's notes as context, and writes a note only when asked.
-- **Background jobs**, work nobody waits for, run on the server with retries, and can use a separate, cheaper **background model**. A **monthly token cap** stops them once the workspace's model calls reach it; triage, chat and the assistant keep working. Admin → Triage shows this month's usage.
+- **Background jobs**, work nobody waits for, run on the server with retries, and can use a separate, cheaper **background model**. A **monthly token cap** pauses them once the workspace's model calls reach it (they resume next month, or when the cap is raised); triage, chat and the assistant keep working. Admin → Triage shows this month's usage.
 - **Its work is visible**: live steps while it works, a trace under each reply ("Looked up Web search · 3 steps"), 👀 → ✅ on the message it answered, and a notification when it's done.
 - **Connections** to remote MCP servers give it tools: a free web search in one click, or your own servers with OAuth sign-in. Read-only tools are on by default; destructive ones can't be switched on.
 - **Blocks** let it show **images** and **maps** under its messages. The server checks what's shown: a picture is the cited page's own image, served through this server; places are located with OpenStreetMap. Each block kind is a small plugin (`internal/core/blocks.go` and `web/src/blocks/`).
@@ -77,7 +77,10 @@ Point `tasks.example.com` and `*.tasks.example.com` at the server. Caddy issues 
 | `HANDOFF_ALLOW_SIGNUP` | Whether anyone can create a workspace on the apex (default: on, unless single-org). |
 | `HANDOFF_SMTP_URL`, `HANDOFF_MAIL_FROM` | Email for sign-in links and invites. Without SMTP, links are logged. |
 | `HANDOFF_GOOGLE_CLIENT_ID`, `HANDOFF_GOOGLE_CLIENT_SECRET` | Optional Google sign-in; redirect URI `<HANDOFF_BASE_URL>/auth/google/callback`. |
-| `HANDOFF_GEOCODER_URL` | Nominatim-compatible geocoder for map blocks (default: OpenStreetMap's). |
+| `HANDOFF_COMPOSIO_API_KEY` | Optional [Composio](https://composio.dev) project key. Turns on Settings → Apps, where each person connects their own Gmail, Google Calendar, Drive, Slack, GitHub, Notion or Linear. The agent reads them when it works for that person; anything it would send, post or create (an email, a message, an event, an issue) waits as a card until that person taps to approve it. |
+| `HANDOFF_COMPOSIO_X_AUTH_CONFIG` | Optional. The id of a Composio auth config for X, made with your own X developer app (Composio has no shared one). Adds X to Settings → Apps: reading mentions and profiles, and posts and direct messages on approval. |
+| `HANDOFF_GEOCODER_URL` | Nominatim-compatible geocoder for map and route blocks (default: OpenStreetMap's). |
+| `HANDOFF_ROUTER_URL` | OSRM router for route blocks, with `/routed-foot`, `/routed-bike` and `/routed-car` profiles (default: `https://routing.openstreetmap.de`). Point both at your own servers to keep places in-house. |
 | `HANDOFF_DEV` | Shows sign-in links on screen. Never in production. |
 
 On multi-workspace servers, model, webhook and connection URLs may not be private addresses.

@@ -32,7 +32,8 @@ type agentJob struct {
 }
 
 // jobKind runs one kind of job. The result is kept on the row; errBackgroundOff skips the job;
-// any other error is retried with backoff, up to jobMaxAttempts.
+// errBackgroundCapped pauses it until the cap allows; any other error is retried with backoff, up
+// to jobMaxAttempts.
 type jobKind func(ctx context.Context, s *Service, j *agentJob) (map[string]any, error)
 
 // jobKinds are the registered kinds. A pending job of a kind that isn't registered (from a newer
@@ -156,8 +157,13 @@ func jobBackoff(attempt int) time.Duration {
 }
 
 // finishJob records how a run ended, if this worker still holds the claim. A job triggered again while
-// it ran goes back to pending with a fresh set of attempts, so that trigger isn't lost.
+// it ran goes back to pending with a fresh set of attempts, so that trigger isn't lost. A job stopped by
+// the token cap waits, pending, until next month (UTC) or until an admin changes the cap.
 func (s *Service) finishJob(ctx context.Context, j *agentJob, result map[string]any, runErr error) {
+	if errors.Is(runErr, errBackgroundCapped) {
+		s.pauseJob(ctx, j)
+		return
+	}
 	state, msg := "done", ""
 	switch {
 	case errors.Is(runErr, errBackgroundOff):
@@ -184,6 +190,22 @@ func (s *Service) finishJob(ctx context.Context, j *agentJob, result map[string]
 	})
 	if err != nil {
 		slog.Error("job: record", "kind", j.Kind, "job", j.ID, "err", err)
+	}
+}
+
+// pauseJob puts a job stopped by the cap back to pending, due when the month turns. The run that hit
+// the cap doesn't count as an attempt: it made no progress.
+func (s *Service) pauseJob(ctx context.Context, j *agentJob) {
+	ctx = context.WithoutCancel(ctx)
+	err := s.DB.InOrg(ctx, j.Org, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE agent_jobs SET claim = NULL, claim_until = NULL, updated_at = now(), last_error = $3,
+				attempts = greatest(attempts - 1, 0),
+				due_at = (date_trunc('month', now() AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC'
+			WHERE id::text = $1 AND claim::text = $2`, j.ID, j.claim, capPaused)
+		return err
+	})
+	if err != nil {
+		slog.Error("job: pause", "kind", j.Kind, "job", j.ID, "err", err)
 	}
 }
 

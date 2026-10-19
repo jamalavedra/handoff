@@ -20,11 +20,13 @@ import (
 	"time"
 )
 
-// Blocks are rich pieces the agent attaches to its message: images, a map. Each kind is a plugin: a
-// tool the model calls with what it wants to show, and a resolver that turns that into facts the
-// server checked (an image found on the page it cites, coordinates from a geocoder), never what the
-// model made up. The web app has a renderer per kind and skips kinds it doesn't know. Adding a kind
-// is one blockPlugin here and one renderer in web/src/blocks.
+// Blocks are small artifacts the agent attaches to its message instead of a wall of text: images, a
+// map, a route, a reminder, people to connect with. Each kind is a plugin: a tool the model calls
+// with what it wants to show, and a resolver that turns that into facts the server checked (an image
+// found on the page it cites, coordinates from a geocoder, a path from a router, a date that
+// parses), never what the model made up. The web app has a renderer per kind and skips kinds it
+// doesn't know. Adding a kind is one blockPlugin (here or in a blocks_*.go file), listed in
+// blockPlugins, and one renderer in web/src/blocks.
 
 type Block struct {
 	Type string          `json:"type"`
@@ -36,10 +38,10 @@ type blockPlugin struct {
 	kind    string // Block.Type
 	desc    string
 	schema  any
-	resolve func(ctx context.Context, s *Service, raw json.RawMessage) (data any, summary string, err error)
+	resolve func(ctx context.Context, a *assistantRun, raw json.RawMessage) (data any, summary string, err error)
 }
 
-var blockPlugins = []blockPlugin{imagesPlugin, mapPlugin}
+var blockPlugins = []blockPlugin{imagesPlugin, mapPlugin, routePlugin, reminderPlugin, peoplePlugin}
 
 var blockToolDefs = func() []map[string]any {
 	var defs []map[string]any
@@ -49,7 +51,8 @@ var blockToolDefs = func() []map[string]any {
 	return defs
 }()
 
-const maxBlocks = 4
+// One of each kind, so a message can carry every kind once.
+var maxBlocks = len(blockPlugins)
 
 // showBlock runs a block tool for the model: the block goes under its message.
 func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string) string {
@@ -61,7 +64,7 @@ func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string
 	if len(a.out.Blocks) >= maxBlocks {
 		step.Summary, step.Error = "Didn't add another "+b.kind, "too many blocks"
 		a.add(ctx, step)
-		return `{"error":"this message already has enough images and maps"}`
+		return `{"error":"this message already has enough blocks (images, maps, routes, reminders, people)"}`
 	}
 	if b.tool == imagesPlugin.tool {
 		if raw = a.onlyFoundPages(raw); raw == nil {
@@ -72,7 +75,7 @@ func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string
 	}
 	rctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	data, summary, err := b.resolve(rctx, a.s, raw)
+	data, summary, err := b.resolve(rctx, a, raw)
 	step.Summary = summary
 	if err != nil {
 		step.Error = clip(err.Error(), 200)
@@ -166,7 +169,8 @@ var imagesPlugin = blockPlugin{
 	kind:   "images",
 	desc:   "Show pictures under your message: give pages you found, one per item, each a page about that one item (a product page, a place's page), and each page's own main picture is shown with a link to it. A list article has one picture for the whole list, so don't use it for several items. Use it when seeing helps choose.",
 	schema: schemaOf[imagesIn](),
-	resolve: func(ctx context.Context, s *Service, raw json.RawMessage) (any, string, error) {
+	resolve: func(ctx context.Context, a *assistantRun, raw json.RawMessage) (any, string, error) {
+		s := a.s
 		var in imagesIn
 		if err := json.Unmarshal(raw, &in); err != nil || len(in.Pages) == 0 {
 			return nil, "", errors.New("give 1 to 6 pages")
@@ -287,7 +291,8 @@ var mapPlugin = blockPlugin{
 	kind:   "map",
 	desc:   "Show places on a map under your message (shops, restaurants, venues): each is looked up by its address or name and city, so give real places you found. Use it when where things are helps choose.",
 	schema: schemaOf[mapIn](),
-	resolve: func(ctx context.Context, s *Service, raw json.RawMessage) (any, string, error) {
+	resolve: func(ctx context.Context, a *assistantRun, raw json.RawMessage) (any, string, error) {
+		s := a.s
 		var in mapIn
 		if err := json.Unmarshal(raw, &in); err != nil || len(in.Places) == 0 {
 			return nil, "", errors.New("give 1 to 8 places")

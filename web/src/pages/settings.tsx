@@ -6,7 +6,7 @@ import { useMe } from "../main";
 
 // SettingsHeader is the top of every settings page: the title and its sections.
 // General (workspace, people, triage) is for admins; Agents and Activity are for everyone.
-export function SettingsHeader({ active }: { active: "general" | "agents" | "connections" | "activity" }) {
+export function SettingsHeader({ active }: { active: "general" | "agents" | "apps" | "connections" | "activity" }) {
   const admin = useMe().data?.member?.role === "admin";
   // Same query as the sidebar badge, so every section shows pending agent requests.
   const approvals = useQuery({ queryKey: ["approvals"], queryFn: () => api.tool<{ approvals: unknown[] }>("list_approvals") });
@@ -14,6 +14,7 @@ export function SettingsHeader({ active }: { active: "general" | "agents" | "con
   const tabs = [
     ...(admin ? [{ key: "general", to: "/settings", label: "General" }] : []),
     { key: "agents", to: "/settings/agents", label: "Agents" },
+    { key: "apps", to: "/settings/apps", label: "Apps" },
     ...(admin ? [{ key: "connections", to: "/settings/connections", label: "Connections" }] : []),
     { key: "activity", to: "/settings/activity", label: "Activity" },
   ];

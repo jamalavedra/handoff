@@ -49,6 +49,12 @@ func newModelServer(t *testing.T, content string) *modelServer {
 	return m
 }
 
+func (m *modelServer) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.models)
+}
+
 func (m *modelServer) last() (model, key string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -214,14 +220,25 @@ func TestTokenCap(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := s.backgroundModel(ctx, p.Org.ID); !errors.Is(err, errBackgroundOff) {
+	// The same job's next call is refused: the cap is checked before every call, not only the first.
+	if _, err := s.chatCompletion(ctx, st, cred, map[string]any{}); !errors.Is(err, errBackgroundCapped) {
+		t.Fatalf("next call over the cap: %v", err)
+	}
+	if srv.calls() != 3 {
+		t.Fatalf("the model was called %d times", srv.calls())
+	}
+	if _, _, err := s.backgroundModel(ctx, p.Org.ID); !errors.Is(err, errBackgroundCapped) {
 		t.Fatalf("over the cap: %v", err)
+	}
+	// Triage, chat and the assistant aren't background work: the cap doesn't stop them.
+	if _, err := s.chatCompletion(ctx, &triageSettings{OrgID: p.Org.ID, BaseURL: st.BaseURL, Model: st.Model}, cred, map[string]any{}); err != nil {
+		t.Fatalf("foreground call over the cap: %v", err)
 	}
 	out, err := s.GetTriage(ctx, p, struct{}{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.MonthlyTokenCap != 300 || out.Usage.BackgroundCalls != 3 || out.Usage.Calls != 3 {
+	if out.MonthlyTokenCap != 300 || out.Usage.BackgroundCalls != 3 || out.Usage.Calls != 4 {
 		t.Fatalf("settings: %+v %+v", out, out.Usage)
 	}
 	// Raising it lets them run again; 0 removes it.

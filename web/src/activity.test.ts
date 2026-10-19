@@ -43,4 +43,5 @@ test("reads assistant steps, old and new", () => {
   assert.equal(summary(steps.slice(0, 2)).headline, "Made changes");
   assert.equal(summary(steps.slice(3)).headline, "Checked the tasks");
   assert.equal(summary([...steps, { type: "write", text: "Handed it back", tool: "ask_person" }]).headline, "Needs your input");
+  assert.equal(summary([...steps, { type: "tool", text: "Prepared: Send an email (Gmail)", tool: "ext_apps__gmail_send_email" }]).headline, "Ready for your approval");
 });
