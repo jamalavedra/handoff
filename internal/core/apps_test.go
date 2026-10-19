@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -191,7 +192,7 @@ func TestApps(t *testing.T) {
 	fake.connect(user, "googlecalendar")
 	out, err = e.s.ListApps(e.ctx, admin, struct{}{})
 	apps := appsByName(out)
-	if err != nil || !apps["gmail"].Connected || apps["gmail"].Tools != 1 || !apps["googlecalendar"].Connected || apps["googlecalendar"].Tools != 1 || apps["slack"].Connected {
+	if err != nil || !apps["gmail"].Connected || len(apps["gmail"].Tools) != 1 || !apps["googlecalendar"].Connected || len(apps["googlecalendar"].Tools) != 1 || apps["slack"].Connected {
 		t.Fatalf("connected apps: %+v %v", out, err)
 	}
 
@@ -242,15 +243,128 @@ func TestApps(t *testing.T) {
 	fake.mu.Lock()
 	clear(fake.sessions)
 	fake.mu.Unlock()
-	if out, err = e.s.ListApps(e.ctx, admin, struct{}{}); err != nil || !appsByName(out)["gmail"].Connected || appsByName(out)["gmail"].Tools != 1 {
+	if out, err = e.s.ListApps(e.ctx, admin, struct{}{}); err != nil || !appsByName(out)["gmail"].Connected || len(appsByName(out)["gmail"].Tools) != 1 {
 		t.Fatalf("after a lost session: %+v %v", out, err)
 	}
 
 	// Disconnecting removes the account at Composio and its tools.
-	if out, err = e.s.DisconnectApp(e.ctx, admin, core.AppIn{App: "gmail"}); err != nil || appsByName(out)["gmail"].Connected || appsByName(out)["gmail"].Tools != 0 || !appsByName(out)["googlecalendar"].Connected {
+	if out, err = e.s.DisconnectApp(e.ctx, admin, core.AppIn{App: "gmail"}); err != nil || appsByName(out)["gmail"].Connected || len(appsByName(out)["gmail"].Tools) != 0 || !appsByName(out)["googlecalendar"].Connected {
 		t.Fatalf("disconnect: %+v %v", out, err)
 	}
 	if _, err := e.s.DisconnectApp(e.ctx, admin, core.AppIn{App: "gmail"}); !core.IsCode(err, core.ErrNotFound) {
 		t.Fatalf("disconnected twice: %v", err)
+	}
+}
+
+// The case from the field: "Check my invoices in inbox" as a task, then "@agent my gmail inbox" in its
+// chat. Triage and the reply both read the asker's Gmail; nobody else's turns get it.
+func TestAppsOnTasks(t *testing.T) {
+	fake := newFakeComposio(t)
+	var mu sync.Mutex
+	var got []chatReq
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatReq
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		got = append(got, req)
+		mu.Unlock()
+		sys, _ := req.Messages[0]["content"].(string)
+		last := req.Messages[len(req.Messages)-1]
+		offers := slices.ContainsFunc(req.Tools, func(tl struct {
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
+		}) bool {
+			return tl.Function.Name == "ext_apps__gmail_fetch_emails"
+		})
+		msg := map[string]any{"content": `{"title":"Check invoices in my inbox"}`}
+		switch {
+		case last["role"] == "tool" && strings.HasPrefix(sys, "You triage"):
+			msg = map[string]any{"content": "Found it."}
+		case last["role"] == "tool":
+			msg = map[string]any{"content": "Ana's invoice #42 is due Friday."}
+		case offers:
+			msg = map[string]any{"content": nil, "tool_calls": []map[string]any{toolCall("g1", "ext_apps__gmail_fetch_emails", map[string]any{"query": "invoice"})}}
+		case !strings.HasPrefix(sys, "You triage"):
+			msg = map[string]any{"content": "I can't see your inbox."}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": msg}}})
+	}))
+	t.Cleanup(model.Close)
+	e, admin, bot := assistantEnv(t, model, "apptask")
+	e.s.Cfg.ComposioAPIKey, e.s.Cfg.ComposioURL = "ck-test", fake.srv.URL
+	fake.connect("handoff:"+admin.Org.ID+":"+admin.Member.ID, "gmail")
+	if _, err := e.s.ListApps(e.ctx, admin, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	offered := func(from int) (triage, other []bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, r := range got[from:] {
+			sys, _ := r.Messages[0]["content"].(string)
+			has := false
+			for _, tl := range r.Tools {
+				has = has || strings.HasPrefix(tl.Function.Name, "ext_apps__")
+			}
+			if strings.HasPrefix(sys, "You triage") {
+				triage = append(triage, has)
+			} else {
+				other = append(other, has)
+			}
+		}
+		return
+	}
+
+	// Triage of the task its author wrote looks in their inbox.
+	task := e.create(t, admin, core.NewTask{Title: "Check my invoices in inbox"})[0]
+	waitTriage(t, e, admin, task.ID)
+	if tr, _ := offered(0); len(tr) == 0 || !tr[0] {
+		t.Fatalf("triage wasn't offered the author's gmail: %v", tr)
+	}
+
+	// Asked in the task's chat, the agent reads it and answers there.
+	n := len(got)
+	if _, err := e.s.Comment(e.ctx, admin, core.CommentIn{ID: task.ID, Body: "@Acme Bot my gmail inbox I have connected"}); err != nil {
+		t.Fatal(err)
+	}
+	var reply core.CommentOut
+	for range 200 {
+		d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if c := d.Comments; len(c) > 0 && c[len(c)-1].Author.ID == bot.Member.ID && strings.Contains(c[len(c)-1].Body, "invoice") {
+			reply = c[len(c)-1]
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(reply.Body, "#42") || len(reply.Lookups) != 1 || reply.Lookups[0].Source != "Gmail" {
+		t.Fatalf("reply: %+v", reply)
+	}
+	if sys := got[n].Messages[0]["content"].(string); !strings.Contains(sys, "everyone who can see it reads it") {
+		t.Fatalf("shared prompt doesn't warn about the audience: %s", sys)
+	}
+
+	// Bob, without apps, asks on the same task: his turn gets no one's gmail.
+	if _, err := e.s.Invite(e.ctx, admin, core.InviteIn{Email: "bob@apptask.test"}); err != nil {
+		t.Fatal(err)
+	}
+	bob, err := e.s.MemberForLogin(e.ctx, admin.Org, "bob@apptask.test", "Bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bp, _ := e.s.Principal(e.ctx, admin.Org, bob.ID, "web")
+	n = len(got)
+	if _, err := e.s.Comment(e.ctx, bp, core.CommentIn{ID: task.ID, Body: "@Acme Bot and my inbox?"}); err != nil {
+		t.Fatal(err)
+	}
+	for range 200 {
+		d, _ := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID})
+		if c := d.Comments; c[len(c)-1].Author.ID == bot.Member.ID && strings.Contains(c[len(c)-1].Body, "can't see") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_, other := offered(n)
+	if len(other) == 0 || slices.Contains(other, true) {
+		t.Fatalf("bob's turn was offered app tools: %v", other)
 	}
 }

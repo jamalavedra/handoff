@@ -285,14 +285,12 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 	if a.ext, err = s.externalTools(ctx, p.Org.ID, false); err != nil {
 		return out, err
 	}
-	// The person's own apps (Gmail, Calendar…) only in their own chat: never in a turn the server
-	// runs on a shared task, whose steps and replies others see.
-	if !in.shared {
-		if a.apps, err = s.personalTools(ctx, p); err != nil {
-			return out, err
-		}
-		a.ext = append(a.ext, a.apps...)
+	// The apps (Gmail, Calendar…) of the person who asked: in their own chat, or on a task when they
+	// mention the agent or hand the task over. Never anyone else's.
+	if a.apps, err = s.personalTools(ctx, p); err != nil {
+		return out, err
 	}
+	a.ext = append(a.ext, a.apps...)
 	defer func() { t.steps, t.changed, t.blocks = slices.Clone(out.Steps), out.Changed, slices.Clone(out.Blocks) }()
 	system, err := a.systemPrompt(ctx, in)
 	if err != nil {
@@ -440,7 +438,7 @@ func (a *assistantRun) systemPrompt(ctx context.Context, in AssistantChatIn) (st
 	who := a.p.Member
 	fmt.Fprintf(&b, assistantPrompt, a.agent.Member.Name, a.p.Org.Name, who.Name, who.ID, now.Format("2006-01-02"), now.Weekday(), who.Name, who.ID)
 	if len(a.apps) > 0 {
-		b.WriteString(appsNote(a.apps))
+		b.WriteString(appsNote(a.apps, in.shared))
 	}
 	projects, err := a.s.ListProjects(ctx, a.agent, struct{}{})
 	if err != nil {

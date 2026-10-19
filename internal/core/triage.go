@@ -466,8 +466,21 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 	s.progressStep(ctx, pr, ActivityStep{Type: "tool", Tool: "get_task", Text: "Read “" + d.Task.Title + "”"})
 	// With connected tools (web search…) triage looks things up first; otherwise it answers from the model.
 	var sugg triageSuggestion
-	if ext, xerr := s.externalTools(ctx, j.org, true); xerr == nil && len(ext) > 0 {
-		sugg, err = s.askModelResearching(lctx, st, string(cred), org, t, projects.Projects, members.Members, ext, pr)
+	ext, xerr := s.externalTools(ctx, j.org, true)
+	// The apps of the person who wrote the task, so "check my inbox" can: theirs only, never an agent's.
+	var apps []extTool
+	if cb := d.Task.CreatedBy; xerr == nil && cb != nil && cb.Kind == "human" {
+		if creator, perr := s.Principal(ctx, org, cb.ID, "web"); perr == nil {
+			apps, _ = s.personalTools(ctx, creator)
+			ext = append(ext, apps...)
+		}
+	}
+	if xerr == nil && len(ext) > 0 {
+		note := ""
+		if len(apps) > 0 {
+			note = appsNote(apps, true)
+		}
+		sugg, err = s.askModelResearching(lctx, st, string(cred), org, t, projects.Projects, members.Members, ext, note, pr)
 	} else {
 		s.progressStep(ctx, pr, ActivityStep{Type: "write", Text: "Writing it up"})
 		sugg, err = s.askModel(lctx, st, string(cred), org, t, projects.Projects, members.Members)
@@ -897,14 +910,14 @@ const triageResearchNote = `You can use the tools listed (connected services suc
 
 // askModelResearching is askModel with the workspace's connected tools: a few rounds of lookups, then
 // the same JSON answer. Tool results go to the model only; nothing is written until applyTriage.
-func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, cred string, org *Org, t triageTask, projects []ProjectOut, members []MemberOut, ext []extTool, pr *progress) (triageSuggestion, error) {
+func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, cred string, org *Org, t triageTask, projects []ProjectOut, members []MemberOut, ext []extTool, note string, pr *progress) (triageSuggestion, error) {
 	var sugg triageSuggestion
 	sessions := extSessions{}
 	defer sessions.close()
 	var looked []Lookup
 	step := func(a ActivityStep) { s.progressStep(ctx, pr, a) }
 	msgs := []map[string]any{
-		{"role": "system", "content": triagePrompt + "\n\n" + triageResearchNote},
+		{"role": "system", "content": triagePrompt + "\n\n" + triageResearchNote + note},
 		{"role": "user", "content": triageUserMessage(org, t, projects, members)},
 	}
 	defs := extToolDefs(ext)
