@@ -76,6 +76,7 @@ Point `tasks.example.com` and `*.tasks.example.com` at the server. Caddy issues 
 | `HANDOFF_ALLOW_SIGNUP` | Whether anyone can create a workspace on the apex (default: on, unless single-org). |
 | `HANDOFF_SMTP_URL`, `HANDOFF_MAIL_FROM` | Email for sign-in links and invites. Without SMTP, links are logged. |
 | `HANDOFF_GOOGLE_CLIENT_ID`, `HANDOFF_GOOGLE_CLIENT_SECRET` | Optional Google sign-in; redirect URI `<HANDOFF_BASE_URL>/auth/google/callback`. |
+| `HANDOFF_COMPOSIO_API_KEY` | Optional [Composio](https://composio.dev) project key. Turns on Settings → Apps, where each person connects their own Gmail, Google Calendar, Drive, Slack, GitHub, Notion or Linear; only their own assistant chats read them, with read-only tools. |
 | `HANDOFF_GEOCODER_URL` | Nominatim-compatible geocoder for map blocks (default: OpenStreetMap's). |
 | `HANDOFF_DEV` | Shows sign-in links on screen. Never in production. |
 
