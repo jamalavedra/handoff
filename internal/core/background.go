@@ -32,9 +32,41 @@ type SetTokenCapIn struct {
 	MonthlyTokenCap int64 `json:"monthly_token_cap" jsonschema:"tokens per month (input + output, all model calls) after which background jobs stop; 0 removes the cap"`
 }
 
-// errBackgroundOff: the workspace has no model, or this month's tokens reached the cap. The job is
-// skipped, never failed.
+// errBackgroundOff: the workspace has no model for background jobs. The job is skipped, never failed.
 var errBackgroundOff = errors.New("background jobs are off")
+
+// errBackgroundCapped: this month's tokens reached the cap. It's checked before every background
+// model call, so a job stops mid-way too. The job waits, pending, for next month or a higher cap.
+var errBackgroundCapped = errors.New("background jobs are paused: this month's tokens reached the cap")
+
+// capPaused is the last_error of a job waiting on the cap, which raising the cap looks for.
+const capPaused = "paused: monthly token cap"
+
+// capReached reports whether this month's tokens (all calls) reached the workspace's cap.
+func capReached(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var reached bool
+	err := tx.QueryRow(ctx, `SELECT coalesce((SELECT monthly_token_cap FROM triage_settings) <=
+		(SELECT coalesce(sum(input_tokens + output_tokens), 0) FROM agent_usage
+			WHERE month = date_trunc('month', now() AT TIME ZONE 'UTC')::date), false)`).Scan(&reached)
+	return reached, err
+}
+
+// checkCap is chatCompletion's check before a background call: errBackgroundCapped at the cap. Calls
+// already in flight when it's reached still finish, so usage can pass the cap by those, not more.
+func (s *Service) checkCap(ctx context.Context, org string) error {
+	var reached bool
+	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) (err error) {
+		reached, err = capReached(ctx, tx)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if reached {
+		return errBackgroundCapped
+	}
+	return nil
+}
 
 func (c *call) usageOut() (*UsageOut, error) {
 	out := &UsageOut{Month: time.Now().UTC().Format("2006-01")}
@@ -119,28 +151,38 @@ func (s *Service) SetMonthlyTokenCap(ctx context.Context, p *Principal, in SetTo
 		if tag.RowsAffected() == 0 {
 			return errf(ErrInvalid, "turn triage on first: the cap applies to its model's background jobs")
 		}
+		// Jobs paused by the old cap get another look now: under the new one they run, and if it's
+		// still reached they pause again until next month.
+		paused, err := c.tx.Exec(c.ctx, `UPDATE agent_jobs SET due_at = now(), updated_at = now()
+			WHERE state = 'pending' AND last_error = $1`, capPaused)
+		if err != nil {
+			return err
+		}
+		if paused.RowsAffected() > 0 {
+			c.after = append(c.after, c.s.wakeJobs)
+		}
 		out, err = c.triageOut()
 		return err
 	})
 	return out, err
 }
 
-// backgroundModel is the model a background job uses in this workspace, with its key, or
-// errBackgroundOff when there is none or this month's tokens reached the cap.
+// backgroundModel is the model a background job uses in this workspace, with its key:
+// errBackgroundOff when there is none, errBackgroundCapped when this month's tokens reached the cap.
+// chatCompletion checks the cap again before each call made with it.
 func (s *Service) backgroundModel(ctx context.Context, org string) (*triageSettings, string, error) {
 	st := &triageSettings{OrgID: org, Background: true}
 	var helperURL, helperModel string
 	var helperCred []byte
-	var limit *int64
-	var used int64
+	var reached bool
 	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT agent_id::text, base_url, model, credential, helper_base_url, helper_model, helper_credential, monthly_token_cap
-			FROM triage_settings`).Scan(&st.AgentID, &st.BaseURL, &st.Model, &st.Credential, &helperURL, &helperModel, &helperCred, &limit)
+		err := tx.QueryRow(ctx, `SELECT agent_id::text, base_url, model, credential, helper_base_url, helper_model, helper_credential
+			FROM triage_settings`).Scan(&st.AgentID, &st.BaseURL, &st.Model, &st.Credential, &helperURL, &helperModel, &helperCred)
 		if err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `SELECT coalesce(sum(input_tokens + output_tokens), 0) FROM agent_usage
-			WHERE month = date_trunc('month', now() AT TIME ZONE 'UTC')::date`).Scan(&used)
+		reached, err = capReached(ctx, tx)
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", errBackgroundOff
@@ -148,8 +190,8 @@ func (s *Service) backgroundModel(ctx context.Context, org string) (*triageSetti
 	if err != nil {
 		return nil, "", err
 	}
-	if limit != nil && used >= *limit {
-		return nil, "", errBackgroundOff
+	if reached {
+		return nil, "", errBackgroundCapped
 	}
 	switch {
 	case helperModel == "":

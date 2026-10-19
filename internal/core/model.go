@@ -32,6 +32,12 @@ func (e *unreachableError) Unwrap() error { return e.err }
 
 func (s *Service) chatCompletion(ctx context.Context, st *triageSettings, cred string, body map[string]any) (assistantMsg, error) {
 	var msg assistantMsg
+	// A background job may make many calls: each one checks the cap, not just the first.
+	if st.Background && st.OrgID != "" {
+		if err := s.checkCap(ctx, st.OrgID); err != nil {
+			return msg, err
+		}
+	}
 	body["model"] = st.Model
 	req, _ := json.Marshal(body)
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, st.BaseURL+"/chat/completions", bytes.NewReader(req))

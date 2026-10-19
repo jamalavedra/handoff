@@ -220,6 +220,55 @@ func TestJobFailures(t *testing.T) {
 	}
 }
 
+// A job stopped by the token cap isn't lost: it waits, pending, for next month, and runs as soon as
+// an admin raises the cap.
+func TestJobPausedByCap(t *testing.T) {
+	srv := newModelServer(t, `{}`)
+	s, p := bgEnv(t, srv.Server)
+	ctx := t.Context()
+	setTestJob(t, func(ctx context.Context, s *Service, j *agentJob) (map[string]any, error) {
+		st, cred, err := s.backgroundModel(ctx, j.Org)
+		if err != nil {
+			return nil, err
+		}
+		// Two calls of 120 tokens: under a 100 cap the first goes through and the second is refused.
+		for range 2 {
+			if _, err := s.chatCompletion(ctx, st, cred, map[string]any{}); err != nil {
+				return nil, err
+			}
+		}
+		return map[string]any{"ok": true}, nil
+	})
+	if _, err := s.SetMonthlyTokenCap(ctx, p, SetTokenCapIn{MonthlyTokenCap: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.enqueueJob(ctx, p.Org.ID, "test", "T-1", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	s.runJob(ctx, s.dueJobs(ctx)[0])
+	row := jobRows(t, s, p.Org.ID)[0]
+	now := time.Now().UTC()
+	nextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	if row.state != "pending" || row.lastError != capPaused || row.attempts != 0 || !row.due.Equal(nextMonth) {
+		t.Fatalf("paused: %+v (want due %v)", row, nextMonth)
+	}
+	if len(s.dueJobs(ctx)) != 0 {
+		t.Fatal("a paused job shouldn't be due before the month turns")
+	}
+	// Raising the cap makes it due again, and it finishes.
+	if _, err := s.SetMonthlyTokenCap(ctx, p, SetTokenCapIn{MonthlyTokenCap: 10000}); err != nil {
+		t.Fatal(err)
+	}
+	refs := s.dueJobs(ctx)
+	if len(refs) != 1 {
+		t.Fatalf("after raising the cap: due %v", refs)
+	}
+	s.runJob(ctx, refs[0])
+	if row := jobRows(t, s, p.Org.ID)[0]; row.state != "done" || row.lastError != "" {
+		t.Fatalf("after raising the cap: %+v", row)
+	}
+}
+
 // A job queued to run now wakes the worker loop instead of waiting for the minute sweep.
 func TestJobWake(t *testing.T) {
 	srv := newModelServer(t, `{}`)

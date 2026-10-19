@@ -183,7 +183,7 @@ function TriageSettings({ agents }: { agents: Member[] }) {
 
 const tokens = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
 
-// The model for the agent's background jobs (memory upkeep, reviews), and the monthly cap that stops them.
+// The model for the agent's background jobs (memory upkeep, reviews), and the monthly cap that pauses them.
 function BackgroundSettings({ t }: { t: Triage }) {
   const invalidate = useInvalidate();
   const [f, setF] = useState({ base_url: "", model: "", credential: "" });
@@ -224,7 +224,7 @@ function BackgroundSettings({ t }: { t: Triage }) {
             <Input type="number" min={0} step={1000} placeholder="No cap" value={cap} onChange={(e) => setCap(e.target.value)} />
             <Button type="submit" variant="outline" disabled={saveCap.isPending}>Save</Button>
           </div>
-          <span className="text-xs font-normal text-muted-foreground">Counts every model call this month. Once reached, background jobs stop; triage, chat and the assistant keep working.</span>
+          <span className="text-xs font-normal text-muted-foreground">Counts every model call this month. Once reached, background jobs pause until next month or a higher cap, then pick up where they left off; triage, chat and the assistant keep working.</span>
         </label>
         {u && (
           <p className={cn("text-xs", stopped ? "text-amber-700" : "text-muted-foreground")}>
