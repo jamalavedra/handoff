@@ -189,7 +189,10 @@ export function TabStrip() {
   const canBack = useCanGoBack();
   const activeRef = useRef<HTMLDivElement>(null);
   const active = ctx?.state.active;
-  useEffect(() => activeRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" }), [active]);
+  // scrollIntoView returns a promise in newer browsers; the effect must not return it.
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active]);
   if (!ctx?.enabled) return null;
   return (
     <div className="sticky top-0 z-20 flex h-11 shrink-0 items-center gap-1 border-b border-sidebar-border bg-sidebar px-2 text-sidebar-foreground">
