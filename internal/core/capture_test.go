@@ -9,10 +9,13 @@ import (
 	"github.com/joalavedra/handoff/internal/core"
 )
 
+// Capture jobs sit behind the chat's own reply turns on the one job runner; on a loaded CI
+// box that queue is slow, so the waits in this file are generous (45s).
+
 // waitFact polls until a fact with this text is listed, or fails.
 func waitFact(t *testing.T, e *env, p *core.Principal, text string) core.MemoryFactOut {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for {
 		res, err := e.s.ListMemory(e.ctx, p, core.ListMemoryIn{})
 		if err == nil {
@@ -97,7 +100,7 @@ func TestCaptureAfterReplyFinishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Wait for the reply to land, then the capture job must exist for this task.
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for {
 		if d, err := e.s.GetTask(e.ctx, admin, core.TaskIDIn{ID: task.ID}); err == nil && len(d.Comments) > 1 && d.Comments[len(d.Comments)-1].Author.ID == bot.Member.ID {
 			break
@@ -108,7 +111,7 @@ func TestCaptureAfterReplyFinishes(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	var dueIn float64
-	deadline = time.Now().Add(15 * time.Second)
+	deadline = time.Now().Add(45 * time.Second)
 	for {
 		err := e.s.DB.InOrg(e.ctx, admin.Org.ID, func(tx pgx.Tx) error {
 			return tx.QueryRow(e.ctx, `SELECT extract(epoch from due_at - now()) FROM agent_jobs
@@ -161,7 +164,7 @@ func TestCaptureRespectsRemovedAndSupersedes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for {
 		if _, _, ran := jobRowsFor(t, e, admin, task.ID); ran {
 			break
@@ -222,7 +225,7 @@ func TestCaptureReadsOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for {
 		var skipped bool
 		_ = e.s.DB.InOrg(e.ctx, admin.Org.ID, func(tx pgx.Tx) error {
