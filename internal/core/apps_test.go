@@ -26,6 +26,7 @@ type fakeComposio struct {
 	accounts map[string]map[string]bool // user id -> connected toolkits
 	bodies   []map[string]any           // session create requests
 	links    []map[string]any           // link requests
+	server   *mcp.Server                // the sessions' MCP server, for tests to add tools to
 }
 
 func newFakeComposio(t *testing.T) *fakeComposio {
@@ -56,13 +57,21 @@ func newFakeComposio(t *testing.T) *fakeComposio {
 		func(_ context.Context, _ *mcp.CallToolRequest, _ q) (*mcp.CallToolResult, any, error) {
 			return &mcp.CallToolResult{}, nil, nil
 		})
+	f.server = server
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("x-api-key") != "ck-test" {
 			http.Error(w, `{"error":{"message":"bad key"}}`, http.StatusUnauthorized)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/mcp/") {
+		if id, ok := strings.CutPrefix(r.URL.Path, "/mcp/"); ok {
+			f.mu.Lock()
+			_, known := f.sessions[id]
+			f.mu.Unlock()
+			if !known {
+				http.Error(w, `{"error":{"message":"no session"}}`, http.StatusNotFound)
+				return
+			}
 			mcpHandler.ServeHTTP(w, r)
 			return
 		}
@@ -366,5 +375,65 @@ func TestAppsOnTasks(t *testing.T) {
 	_, other := offered(n)
 	if len(other) == 0 || slices.Contains(other, true) {
 		t.Fatalf("bob's turn was offered app tools: %v", other)
+	}
+}
+
+// A session Composio forgot is made again before the assistant's turn, so the person's apps keep
+// working without a visit to Settings (Devin review on #66).
+func TestAppsRecoverForgottenSession(t *testing.T) {
+	fake := newFakeComposio(t)
+	model, reqs := scriptedModel(t,
+		calls(toolCall("c1", "ext_apps__gmail_fetch_emails", map[string]any{"query": "invoice"})),
+		say("Invoice #42 is due Friday."),
+	)
+	e, admin, _ := assistantEnv(t, model, "appforgot")
+	e.s.Cfg.ComposioAPIKey, e.s.Cfg.ComposioURL = "ck-test", fake.srv.URL
+	fake.connect("handoff:"+admin.Org.ID+":"+admin.Member.ID, "gmail")
+	if _, err := e.s.ListApps(e.ctx, admin, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	clear(fake.sessions)
+	made := len(fake.bodies)
+	fake.mu.Unlock()
+
+	out, err := e.s.AssistantChat(e.ctx, admin, ask("anything about invoices in my email?"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Steps) != 1 || out.Steps[0].Error != "" || !strings.Contains(toolResult(t, reqs(), "c1"), "Invoice #42") {
+		t.Fatalf("the lookup after a forgotten session: %+v", out.Steps)
+	}
+	if fake.mu.Lock(); len(fake.bodies) != made+1 {
+		t.Fatalf("sessions made: %d, want %d", len(fake.bodies), made+1)
+	}
+	fake.mu.Unlock()
+}
+
+// Tools Composio adds to an app that stays connected show up once the cached list is old
+// (Devin review on #66).
+func TestAppsToolListRefreshes(t *testing.T) {
+	fake := newFakeComposio(t)
+	e := setup(t)
+	admin := e.org(t, "apprefresh")
+	e.s.Cfg.ComposioAPIKey, e.s.Cfg.ComposioURL, e.s.Cfg.Dev = "ck-test", fake.srv.URL, true
+	fake.connect("handoff:"+admin.Org.ID+":"+admin.Member.ID, "gmail")
+	out, err := e.s.ListApps(e.ctx, admin, struct{}{})
+	if err != nil || len(appsByName(out)["gmail"].Tools) != 1 {
+		t.Fatalf("before: %+v %v", appsByName(out)["gmail"], err)
+	}
+	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	mcp.AddTool(fake.server, &mcp.Tool{Name: "GMAIL_LIST_THREADS", Description: "List threads", Annotations: ro},
+		func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{}, nil, nil
+		})
+	// Within the window the cache is used: no listing on every visit.
+	if out, _ = e.s.ListApps(e.ctx, admin, struct{}{}); len(appsByName(out)["gmail"].Tools) != 1 {
+		t.Fatalf("listed again inside the window: %v", appsByName(out)["gmail"].Tools)
+	}
+	// Once it's older, the new tool appears.
+	core.AgeAppTools(t, e.s, admin, 20*time.Minute)
+	if out, err = e.s.ListApps(e.ctx, admin, struct{}{}); err != nil || len(appsByName(out)["gmail"].Tools) != 2 {
+		t.Fatalf("after the window: %v %v", appsByName(out)["gmail"].Tools, err)
 	}
 }

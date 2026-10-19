@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -41,6 +42,12 @@ var appCatalog = []struct {
 
 // maxAppTools bounds how many of a person's app tools one turn offers the model.
 const maxAppTools = 32
+
+// appToolsTTL is how long a person's listed app tools are trusted before they're listed again.
+const appToolsTTL = 15 * time.Minute
+
+// appCheckTimeout bounds the check with Composio before an assistant turn.
+const appCheckTimeout = 8 * time.Second
 
 // appTools is the session's tool config: only the chosen tools of each app.
 func appTools() map[string]any {
@@ -198,6 +205,7 @@ type appSession struct {
 	toolkits   []string
 	connected  []string
 	tools      []connTool
+	updated    time.Time // when the tools were last listed
 }
 
 func (s *Service) appServer(memberID, mcpURL string) connServer {
@@ -208,8 +216,8 @@ func (s *Service) loadAppSession(ctx context.Context, org, memberID string) (*ap
 	var a appSession
 	var tools []byte
 	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT session_id, mcp_url, toolkits, connected, tools FROM app_sessions WHERE member_id::text = $1`, memberID).
-			Scan(&a.id, &a.mcpURL, &a.toolkits, &a.connected, &tools)
+		return tx.QueryRow(ctx, `SELECT session_id, mcp_url, toolkits, connected, tools, updated_at FROM app_sessions WHERE member_id::text = $1`, memberID).
+			Scan(&a.id, &a.mcpURL, &a.toolkits, &a.connected, &tools, &a.updated)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -267,7 +275,7 @@ func (s *Service) appSession(ctx context.Context, p *Principal, fresh bool) (*ap
 		return nil, err
 	}
 	// Nothing is cached for a new session: its tools are listed on the next sync.
-	return &appSession{id: out.SessionID, mcpURL: out.MCP.URL, toolkits: catalogMark()}, nil
+	return &appSession{id: out.SessionID, mcpURL: out.MCP.URL, toolkits: catalogMark(), updated: time.Now()}, nil
 }
 
 type composioToolkit struct {
@@ -313,10 +321,11 @@ func (s *Service) sessionToolkits(ctx context.Context, p *Principal) (*appSessio
 }
 
 // syncAppTools lists the session's tools again when the apps connected changed since the last time,
+// or the list is older than appToolsTTL (Composio adds and withdraws tools of connected apps too),
 // keeping only the ones that read.
 func (s *Service) syncAppTools(ctx context.Context, p *Principal, a *appSession, connected []string) ([]connTool, error) {
 	slices.Sort(connected)
-	if slices.Equal(connected, a.connected) && (len(connected) == 0 || len(a.tools) > 0) {
+	if slices.Equal(connected, a.connected) && (len(connected) == 0 || len(a.tools) > 0) && time.Since(a.updated) < appToolsTTL {
 		return a.tools, nil
 	}
 	tools := []connTool{}
@@ -337,8 +346,25 @@ func (s *Service) syncAppTools(ctx context.Context, p *Principal, a *appSession,
 			p.Member.ID, connected, b, a.id)
 		return err
 	})
-	a.connected, a.tools = connected, tools
+	a.connected, a.tools, a.updated = connected, tools, time.Now()
 	return tools, err
+}
+
+// refreshApps checks the person's session with Composio, making it again if Composio forgot it, and
+// brings the tool cache up to date. The session is returned even when listing its tools failed.
+func (s *Service) refreshApps(ctx context.Context, p *Principal) (*appSession, []composioToolkit, []connTool, error) {
+	a, items, err := s.sessionToolkits(ctx, p)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	connected := []string{}
+	for _, t := range items {
+		if t.active() && appName(t.Slug) != "" {
+			connected = append(connected, t.Slug)
+		}
+	}
+	tools, err := s.syncAppTools(ctx, p, a, connected)
+	return a, items, tools, err
 }
 
 // readsOnly keeps the catalog's chosen tools, unless the server says one is destructive. Anything
@@ -370,19 +396,14 @@ func (s *Service) ListApps(ctx context.Context, p *Principal, _ struct{}) (AppsO
 		return out, nil
 	}
 	out.Enabled = true
-	a, items, err := s.sessionToolkits(ctx, p)
-	if err != nil {
-		return out, err
+	a, items, tools, syncErr := s.refreshApps(ctx, p)
+	if a == nil {
+		return out, syncErr
 	}
-	connected := []string{}
 	byApp := map[string]composioToolkit{}
 	for _, t := range items {
 		byApp[t.Slug] = t
-		if t.active() && appName(t.Slug) != "" {
-			connected = append(connected, t.Slug)
-		}
 	}
-	tools, syncErr := s.syncAppTools(ctx, p, a, connected)
 	for _, c := range appCatalog {
 		o := AppOut{Slug: c.Slug, Name: c.Name, Tools: []string{}}
 		if t, ok := byApp[c.Slug]; ok {
@@ -487,8 +508,24 @@ func (s *Service) personalTools(ctx context.Context, p *Principal) ([]extTool, e
 		return nil, nil
 	}
 	a, err := s.loadAppSession(ctx, p.Org.ID, p.Member.ID)
-	if err != nil || a == nil || len(a.tools) == 0 {
+	if err != nil || a == nil {
 		return nil, err
+	}
+	// With apps connected, check the session first: Composio may have forgotten it, or the catalog or
+	// the apps' tools may have changed. If Composio can't be reached, the turn goes on with what's cached.
+	if len(a.connected) > 0 || !slices.Equal(a.toolkits, catalogMark()) {
+		cctx, cancel := context.WithTimeout(ctx, appCheckTimeout)
+		fresh, _, _, rerr := s.refreshApps(cctx, p)
+		cancel()
+		if fresh != nil {
+			a = fresh
+		}
+		if rerr != nil {
+			slog.Warn("apps: refresh before a turn", "member", p.Member.ID, "err", rerr)
+		}
+	}
+	if len(a.tools) == 0 {
+		return nil, nil
 	}
 	srv := s.appServer(p.Member.ID, a.mcpURL)
 	groups := map[string][]connTool{}
