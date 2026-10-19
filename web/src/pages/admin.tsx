@@ -80,7 +80,11 @@ export function AdminPage() {
   );
 }
 
-type Triage = { enabled: boolean; agent?: { id: string; name: string }; base_url?: string; model?: string; has_credential: boolean };
+type Usage = { month: string; input_tokens: number; output_tokens: number; calls: number; background_calls: number };
+type Triage = {
+  enabled: boolean; agent?: { id: string; name: string }; base_url?: string; model?: string; has_credential: boolean;
+  background_base_url?: string; background_model?: string; background_has_credential?: boolean; monthly_token_cap?: number; usage?: Usage;
+};
 
 // Any OpenAI-compatible endpoint works; these are the common ones, each with a sensible default model.
 const providers = [
@@ -176,7 +180,66 @@ function TriageSettings({ agents }: { agents: Member[] }) {
           </div>
           <ErrorText error={save.error || off.error || q.error || test.error || makeAgent.error} />
         </form>
+        {t?.enabled && <BackgroundSettings t={t} />}
       </Card>
     </>
+  );
+}
+
+const tokens = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
+
+// The model for the agent's background jobs (memory upkeep, reviews), and the monthly cap that pauses them.
+function BackgroundSettings({ t }: { t: Triage }) {
+  const invalidate = useInvalidate();
+  const [f, setF] = useState({ base_url: "", model: "", credential: "" });
+  const [cap, setCap] = useState("");
+  useEffect(() => {
+    setF({ base_url: t.background_base_url || t.base_url || "", model: t.background_model ?? "", credential: "" });
+    setCap(t.monthly_token_cap ? String(t.monthly_token_cap) : "");
+  }, [t.background_base_url, t.background_model, t.base_url, t.monthly_token_cap]);
+  const done = (msg: string) => () => { setF((x) => ({ ...x, credential: "" })); invalidate(); toast(msg); };
+  const save = useMutation({ mutationFn: (v: typeof f) => api.tool<Triage>("set_background_model", v), onSuccess: done("Background model saved") });
+  const clear = useMutation({ mutationFn: () => api.tool<Triage>("set_background_model", {}), onSuccess: done("Background jobs use the agent's model") });
+  const saveCap = useMutation({ mutationFn: () => api.tool<Triage>("set_monthly_token_cap", { monthly_token_cap: Number(cap) || 0 }), onSuccess: done("Monthly cap saved") });
+  const sameEndpoint = f.base_url.replace(/\/+$/, "") === t.base_url;
+  const u = t.usage;
+  const used = u ? u.input_tokens + u.output_tokens : 0;
+  const stopped = !!t.monthly_token_cap && used >= t.monthly_token_cap;
+  return (
+    <div className="mt-6 max-w-md border-t border-border pt-4 text-sm">
+      <div className="mb-1 font-medium">Background model <span className="font-normal text-muted-foreground">(optional)</span></div>
+      <p className="mb-3 text-foreground/70">
+        Writes what nobody waits for, like keeping the agent's notes tidy. A cheaper model is usually enough. Without one, it uses {t.model}.
+      </p>
+      <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(f); }}>
+        <label className="font-medium">Base URL<Input required placeholder="https://…/v1" value={f.base_url} onChange={(e) => setF({ ...f, base_url: e.target.value })} /></label>
+        <label className="font-medium">Model<Input required placeholder="model id as the provider names it" value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} /></label>
+        <label className="font-medium">API key
+          <Input type="password" autoComplete="off" value={f.credential} onChange={(e) => setF({ ...f, credential: e.target.value })}
+            placeholder={t.background_has_credential ? "Saved · leave empty to keep it" : sameEndpoint ? "Leave empty to use the agent's key" : "Paste the key for this endpoint"} />
+        </label>
+        <div className="flex items-center gap-2">
+          <Button type="submit" variant="outline" disabled={save.isPending}>Save</Button>
+          {t.background_model && <Button type="button" variant="ghost" onClick={() => clear.mutate()} disabled={clear.isPending}>Use the agent's model</Button>}
+        </div>
+      </form>
+      <form className="mt-5 flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); saveCap.mutate(); }}>
+        <label className="font-medium">Monthly token cap
+          <div className="mt-1 flex items-center gap-2">
+            <Input type="number" min={0} step={1000} placeholder="No cap" value={cap} onChange={(e) => setCap(e.target.value)} />
+            <Button type="submit" variant="outline" disabled={saveCap.isPending}>Save</Button>
+          </div>
+          <span className="text-xs font-normal text-muted-foreground">Counts every model call this month. Once reached, background jobs pause until next month or a higher cap, then pick up where they left off; triage, chat and the assistant keep working.</span>
+        </label>
+        {u && (
+          <p className={cn("text-xs", stopped ? "text-amber-700" : "text-muted-foreground")}>
+            This month: {tokens(used)} tokens in {u.calls} calls ({u.background_calls} in the background)
+            {t.monthly_token_cap ? ` · ${Math.min(100, Math.round((used / t.monthly_token_cap) * 100))}% of the cap` : ""}
+            {stopped ? " · background jobs are paused until next month or a higher cap" : ""}
+          </p>
+        )}
+      </form>
+      <ErrorText error={save.error || clear.error || saveCap.error} />
+    </div>
   );
 }

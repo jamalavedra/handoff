@@ -1,7 +1,6 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -10,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,6 +37,12 @@ type TriageOut struct {
 	Model         string     `json:"model,omitempty"`
 	HasCredential bool       `json:"has_credential"`
 	UpdatedAt     string     `json:"updated_at,omitempty"`
+	// The background model, when one is set; otherwise background jobs use the model above.
+	BackgroundBaseURL       string    `json:"background_base_url,omitempty"`
+	BackgroundModel         string    `json:"background_model,omitempty"`
+	BackgroundHasCredential bool      `json:"background_has_credential,omitempty" jsonschema:"it has its own key; without one it uses the agent's key, for the agent's endpoint only"`
+	MonthlyTokenCap         int64     `json:"monthly_token_cap,omitempty"`
+	Usage                   *UsageOut `json:"usage,omitempty" jsonschema:"this month's model calls"`
 }
 
 type SetTriageIn struct {
@@ -66,8 +70,10 @@ func (c *call) triageOut() (TriageOut, error) {
 	var agent string
 	var cred []byte
 	var updated time.Time
-	err := c.tx.QueryRow(c.ctx, `SELECT agent_id::text, base_url, model, credential, updated_at FROM triage_settings`).
-		Scan(&agent, &out.BaseURL, &out.Model, &cred, &updated)
+	var limit *int64
+	err := c.tx.QueryRow(c.ctx, `SELECT agent_id::text, base_url, model, credential, updated_at,
+			helper_base_url, helper_model, helper_credential IS NOT NULL, monthly_token_cap FROM triage_settings`).
+		Scan(&agent, &out.BaseURL, &out.Model, &cred, &updated, &out.BackgroundBaseURL, &out.BackgroundModel, &out.BackgroundHasCredential, &limit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TriageOut{}, nil
 	}
@@ -75,7 +81,11 @@ func (c *call) triageOut() (TriageOut, error) {
 		return out, err
 	}
 	out.Enabled, out.Agent, out.HasCredential, out.UpdatedAt = true, c.ref(agent), len(cred) > 0, ts(&updated)
-	return out, nil
+	if limit != nil {
+		out.MonthlyTokenCap = *limit
+	}
+	out.Usage, err = c.usageOut()
+	return out, err
 }
 
 func (s *Service) GetTriage(ctx context.Context, p *Principal, _ struct{}) (TriageOut, error) {
@@ -190,7 +200,7 @@ func (s *Service) TestTriage(ctx context.Context, p *Principal, in TestTriageIn)
 		if err != nil {
 			return err
 		}
-		st = triageSettings{BaseURL: base, Model: strings.TrimSpace(in.Model)}
+		st = triageSettings{BaseURL: base, Model: strings.TrimSpace(in.Model), OrgID: p.Org.ID}
 		if st.Model == "" || len(st.Model) > 200 {
 			return errf(ErrInvalid, "model is required")
 		}
@@ -299,8 +309,8 @@ func (s *Service) enqueueTriage(org, task string) {
 	}
 }
 
-// RunTriage evaluates newly created tasks until ctx ends. Tasks still pending after a restart
-// or a full queue are found by a sweep every minute.
+// RunTriage evaluates newly created tasks, answers chat requests and runs background jobs until ctx
+// ends. Work still pending after a restart or a full queue is found by a sweep every minute.
 func (s *Service) RunTriage(ctx context.Context) {
 	sem := make(chan struct{}, 4)
 	var mu sync.Mutex
@@ -333,7 +343,33 @@ func (s *Service) RunTriage(ctx context.Context) {
 			start(j)
 		}
 	}
+	// Background jobs share the slots too, but never more than half: triage and replies are waited on.
+	jobSlots := make(chan struct{}, cap(sem)/2)
+	var jobsRunning sync.Map
+	jobs := func() {
+		for _, r := range s.dueJobs(ctx) {
+			if _, busy := jobsRunning.LoadOrStore(r, true); busy {
+				continue
+			}
+			select {
+			case jobSlots <- struct{}{}:
+			default:
+				jobsRunning.Delete(r)
+				return // the rest wait for the next sweep
+			}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			go func() {
+				defer func() { <-sem; <-jobSlots; jobsRunning.Delete(r) }()
+				s.runJob(ctx, r)
+			}()
+		}
+	}
 	sweep(0)
+	jobs()
 	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()
 	for {
@@ -353,11 +389,14 @@ func (s *Service) RunTriage(ctx context.Context) {
 				defer func() { <-sem }()
 				s.replyOne(ctx, j)
 			}()
+		case <-s.jobWake:
+			jobs()
 		case <-tick.C:
 			sweep(time.Minute)
 			for _, j := range s.pendingReplies(ctx) {
 				s.enqueueReply(j)
 			}
+			jobs()
 		}
 	}
 }
@@ -395,6 +434,9 @@ func (s *Service) pendingTriage(ctx context.Context, olderThan time.Duration) []
 type triageSettings struct {
 	AgentID, BaseURL, Model string
 	Credential              []byte
+	// OrgID is the workspace the calls are counted for; Background marks calls for jobs nobody asked for.
+	OrgID      string
+	Background bool
 }
 
 // triageClaim is one worker's hold on a pending task: only the holder may apply or record an outcome.
@@ -511,7 +553,7 @@ func (s *Service) claimTriage(ctx context.Context, j triageJob) (*triageSettings
 	var st *triageSettings
 	var cl *triageClaim
 	err := s.DB.InOrg(ctx, j.org, func(tx pgx.Tx) error {
-		var x triageSettings
+		x := triageSettings{OrgID: j.org}
 		err := tx.QueryRow(ctx, `SELECT agent_id::text, base_url, model, credential FROM triage_settings`).
 			Scan(&x.AgentID, &x.BaseURL, &x.Model, &x.Credential)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -637,60 +679,10 @@ func triageUserMessage(org *Org, t triageTask, projects []ProjectOut, members []
 
 func (s *Service) askModel(ctx context.Context, st *triageSettings, cred string, org *Org, t triageTask, projects []ProjectOut, members []MemberOut) (triageSuggestion, error) {
 	user := triageUserMessage(org, t, projects, members)
-	return s.completeJSON(ctx, st, cred, []map[string]any{
+	return completeJSON[triageSuggestion](ctx, s, st, cred, []map[string]any{
 		{"role": "system", "content": triagePrompt},
 		{"role": "user", "content": user},
 	})
-}
-
-// completeJSON asks the model for its answer in JSON mode and reads the triage suggestion from it.
-func (s *Service) completeJSON(ctx context.Context, st *triageSettings, cred string, msgs []map[string]any) (triageSuggestion, error) {
-	var sugg triageSuggestion
-	req, _ := json.Marshal(map[string]any{
-		"model":           st.Model,
-		"messages":        msgs,
-		"max_tokens":      12000, // room for the work itself, and thinking models spend part of it before answering
-		"response_format": map[string]string{"type": "json_object"},
-	})
-	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, st.BaseURL+"/chat/completions", bytes.NewReader(req))
-	if err != nil {
-		return sugg, err
-	}
-	hr.Header.Set("Content-Type", "application/json")
-	hr.Header.Set("Authorization", "Bearer "+cred)
-	resp, err := s.outbound().Do(hr)
-	if err != nil {
-		return sugg, fmt.Errorf("model endpoint unreachable: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		msg := strings.TrimSpace(string(raw))
-		if len(msg) > 200 {
-			msg = msg[:200]
-		}
-		return sugg, fmt.Errorf("model endpoint returned %d: %s", resp.StatusCode, msg)
-	}
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil || len(out.Choices) == 0 {
-		return sugg, errors.New("model endpoint returned an unexpected response")
-	}
-	text := out.Choices[0].Message.Content
-	i := strings.Index(text, "{")
-	if i < 0 {
-		return sugg, errors.New("the model did not answer with JSON")
-	}
-	// Read the first JSON object only: prose after it (even with braces) is ignored.
-	if err := json.NewDecoder(strings.NewReader(text[i:])).Decode(&sugg); err != nil {
-		return sugg, errors.New("the model's JSON could not be read")
-	}
-	return sugg, nil
 }
 
 // outbound is the client for every call Handoff makes to a URL a workspace chose (triage models,
@@ -937,7 +929,7 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 			}
 			msgs = append(msgs, map[string]any{"role": "user", "content": "Now reply with the JSON object only, using what you found."})
 			s.progressStep(ctx, pr, ActivityStep{Type: "write", Text: "Writing it up"})
-			sugg, err := s.completeJSON(ctx, st, cred, msgs)
+			sugg, err := completeJSON[triageSuggestion](ctx, s, st, cred, msgs)
 			sugg.lookups = looked
 			return sugg, err
 		}

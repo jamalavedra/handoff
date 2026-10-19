@@ -1,16 +1,13 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -232,7 +229,7 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 	}
 	var st *triageSettings
 	err = s.run(ctx, p, func(c *call) error {
-		var x triageSettings
+		x := triageSettings{OrgID: p.Org.ID}
 		err := c.tx.QueryRow(c.ctx, `SELECT agent_id::text, base_url, model, credential FROM triage_settings`).
 			Scan(&x.AgentID, &x.BaseURL, &x.Model, &x.Credential)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -504,40 +501,15 @@ type assistantMsg struct {
 }
 
 func (s *Service) assistantComplete(ctx context.Context, st *triageSettings, cred string, msgs []map[string]any, tools []map[string]any, maxTokens int) (assistantMsg, error) {
-	var msg assistantMsg
-	body := map[string]any{"model": st.Model, "messages": msgs, "max_tokens": maxTokens}
+	body := map[string]any{"messages": msgs, "max_tokens": maxTokens}
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
-	req, _ := json.Marshal(body)
-	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, st.BaseURL+"/chat/completions", bytes.NewReader(req))
-	if err != nil {
-		return msg, err
-	}
-	hr.Header.Set("Content-Type", "application/json")
-	hr.Header.Set("Authorization", "Bearer "+cred)
-	resp, err := s.outbound().Do(hr)
-	if err != nil {
+	msg, err := s.chatCompletion(ctx, st, cred, body)
+	if ue := (*unreachableError)(nil); errors.As(err, &ue) {
 		return msg, errors.New("model endpoint unreachable")
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		m := strings.TrimSpace(string(raw))
-		if len(m) > 200 {
-			m = m[:200]
-		}
-		return msg, fmt.Errorf("model endpoint returned %d: %s", resp.StatusCode, m)
-	}
-	var out struct {
-		Choices []struct {
-			Message assistantMsg `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil || len(out.Choices) == 0 {
-		return msg, errors.New("model endpoint returned an unexpected response")
-	}
-	return out.Choices[0].Message, nil
+	return msg, err
 }
 
 // ---- tools ----

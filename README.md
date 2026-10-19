@@ -21,6 +21,7 @@ Each company gets a workspace at `acme.<your-domain>` (or its own domain), or yo
   - **answers in task chats** when mentioned, and **works on tasks handed to it**, ticking todos with a one-line result. When it needs a decision it **hands the task back** to you with tappable answers, and picks it up again when you reply;
   - **runs automations**: repeating tasks assigned to it, on schedule or with Run now.
 - It reads the project's notes as context, and writes a note only when asked.
+- **Background jobs**, work nobody waits for, run on the server with retries, and can use a separate, cheaper **background model**. A **monthly token cap** pauses them once the workspace's model calls reach it (they resume next month, or when the cap is raised); triage, chat and the assistant keep working. Admin → Triage shows this month's usage.
 - **Its work is visible**: live steps while it works, a trace under each reply ("Looked up Web search · 3 steps"), 👀 → ✅ on the message it answered, and a notification when it's done.
 - **Connections** to remote MCP servers give it tools: a free web search in one click, or your own servers with OAuth sign-in. Read-only tools are on by default; destructive ones can't be switched on.
 - **Blocks** let it show **images** and **maps** under its messages. The server checks what's shown: a picture is the cited page's own image, served through this server; places are located with OpenStreetMap. Each block kind is a small plugin (`internal/core/blocks.go` and `web/src/blocks/`).
