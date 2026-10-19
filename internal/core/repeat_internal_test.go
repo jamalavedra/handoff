@@ -78,3 +78,16 @@ func TestSeriesDay(t *testing.T) {
 		t.Errorf("anchored monthly: %s", got)
 	}
 }
+
+// Due dates come back from Postgres in the server's zone; west of UTC their midnight is the day before.
+func TestRepeatDueInLocalZone(t *testing.T) {
+	la := time.FixedZone("PDT", -7*60*60)
+	due := time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC).In(la) // Oct 30, 17:00 local
+	today := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
+	if got := nextDue("weekly", &due, today, 0).Format("2006-01-02"); got != "2026-11-07" {
+		t.Errorf("weekly from a local-zone due: %s", got)
+	}
+	if got := seriesDay(0, &due); got != 31 {
+		t.Errorf("series day from a local-zone due: %d", got)
+	}
+}

@@ -689,7 +689,8 @@ func nextDue(repeat string, due *time.Time, today time.Time, day int) time.Time 
 	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 	d := today
 	if due != nil {
-		d = time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
+		u := due.UTC() // due_at is a timestamptz at UTC midnight; pgx hands it back in the server's zone
+		d = time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 	}
 	if day == 0 {
 		day = d.Day()
@@ -733,6 +734,8 @@ func seriesDay(stored int, due *time.Time) int {
 	if due == nil {
 		return 0
 	}
+	u := due.UTC()
+	due = &u
 	if last := time.Date(due.Year(), due.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day(); stored > 0 && min(stored, last) == due.Day() {
 		return stored
 	}
