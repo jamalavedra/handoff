@@ -143,6 +143,9 @@ func All(s *core.Service) []*Tool {
 		def(Tool{Name: "invite", Description: "Invite a person by email (admins)."}, s.Invite),
 		def(Tool{Name: "update_member", Description: "Change a person's role or remove them (admins)."}, s.UpdateMember),
 		def(Tool{Name: "update_org", Description: "Change workspace settings (admins)."}, s.UpdateOrg),
+		def(Tool{Name: "list_memory", ReadOnly: true, Description: "What the agent remembers between jobs: the workspace's facts, projects you can see, and your own."}, s.ListMemory),
+		def(Tool{Name: "pin_memory", Description: "Pin a memory so it loads first and the size cap never leaves it out; unpin with pinned=false."}, s.PinMemory),
+		def(Tool{Name: "remove_memory", Destructive: true, Description: "Remove a fact from the agent's memory; it stays on the record but never loads again."}, s.RemoveMemory),
 	}
 }
 

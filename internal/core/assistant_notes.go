@@ -169,3 +169,44 @@ func (a *assistantRun) updateNote(ctx context.Context, raw json.RawMessage) (any
 	}
 	return map[string]any{"note": noteBrief(res.Note)}, &AssistantStep{Summary: "Updated the note “" + clip(res.Note.Title, 60) + "”"}, nil
 }
+
+func (a *assistantRun) remember(ctx context.Context, raw json.RawMessage) (any, *AssistantStep, error) {
+	var in RememberIn
+	if err := decodeArgs(raw, &in); err != nil {
+		return nil, nil, err
+	}
+	res, err := a.s.Remember(ctx, a.agent, in)
+	if err != nil {
+		return nil, &AssistantStep{Summary: "Couldn't remember that"}, err
+	}
+	step := &AssistantStep{Summary: "Already had that fact"}
+	if res.Added {
+		switch res.Fact.Scope {
+		case "project":
+			step.Summary = "Remembered for " + clip(res.Fact.Project, 40)
+		case "workspace":
+			step.Summary = "Remembered for the workspace"
+		default:
+			step.Summary = "Remembered for you"
+		}
+	}
+	return map[string]any{"fact": res.Fact, "added": res.Added}, step, nil
+}
+
+func (a *assistantRun) listMemory(ctx context.Context, raw json.RawMessage) (any, *AssistantStep, error) {
+	var in ListMemoryIn
+	if err := decodeArgs(raw, &in); err != nil {
+		return nil, nil, err
+	}
+	res, err := a.s.ListMemory(ctx, a.agent, in)
+	if err != nil {
+		return nil, &AssistantStep{Summary: "Couldn't list memory"}, err
+	}
+	facts := make([]map[string]any, 0, len(res.Facts))
+	for _, f := range res.Facts {
+		facts = append(facts, map[string]any{
+			"id": f.ID, "scope": f.Scope, "text": f.Text, "project": f.Project, "pinned": f.Pinned, "until": f.Until,
+		})
+	}
+	return map[string]any{"facts": facts}, &AssistantStep{Summary: fmt.Sprintf("Read %d remembered facts", len(facts))}, nil
+}

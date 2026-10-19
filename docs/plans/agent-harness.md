@@ -423,19 +423,12 @@ Each row is one PR with its migration, tests and README lines.
   usage counted), `background.go` (background model, monthly cap, `backgroundModel()`), `jobs.go`
   (`agent_jobs` queue: `enqueueJob`, `jobKinds` registry, retries, run inside `RunTriage`), migration 025,
   Admin → Triage section.
-- **1a: started** on `agent/memory`, stacked on `agent/background-jobs`. Only migration
-  `026_agent_memory.sql` exists (applies cleanly; `go test ./internal/db` passes). Next steps for 1a:
-  1. `internal/core/memory.go`: `Remember` / `ListMemory` / `PinMemory` / `RemoveMemory` service calls
-     with the visibility rules in Phase 1 (project facts follow `c.canSeeProject`; person facts only for
-     that member; removing a fact sets `removed_at`, never deletes).
-  2. A fenced memory block (`memoryContext`, modelled on `notesContext` in `notes.go`) added in
-     `assistantRun.systemPrompt` (`assistant.go`) and `triageUserMessage` (`triage.go`), capped at
-     120 lines / 12 KB, pinned first, expired and superseded rows excluded.
-  3. A `remember` assistant tool in `assistantTools` (`assistant.go`), plus web-only tools in
-     `internal/tools/tools.go`.
-  4. Memory events must **not** go into `events` with task ids: `Activity` (`members.go`) shows events
-     with `task_id IS NULL` to every member, so person facts would leak there. Either keep memory
-     history in `agent_memory` itself (it already keeps removed and superseded rows) or filter those
-     kinds out of `Activity`.
-  5. Settings page "What the agent knows" (`web/src/pages/`, tab in `settings.tsx`).
-  6. Tests next to `assistant_test.go` (use `scriptedModel` / `assistantEnv`).
+- **1a: done** on `agent/memory` (migration `027_agent_memory.sql`): `internal/core/memory.go`
+  (`Remember` / `ListMemory` / `PinMemory` / `RemoveMemory` with the Phase 1 visibility rules —
+  project facts follow `c.canSeeProject`, person facts only for that member or the agent acting for
+  them, removal sets `removed_at` and never deletes; admins manage workspace/project facts, people
+  their own), the fenced `memoryContext` block (120 lines / 12 KB, pinned → person → project →
+  workspace, newest first) in `assistantRun.systemPrompt` and `triageUserMessage`, the `remember` +
+  `list_memory` assistant tools, web-only `list_memory` / `pin_memory` / `remove_memory` tools, and
+  Settings → Memory ("What the agent knows"). Memory writes are not events (person facts would leak
+  through `Activity`'s `task_id IS NULL` rows); `agent_memory` itself is the history. Next: 1b.
