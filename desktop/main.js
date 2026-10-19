@@ -35,14 +35,21 @@ const allowedInApp = (link) => {
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
   if (!workspace) return false;
   if (u.host === new URL(workspace).host) return true; // exact host, port included
+  // the apex itself hosts signup and the shared auth callback — but no other subdomain
   const apex = new URL(workspace).hostname.split('.').slice(1).join('.');
-  if (apex && (u.hostname === apex || u.hostname.endsWith('.' + apex))) return true;
+  if (apex && u.hostname === apex) return true;
   return AUTH_HOSTS.includes(u.hostname);
 };
 
 // Everything else opens in the system browser; inert schemes (blob:, data:, javascript:) die quietly.
 const openOutside = (link) => {
-  if (/^(https?|mailto|tel):/i.test(link)) shell.openExternal(link);
+  let u;
+  try {
+    u = new URL(link);
+  } catch {
+    return;
+  }
+  if (['https:', 'http:', 'mailto:', 'tel:'].includes(u.protocol)) shell.openExternal(link);
 };
 const guardNavigation = (event, link, isMainFrame = true) => {
   if (!isMainFrame || allowedInApp(link)) return;
@@ -85,6 +92,9 @@ ipcMain.handle('set-workspace', (_e, raw) => {
     return 'That is not a valid address.';
   }
   if (!u.hostname.includes('.') && u.hostname !== 'localhost') return 'Enter your workspace address, e.g. acme.example.com';
+  // plaintext http is only for local dev (localhost / *.localhost); hosted workspaces need https
+  const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1' || u.hostname.endsWith('.localhost');
+  if (u.protocol === 'http:' && !local) u.protocol = 'https:';
   workspace = u.origin;
   writeConfig({ ...readConfig(), workspace });
   win.loadURL(workspace);
@@ -134,7 +144,8 @@ const pollInbox = async () => {
     const ses = win.webContents.session;
     const res = await ses.fetch(workspace + '/api/tools/inbox', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      // X-Handoff: the session-cookie CSRF marker the API requires on non-GET calls
+      headers: { 'Content-Type': 'application/json', 'X-Handoff': '1' },
       body: '{"limit":1}',
     });
     if (res.ok) app.setBadgeCount((await res.json()).unread || 0);
