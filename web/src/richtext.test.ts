@@ -101,3 +101,17 @@ test("blank lines inside a code fence are kept", () => {
   e.commands.insertContent("!");
   assert.equal(toMarkdown(e), doc.replace("Intro", "Intro!"));
 });
+
+test("with breaks, a task's plain lines stay lines and its markdown stays as written", () => {
+  const loadB = (md: string) => new Editor({ extensions: richExtensions("", { breaks: true }), content: md });
+  const rt = (md: string) => toMarkdown(loadB(md));
+  const doc = "A relaxed launch party for **40–60 guests**.\nBudget first.\n\n## Venue shortlist\n\n- Pierlight Studio · Dogpatch\n- Juniper Gallery · Mission\n\nSee [the brief](https://example.com).";
+  assert.equal(rt(doc), doc);
+  assert.equal(rt(rt(doc)), doc);
+  // Shift+Enter in the editor writes a plain new line, not a backslash break.
+  const e = loadB("one");
+  e.commands.setTextSelection(4);
+  e.commands.setHardBreak();
+  e.commands.insertContent("two");
+  assert.equal(toMarkdown(e), "one\ntwo");
+});

@@ -328,9 +328,10 @@ function TaskView({ id }: { id: string }) {
       <PendingApprovals id={t.id} />
       <ErrorText error={err} />
 
-      {/* A task is its text and its todos. -mx-2/px-2 line the frame up with the rows' hover areas. */}
+      {/* A task is one page: its text, then its todos straight after, in the same type. -mx-2/px-2
+          line the frame up with the rows' padding. */}
       <div className={cn("-mx-2 mb-2 rounded-lg px-2", agentOnIt(t, here) && "agent-border")}>
-        <div className="mb-3"><TaskText key={t.id} id={t.id} body={t.body ?? ""} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
+        <div className="mb-1"><TaskText key={t.id} id={t.id} body={t.body ?? ""} disabled={locked} onSave={(body) => update.mutateAsync({ id: t.id, body, body_mode: "replace", confirm: true })} /></div>
         <Todos key={`todos-${t.id}`} task={t.id} todos={t.todos ?? []} disabled={locked} />
       </div>
 

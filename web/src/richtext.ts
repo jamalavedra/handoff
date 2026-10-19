@@ -51,13 +51,14 @@ function serializeBullets(state: State, node: PMNode, parent: Parent, index: num
 const Bullets = BulletList.extend({ addStorage: () => ({ markdown: { serialize: serializeBullets } }) });
 const Tasks = TaskList.extend({ addStorage: () => ({ markdown: { serialize: serializeBullets } }) });
 
-// A line break inside a table cell would end the row in GFM; write a space there instead.
-const Break = HardBreak.extend({
+// A line break inside a table cell would end the row in GFM; write a space there instead. With
+// `breaks` (a task's text, where every line break counts) a break is just a new line.
+const lineBreak = (breaks: boolean) => HardBreak.extend({
   addStorage: () => ({
     markdown: {
       serialize(state: State, _node: unknown, parent: { childCount: number; child: (i: number) => unknown }, index: number) {
         if (state.inTable) return state.write(" ");
-        for (let i = index + 1; i < parent.childCount; i++) if ((parent.child(i) as { type: { name: string } }).type.name !== "hardBreak") return state.write("\\\n");
+        for (let i = index + 1; i < parent.childCount; i++) if ((parent.child(i) as { type: { name: string } }).type.name !== "hardBreak") return state.write(breaks ? "\n" : "\\\n");
       },
     },
   }),
@@ -123,11 +124,13 @@ const OwnImages = Image.extend({
   },
 });
 
-export function richExtensions(placeholder = ""): Extensions {
+// breaks: a single line break is a line break, read and written as one (a task's text is often
+// plain lines). Without it, markdown's own rule: lines in a paragraph run together.
+export function richExtensions(placeholder = "", { breaks = false }: { breaks?: boolean } = {}): Extensions {
   return [
     StarterKit.configure({ text: false, hardBreak: false, bulletList: false }),
     PlainText,
-    Break,
+    lineBreak(breaks),
     Bullets,
     Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true, HTMLAttributes: { rel: "noreferrer noopener", target: "_blank" } }),
     OwnImages.configure({ inline: true }),
@@ -140,7 +143,7 @@ export function richExtensions(placeholder = ""): Extensions {
     HeaderCell,
     Cell,
     TrailingParagraph,
-    Markdown.configure({ html: false, tightLists: true, bulletListMarker: "-", linkify: false, breaks: false, transformPastedText: true, transformCopiedText: true }),
+    Markdown.configure({ html: false, tightLists: true, bulletListMarker: "-", linkify: false, breaks, transformPastedText: true, transformCopiedText: true }),
   ];
 }
 

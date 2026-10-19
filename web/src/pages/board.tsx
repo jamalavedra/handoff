@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Columns3, List } from "lucide-react";
 import { api, cn, type Task } from "../lib";
 import { Card, Empty, ErrorText } from "../components/app";
 import { boardColumn, isoDate, type BoardColumn } from "../quickadd";
@@ -26,23 +25,6 @@ export function useView(): [View, (v: View) => void] {
     }
   };
   return [v, set];
-}
-
-export function ViewToggle({ view, onChange }: { view: View; onChange: (v: View) => void }) {
-  const opts = [
-    { v: "list" as const, icon: List, label: "List" },
-    { v: "board" as const, icon: Columns3, label: "Board" },
-  ];
-  return (
-    <div role="radiogroup" aria-label="View" className="inline-flex rounded-full bg-accent p-0.5">
-      {opts.map(({ v, icon: Icon, label }) => (
-        <button key={v} role="radio" aria-checked={view === v} aria-label={label} title={label} onClick={() => onChange(v)}
-          className={cn("flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors", view === v && "bg-card text-foreground shadow-sm")}>
-          <Icon className="size-3.5" />
-        </button>
-      ))}
-    </div>
-  );
 }
 
 const columns: { key: BoardColumn; title: string; empty: string }[] = [
