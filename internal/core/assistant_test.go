@@ -37,7 +37,7 @@ func scriptedModel(t *testing.T, replies ...map[string]any) (*httptest.Server, f
 		var req chatReq
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		// Triage of the tasks a test creates is answered aside, so it never takes a scripted reply.
-		if sys, _ := req.Messages[0]["content"].(string); len(req.Tools) == 0 && strings.HasPrefix(sys, "You triage") {
+		if sys, _ := req.Messages[0]["content"].(string); strings.HasPrefix(sys, "You triage") {
 			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]any{"content": "{}"}}}})
 			return
 		}

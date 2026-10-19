@@ -182,7 +182,7 @@ async function allTasks(query: Record<string, unknown>) {
     if (r.tasks.length < page) return { tasks };
   }
 }
-const allMyOpenTasks = () => allTasks({ assignee: "me" });
+const allMyOpenTasks = () => allTasks({ assignee: "me", sort: "recent" });
 
 function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: () => void; name: string; n: number }) {
   return (

@@ -191,7 +191,7 @@ const overlay = "absolute inset-0 size-full cursor-pointer appearance-none opaci
 // InlineNewTask is the composer at the top of a task list: type a title and press Enter, and the task
 // is added right there; the field stays ready for the next one. Pills set its status, due date and
 // project; @person, #project, "friday" and !1 in the title work as in the dialog. Esc clears it.
-// While it's on screen, N (and every New task button) comes here instead of opening the dialog.
+// It stays hidden until N (or a New task button) opens it, and hides again when left empty.
 export function InlineNewTask({ project }: { project?: string }) {
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
@@ -203,7 +203,9 @@ export function InlineNewTask({ project }: { project?: string }) {
   const [started, setStarted] = useState(false);
   const [o, setO] = useState<Overrides>({});
   const [focused, setFocused] = useState(false);
-  useEffect(() => quick.register(() => { input.current?.focus(); input.current?.scrollIntoView({ block: "nearest" }); }), [quick]);
+  const [shown, setShown] = useState(false);
+  // Once shown, the input mounts with autoFocus; if it's already there, focus it again.
+  useEffect(() => quick.register(() => { setShown(true); input.current?.focus(); input.current?.scrollIntoView({ block: "nearest" }); }), [quick]);
 
   const people = members.data?.members.filter((m) => m.status === "active" || m.status === "invited") ?? [];
   const parsed = parseQuickAdd(text, { members: people, projects: projects.data?.projects ?? [] });
@@ -226,16 +228,18 @@ export function InlineNewTask({ project }: { project?: string }) {
     input.current?.focus();
   };
   const open = focused || !!text;
+  if (!shown) return null;
 
   return (
     <form
       onSubmit={(e) => { e.preventDefault(); submit(); }}
       onFocus={() => setFocused(true)}
-      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocused(false); }}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { setFocused(false); if (!text) setShown(false); } }}
       className={cn("mb-4 rounded-2xl border bg-card px-3.5 py-2.5 transition-[border-color,box-shadow]", open ? "border-foreground/25 shadow-sm" : "border-border hover:border-foreground/15")}
     >
       <input
         ref={input}
+        autoFocus
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (text) reset(); else e.currentTarget.blur(); } }}
