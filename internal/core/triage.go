@@ -935,6 +935,7 @@ func (s *Service) askModelResearching(ctx context.Context, st *triageSettings, c
 				msgs = append(msgs, map[string]any{"role": "assistant", "content": msg.Content})
 			}
 			msgs = append(msgs, map[string]any{"role": "user", "content": triageBlocksNudge})
+			round-- // the nudge doesn't use up a lookup round, so its answer can still call the blocks
 			continue
 		}
 		if len(msg.ToolCalls) == 0 || tools == nil {
