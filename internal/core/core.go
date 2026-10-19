@@ -168,10 +168,12 @@ type Service struct {
 	outboundOnce sync.Once
 	hooksBusy    sync.Map      // workspaces with a webhook round running
 	hookSlots    chan struct{} // bounds how many workspaces deliver at once
+	jobWake      chan struct{} // a background job was queued to run now
+	jobsCleaned  time.Time     // when the jobs sweep last dropped old finished jobs; the sweep's goroutine only
 }
 
 func New(d *db.DB, cfg *config.Config) *Service {
-	return &Service{DB: d, Cfg: cfg, triageJobs: make(chan triageJob, 1024), replyJobs: make(chan replyJob, 256), hookSlots: make(chan struct{}, 8)}
+	return &Service{DB: d, Cfg: cfg, triageJobs: make(chan triageJob, 1024), replyJobs: make(chan replyJob, 256), hookSlots: make(chan struct{}, 8), jobWake: make(chan struct{}, 1)}
 }
 
 // call wraps a principal-scoped transaction and loads the per-call view of the org.
