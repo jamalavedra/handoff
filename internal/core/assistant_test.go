@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -41,6 +42,18 @@ func scriptedModel(t *testing.T, replies ...map[string]any) (*httptest.Server, f
 			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]any{"content": "{}"}}}})
 			return
 		}
+		// A capture request is answered by the test's setCapture answer, not the reply queue.
+		if sys, _ := req.Messages[0]["content"].(string); strings.HasPrefix(sys, "You consolidate") {
+			mu.Lock()
+			got = append(got, req)
+			mu.Unlock()
+			a, _ := captureAnswer.Load().(string)
+			if a == "" {
+				a = `{"add": []}`
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]any{"content": a}}}})
+			return
+		}
 		mu.Lock()
 		n := len(got)
 		got = append(got, req)
@@ -58,6 +71,15 @@ func scriptedModel(t *testing.T, replies ...map[string]any) (*httptest.Server, f
 		defer mu.Unlock()
 		return slices.Clone(got)
 	}
+}
+
+// captureAnswer is the JSON a capture request is answered with ("{\"add\": []}" until set).
+var captureAnswer atomic.Value
+
+func setCapture(t *testing.T, answer string) {
+	t.Helper()
+	captureAnswer.Store(answer)
+	t.Cleanup(func() { captureAnswer.Store(`{"add": []}`) })
 }
 
 func toolCall(id, name string, args any) map[string]any {

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Agent memory: short facts the workspace's agent keeps between jobs — what it noticed or was
@@ -56,7 +58,11 @@ const memorySelect = `SELECT m.id::text, m.scope, m.text, coalesce(m.project_id:
 	m.created_at, m.removed_at, m.superseded_at FROM agent_memory m`
 
 func (c *call) queryMemory(where string, args ...any) ([]*memoryRow, error) {
-	rows, err := c.tx.Query(c.ctx, memorySelect+" WHERE "+where, args...)
+	return queryMemoryTx(c.ctx, c.tx, where, args...)
+}
+
+func queryMemoryTx(ctx context.Context, tx pgx.Tx, where string, args ...any) ([]*memoryRow, error) {
+	rows, err := tx.Query(ctx, memorySelect+" WHERE "+where, args...)
 	if err != nil {
 		return nil, err
 	}
