@@ -29,6 +29,11 @@ type Config struct {
 	GoogleClientID     string
 	GoogleClientSecret string
 
+	// ComposioAPIKey turns on Settings → Apps: each person connects their own Gmail, Calendar… through
+	// Composio, and their assistant can read them. ComposioURL is the API base (tests point it elsewhere).
+	ComposioAPIKey string
+	ComposioURL    string
+
 	Secret []byte
 }
 
@@ -48,6 +53,8 @@ func Load() (*Config, error) {
 		MailFrom:           env("HANDOFF_MAIL_FROM", "Handoff <no-reply@localhost>"),
 		GoogleClientID:     os.Getenv("HANDOFF_GOOGLE_CLIENT_ID"),
 		GoogleClientSecret: os.Getenv("HANDOFF_GOOGLE_CLIENT_SECRET"),
+		ComposioAPIKey:     strings.TrimSpace(os.Getenv("HANDOFF_COMPOSIO_API_KEY")),
+		ComposioURL:        env("HANDOFF_COMPOSIO_URL", "https://backend.composio.dev/api/v3.1"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
