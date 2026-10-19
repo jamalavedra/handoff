@@ -187,9 +187,9 @@ function Bubble({ c, mine, mentions, locked, answers, onAnswer }: { c: Comment; 
   const cited = c.author?.kind === "agent" ? sources(c.body) : [];
   return (
     <div className={cn("flex gap-2.5", mine && "flex-row-reverse")}>
-      {!mine && <Avatar m={c.author} className="mt-0.5" />}
+      {!mine && c.author?.kind !== "agent" && <Avatar m={c.author} className="mt-0.5" />}
       <div className="flex min-w-0 max-w-[88%] flex-col gap-1.5">
-        <div className={cn("min-w-0 rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card shadow-[0_0_0_1px_rgba(0,0,0,0.06)]")}>
+        <div className={cn("min-w-0 rounded-2xl px-3 py-2 text-[15px] sm:text-sm", mine ? "rounded-tr-md bg-accent" : "rounded-tl-md bg-card")}>
           {!mine && <div className="mb-0.5 text-xs text-muted-foreground"><Who m={c.author} by={c.on_behalf_of} /> · {ago(c.created_at)}</div>}
           {!c.activity?.length && c.lookups?.length ? <LookedUp lookups={c.lookups} /> : null}
           <QuotedReply r={c.reply_to} />
