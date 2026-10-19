@@ -20,7 +20,7 @@ export function directionsURL(from: { lat: number; lng: number }, to: { lat: num
   return `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=${travel}`;
 }
 
-export type Reminder = { title: string; at: string; all_day: boolean; note?: string; task?: string };
+export type Reminder = { id?: string; title: string; at: string; all_day: boolean; note?: string; task?: string };
 
 // when reads a reminder's date as the person would say it, relative to now: "Tomorrow, 9:30 AM",
 // "Fri, Oct 24", "Oct 24, 2027".

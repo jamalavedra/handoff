@@ -51,7 +51,8 @@ var blockToolDefs = func() []map[string]any {
 	return defs
 }()
 
-const maxBlocks = 4
+// One of each kind, so a message can carry every kind once.
+var maxBlocks = len(blockPlugins)
 
 // showBlock runs a block tool for the model: the block goes under its message.
 func (a *assistantRun) showBlock(ctx context.Context, b blockPlugin, args string) string {

@@ -273,6 +273,11 @@ func (s *Service) AssistantChat(ctx context.Context, p *Principal, in AssistantC
 	a := &assistantRun{s: s, p: p, agent: agent, out: &out, turn: t, turnID: turnID, sessions: extSessions{}}
 	if in.shared {
 		a.task = strings.TrimSpace(in.Task)
+	} else if id := strings.TrimSpace(in.Task); id != "" {
+		// The task the person has open, if the agent may see it: blocks about it (a reminder) can offer to change it.
+		if d, err := s.GetTask(ctx, agent, TaskIDIn{ID: id}); err == nil {
+			a.open = d.Task.ID
+		}
 	}
 	// Steps go out as they happen: to the person alone, or to the task's viewers when the server runs it there.
 	a.progress = &progress{org: p.Org.ID, member: p.Member.ID, turn: turnID}
@@ -648,6 +653,7 @@ type assistantRun struct {
 	sessions extSessions
 	progress *progress
 	task     string // the task the server runs this turn on, when it does
+	open     string // in the private assistant, the task the person has open (checked visible to the agent)
 }
 
 // add records a step and shows it on open screens.

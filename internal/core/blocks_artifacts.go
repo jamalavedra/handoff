@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,7 +66,7 @@ func routeMode(m string) string {
 var routePlugin = blockPlugin{
 	tool:   "show_route",
 	kind:   "route",
-	desc:   "Show a route on a map under your message, from one place to another, walking, by bike or by car, with its distance and time. Both ends are looked up by address or name and city, so give real places. Use it when how to get somewhere matters (a shop to visit, a venue, a meeting point).",
+	desc:   "Show a route on a map under your message, from one place to another, walking, by bike or by car, with its distance and time. Both ends are looked up by address or name and city with outside map services, so give public places (shops, venues, stations, neighbourhoods), never a private home address from a task or chat. Use it when how to get somewhere matters (a shop to visit, a venue, a meeting point).",
 	schema: schemaOf[routeIn](),
 	resolve: func(ctx context.Context, a *assistantRun, raw json.RawMessage) (any, string, error) {
 		var in routeIn
@@ -170,6 +171,7 @@ type reminderIn struct {
 }
 
 type reminderOut struct {
+	ID     string `json:"id"`
 	Title  string `json:"title"`
 	At     string `json:"at"` // YYYY-MM-DD or YYYY-MM-DDTHH:MM, the person's local time
 	AllDay bool   `json:"all_day"`
@@ -191,7 +193,8 @@ var reminderPlugin = blockPlugin{
 		if err != nil {
 			return nil, "Didn't add a reminder", err
 		}
-		out.Task = a.task
+		out.Task = cmp.Or(a.task, a.open)
+		out.ID = randomID("r", 12) // its calendar event's UID: reminders on the same day stay apart
 		return out, "Added a reminder for " + out.At, nil
 	},
 }

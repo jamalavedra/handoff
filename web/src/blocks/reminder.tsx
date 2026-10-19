@@ -21,7 +21,7 @@ export function ReminderBlock({ data }: { data: Reminder }) {
   const d = localDate(data.at);
   const left = daysLeft(data);
   const download = () => {
-    const url = URL.createObjectURL(new Blob([ics(data, `${data.task ?? "reminder"}-${data.at}`)], { type: "text/calendar" }));
+    const url = URL.createObjectURL(new Blob([ics(data, data.id ?? `${data.task ?? "reminder"}-${data.at}-${data.title}`.replace(/[^\w-]+/g, "-"))], { type: "text/calendar" }));
     const a = Object.assign(document.createElement("a"), { href: url, download: `${data.title.replace(/[^\w -]+/g, "").trim() || "reminder"}.ics` });
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);

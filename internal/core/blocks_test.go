@@ -141,6 +141,8 @@ func TestAssistantArtifactBlocks(t *testing.T) {
 	model, _ := scriptedModel(t,
 		calls(toolCall("c1", "ext_web_search__web_search", map[string]any{"query": "site " + strings.TrimPrefix(site.URL, "http://") + "/in/jane"})),
 		calls(
+			toolCall("i1", "show_images", map[string]any{"pages": []map[string]any{{"url": site.URL + "/in/jane", "caption": "Jane"}}}),
+			toolCall("m1", "show_map", map[string]any{"places": []map[string]any{{"name": "Ferry Building", "where": "Ferry Building, San Francisco"}}}),
 			toolCall("c2", "show_route", map[string]any{"from": "Ferry Building, San Francisco", "to": "One Stop Party Shop, San Francisco", "mode": "cycling"}),
 			toolCall("c3", "show_reminder", map[string]any{"title": "Order the costume", "at": soon, "note": "to try it on in time"}),
 			toolCall("c4", "show_reminder", map[string]any{"title": "Too late", "at": "2001-01-01"}),
@@ -152,10 +154,15 @@ func TestAssistantArtifactBlocks(t *testing.T) {
 		say("Here's the plan."),
 	)
 	e, admin, _ := assistantEnv(t, model, "artifacts")
+	// The task first: with no connection yet, its triage is answered aside.
+	open := e.create(t, admin, core.NewTask{Title: "Halloween costume"})[0]
+	waitTriage(t, e, admin, open.ID)
 	if _, err := e.s.AddConnection(e.ctx, admin, core.AddConnectionIn{Name: "Web search", URL: search.URL, Auth: "bearer", Secret: "sk-mcp"}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := e.s.AssistantChat(e.ctx, admin, ask("plan my costume shopping"))
+	in := ask("plan my costume shopping")
+	in.Task = open.ID // the private assistant, with the task open
+	out, err := e.s.AssistantChat(e.ctx, admin, in)
 	if err != nil || out.Error != "" {
 		t.Fatal(err, out.Error)
 	}
@@ -163,9 +170,11 @@ func TestAssistantArtifactBlocks(t *testing.T) {
 	for _, b := range out.Blocks {
 		kinds = append(kinds, b.Type)
 	}
-	if !slices.Equal(kinds, []string{"route", "reminder", "people"}) {
-		t.Fatalf("blocks: %v", kinds)
+	// One of each kind fits in a message.
+	if !slices.Equal(kinds, []string{"images", "map", "route", "reminder", "people"}) {
+		t.Fatalf("blocks: %v (steps %+v)", kinds, out.Steps)
 	}
+	out.Blocks = out.Blocks[2:]
 	var route struct {
 		Mode     string
 		Distance float64 `json:"distance_m"`
@@ -178,11 +187,12 @@ func TestAssistantArtifactBlocks(t *testing.T) {
 		t.Fatalf("route: %+v (asked %s)", route, routed)
 	}
 	var rem struct {
-		Title, At string
-		AllDay    bool `json:"all_day"`
+		ID, Title, At, Task string
+		AllDay              bool `json:"all_day"`
 	}
 	_ = json.Unmarshal(out.Blocks[1].Data, &rem)
-	if rem.Title != "Order the costume" || rem.At != soon || !rem.AllDay {
+	// It's about the open task (so the card can make it the due date), with its own id for calendars.
+	if rem.Title != "Order the costume" || rem.At != soon || !rem.AllDay || rem.Task != open.ID || !strings.HasPrefix(rem.ID, "r-") {
 		t.Fatalf("reminder: %+v", rem)
 	}
 	if i := slices.IndexFunc(out.Steps, func(s core.AssistantStep) bool { return s.Tool == "show_reminder" && s.Error != "" }); i < 0 {
