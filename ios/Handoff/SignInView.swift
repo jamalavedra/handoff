@@ -88,13 +88,19 @@ struct SignInView: View {
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
                 Button("Open") {
-                    if let u = URL(string: pasteLink.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    let s = pasteLink.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let u = URL(string: s), let h = u.host,
+                       h == base.host || h.hasSuffix(".\(base.host ?? "")") {
+                        error = nil
                         webURL = u
+                    } else {
+                        error = "That link isn't for this workspace."
                     }
                 }
                 .disabled(URL(string: pasteLink.trimmingCharacters(in: .whitespacesAndNewlines)) == nil)
             }
             .padding(8)
+            if let error { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 8) }
             WebView(url: webURL ?? base.appendingPathComponent("login"), host: base.host ?? "") { token in
                 _Concurrency.Task { await session.didSignIn(token: token) }
             }

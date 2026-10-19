@@ -48,6 +48,9 @@ final class Session: ObservableObject {
                 signedIn = true
                 let saved = SavedSession(base: c.base.absoluteString, token: c.cookie)
                 Keychain.save((try? JSONEncoder().encode(saved)) ?? Data())
+            } else {
+                // Valid response but no member: the saved cookie is dead — drop it.
+                signOut(serverCall: false)
             }
         } catch let e as APIError where e.unauthorized {
             signOut(serverCall: false)

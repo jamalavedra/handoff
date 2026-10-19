@@ -56,13 +56,22 @@ struct TasksView: View {
     func load() async {
         guard let c = session.client else { return }
         do {
-            let out: TasksOut
-            switch scope {
-            case .open: out = try await c.tool("search_tasks", ["limit": 100])
-            case .ready: out = try await c.tool("list_ready", ["limit": 100])
-            case .mine: out = try await c.tool("search_tasks", ["assignee": "me", "limit": 100])
+            if scope == .ready {
+                let out: TasksOut = try await c.tool("list_ready", ["limit": 100])
+                tasks = out.tasks
+            } else {
+                var all: [Task] = []
+                var offset = 0
+                while true {
+                    var args: [String: Any] = ["limit": 100, "offset": offset]
+                    if scope == .mine { args["assignee"] = "me" }
+                    let page: TasksOut = try await c.tool("search_tasks", args)
+                    all += page.tasks
+                    if page.tasks.count < 100 { break }
+                    offset += 100
+                }
+                tasks = all
             }
-            tasks = out.tasks
             error = nil
         } catch let e as APIError {
             if e.unauthorized { session.expire() } else { error = e.message }

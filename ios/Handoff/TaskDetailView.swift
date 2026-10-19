@@ -93,8 +93,8 @@ struct TaskDetailView: View {
                         if t.claimed_by != nil {
                             Button("Release") { _Concurrency.Task { await act { c in try await c.tool("release_task", ["id": id]) } } }
                         }
-                        Button("Mark done") { _Concurrency.Task { await act { c in try await c.tool("close_task", ["id": id, "status": "done"]) } } }
-                        Button("Archive", role: .destructive) { _Concurrency.Task { await act { c in try await c.tool("close_task", ["id": id, "status": "archived"]) } } }
+                        Button("Mark done") { _Concurrency.Task { await act { c in try await c.tool("close_task", ["id": id, "status": "done", "today": localDay()]) } } }
+                        Button("Archive", role: .destructive) { _Concurrency.Task { await act { c in try await c.tool("close_task", ["id": id, "status": "archived", "today": localDay()]) } } }
                     } label: { Image(systemName: "ellipsis.circle") }
                 }
             }
@@ -186,6 +186,13 @@ struct TaskDetailView: View {
             self.error = error.localizedDescription
         }
     }
+}
+
+// Local YYYY-MM-DD — close_task counts a repeating task's next date from it (defaults to UTC otherwise).
+func localDay() -> String {
+    let f = DateFormatter()
+    f.dateFormat = "yyyy-MM-dd"
+    return f.string(from: .now)
 }
 
 func ago(_ iso: String) -> String {

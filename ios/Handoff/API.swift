@@ -4,7 +4,7 @@ struct APIError: LocalizedError {
     var status: Int
     var message: String
     var errorDescription: String? { message }
-    var unauthorized: Bool { status == 401 || status == 403 }
+    var unauthorized: Bool { status == 401 } // 403 is a permission error, not an expired session
 }
 
 // JSON mirrors web/src/lib.ts: the server speaks snake_case.

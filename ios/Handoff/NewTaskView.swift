@@ -14,6 +14,8 @@ struct NewTaskView: View {
     @State private var projects: [Project] = []
     @State private var busy = false
     @State private var error: String?
+    // One id per sheet so a retry after a lost response is a no-op server-side.
+    @State private var extId = "ios-\(UUID().uuidString)"
 
     var body: some View {
         Form {
@@ -54,7 +56,7 @@ struct NewTaskView: View {
         guard let c = session.client else { return }
         busy = true
         defer { busy = false }
-        var t: [String: Any] = ["title": title.trimmingCharacters(in: .whitespaces), "external_id": "ios-\(UUID().uuidString)"]
+        var t: [String: Any] = ["title": title.trimmingCharacters(in: .whitespaces), "external_id": extId]
         if !project.isEmpty { t["project"] = project }
         if hasDue {
             let f = DateFormatter()
