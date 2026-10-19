@@ -28,14 +28,33 @@ function remarkMentions(names: string[]) {
   };
 }
 
+// remarkBreaks keeps each line break in a paragraph as a line break (as the editor does with
+// `breaks`), so plain lines read as they were typed. Code is its own node, so it's never touched.
+function remarkBreaks() {
+  return (tree: MdNode) => {
+    const walk = (node: MdNode) => {
+      if (!node.children) return;
+      node.children = node.children.flatMap((child): MdNode[] => {
+        if (child.type !== "text" || !child.value?.includes("\n")) {
+          walk(child);
+          return [child];
+        }
+        return child.value.split(/[ \t]*\r?\n[ \t]*/).flatMap((v, i): MdNode[] => [...(i ? [{ type: "break" }] : []), ...(v ? [{ type: "text", value: v }] : [])]);
+      });
+    };
+    walk(tree);
+  };
+}
+
 // Markdown renders task bodies and comments: GitHub-flavoured (lists, tables, task lists, links),
-// with @mentions of members shown as chips. Raw HTML is not rendered.
+// with @mentions of members shown as chips. Raw HTML is not rendered. With `breaks`, a single line
+// break is a line break.
 // Checklist items ("- [ ] step") show read-only: a task's steps are its todos.
-export function Markdown({ text, mentions = [], className }: { text: string; mentions?: string[]; className?: string }) {
+export function Markdown({ text, mentions = [], breaks = false, className }: { text: string; mentions?: string[]; breaks?: boolean; className?: string }) {
   return (
     <div className={cn("md", className)}>
       <ReactMarkdown
-        remarkPlugins={mentions.length ? [remarkGfm, remarkMentions(mentions)] : [remarkGfm]}
+        remarkPlugins={[remarkGfm, ...(mentions.length ? [remarkMentions(mentions)] : []), ...(breaks ? [remarkBreaks] : [])]}
         urlTransform={(url) => (url === "mention:" ? url : defaultUrlTransform(url))}
         components={{
           input: ({ type, checked }) =>

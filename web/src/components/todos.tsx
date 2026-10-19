@@ -1,12 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, GripVertical, Plus, X } from "lucide-react";
 import { ago, api, cn, localDrafts, type Task } from "../lib";
-import { linkify, moveTodo, oneLine, patchTodo, type Todo } from "../todos";
+import { moveTodo, oneLine, patchTodo, type Todo } from "../todos";
 import { markLocal } from "./feedback";
 import { ErrorText } from "./app";
+import { Markdown } from "./markdown";
+import type { Caret } from "./rich-editor";
 
-// A task reads as its text, then its todos.
+// A task reads as one page: its text, then its todos right under it, in the same type.
+
+// The editor (Tiptap) is a sizeable chunk; it loads when someone heads for the text.
+const loadEditor = () => import("./rich-editor");
+const RichEditor = lazy(loadEditor);
 
 const textStyle = "text-[15px] leading-relaxed text-foreground/80 sm:text-sm";
 
@@ -14,75 +20,71 @@ const textStyle = "text-[15px] leading-relaxed text-foreground/80 sm:text-sm";
 // failed save after it) never loses it: the task offers it back next time.
 const drafts = localDrafts("handoff-text-draft:");
 
-// TaskText is the task's own text: plain, a line or two. Click to edit; it saves on leaving the field
-// or ⌘/Ctrl+Enter, and Esc puts it back. Addresses in it are links.
+// TaskText is the task's own text, shown formatted (headings, lists, bold, links) like a page, never
+// as markdown source. Click anywhere in it and you're typing at that spot, in the same layout: no
+// box, no toolbar. It saves on clicking away or ⌘/Ctrl+Enter; Esc puts it back. Markdown shortcuts
+// (## , - , **bold**) format as you type; each line break stays a line break.
 export function TaskText({ id, body, disabled, onSave }: { id: string; body: string; disabled: boolean; onSave: (body: string) => Promise<unknown> }) {
-  const [editing, setEditing] = useState(false);
-  const [v, setV] = useState(body);
+  const [editing, setEditing] = useState<{ caret: Caret; base: string; draft?: string } | null>(null);
   const [lost, setLost] = useState(() => { const d = drafts.get(id); return d !== null && d !== body ? d : null; });
-  const discard = useRef(false);
-  useEffect(() => { if (!editing) setV(body); }, [body, editing]);
-  const edit = () => { if (!disabled) setEditing(true); };
-  const commit = async () => {
-    if (discard.current) { discard.current = false; setV(body); setEditing(false); return; }
-    const next = v.trim();
-    if (next === body.trim()) return setEditing(false);
-    drafts.set(id, next);
-    try {
-      await onSave(next);
-      drafts.drop(id);
-      setLost(null);
-      setEditing(false);
-    } catch {
-      // the page shows the error; the text stays here, and in drafts if the page is left
-    }
-  };
-  const recover = lost !== null && !disabled && !editing && (
+  // Just-saved text, shown until the refetched task catches up.
+  const [saved, setSaved] = useState<{ text: string; over: string } | null>(null);
+  const view = useRef<HTMLDivElement>(null);
+  const shown = saved && saved.over === body ? saved.text : body;
+  const edit = (caret: Caret, draft?: string) => { if (!disabled) setEditing({ caret, base: shown, draft }); };
+
+  if (editing) {
+    const fallback = <div className={cn("-mx-2 px-2 py-1", textStyle)}><Markdown text={editing.base} breaks /></div>;
+    return (
+      <Suspense fallback={fallback}>
+        <RichEditor
+          inline
+          breaks
+          label="Task text"
+          body={editing.base}
+          draft={editing.draft}
+          changed={body !== editing.base && !(saved && saved.over === body)}
+          placeholder="Add details…"
+          caret={editing.caret}
+          onSave={(md) => { drafts.set(id, md); return onSave(md).then(() => { drafts.drop(id); setLost(null); }); }}
+          onSaved={(text) => { setSaved({ text, over: body }); setEditing((e) => e && { ...e, base: text, draft: undefined }); }}
+          onLost={(md) => { drafts.set(id, md); setLost(md); }}
+          onClose={() => setEditing(null)}
+        />
+      </Suspense>
+    );
+  }
+  const recover = lost !== null && !disabled && (
     <div className="mb-2 flex items-center gap-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
       <span className="min-w-0 flex-1">Your last edit here didn't save.</span>
-      <button className="text-xs font-medium hover:underline" onClick={() => { setV(lost); setEditing(true); }}>Restore</button>
+      <button className="text-xs font-medium hover:underline" onClick={() => edit("end", lost)}>Restore</button>
       <button className="text-xs text-amber-700/70 hover:text-red-600" onClick={() => { drafts.drop(id); setLost(null); }}>Discard</button>
     </div>
   );
-  if (editing) {
-    return (
-      <textarea
-        autoFocus
-        aria-label="Task text"
-        value={v}
-        placeholder="Add details…"
-        onChange={(e) => setV(e.target.value)}
-        onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.currentTarget.blur(); }
-          if (e.key === "Escape") { e.preventDefault(); discard.current = true; e.currentTarget.blur(); }
-        }}
-        className={cn("-mx-2 block min-h-16 w-[calc(100%+1rem)] resize-none rounded-lg bg-card px-2 py-1 outline-none ring-2 ring-input [field-sizing:content]", textStyle)}
-      />
-    );
-  }
-  if (!body) {
+  if (!shown) {
     return disabled ? null : (
-      <>{recover}<button className="text-left text-sm text-muted-foreground/70 hover:text-foreground/80" onClick={edit}>Add details…</button></>
+      <>{recover}<button className={cn("-mx-2 block w-[calc(100%+1rem)] rounded-lg px-2 py-1 text-left text-muted-foreground/60 hover:text-muted-foreground", textStyle)} onPointerEnter={loadEditor} onFocus={loadEditor} onClick={() => edit("end")}>Add details…</button></>
     );
   }
   return (
     <>{recover}<div
+      ref={view}
       role={disabled ? undefined : "button"}
       tabIndex={disabled ? undefined : 0}
       aria-label={disabled ? undefined : "Edit task text"}
+      onPointerEnter={disabled ? undefined : loadEditor}
+      onFocus={disabled ? undefined : loadEditor}
       onClick={(e) => {
         // Selecting text to copy it, or following a link, isn't editing.
-        if (window.getSelection()?.toString() || (e.target as HTMLElement).closest("a")) return;
-        edit();
+        if (window.getSelection()?.toString() || (e.target as HTMLElement).closest("a, input")) return;
+        const r = view.current!.getBoundingClientRect();
+        // The editor lays out exactly like this view, so the caret lands where the click did.
+        edit(e.detail ? { x: e.clientX - r.left - 8, y: e.clientY - r.top - 4 } : "end");
       }}
-      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); edit(); } }}
-      className={cn("-mx-2 rounded-lg px-2 py-1 break-words whitespace-pre-wrap", textStyle, !disabled && "cursor-text hover:bg-muted")}
+      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); edit("end"); } }}
+      className={cn("-mx-2 rounded-lg px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/40", textStyle, !disabled && "cursor-text")}
     >
-      {linkify(body).map((p, i) => p.url ? (
-        <a key={i} href={p.url} target="_blank" rel="noreferrer noopener" className="underline decoration-foreground/30 underline-offset-2 hover:decoration-foreground">{p.text}</a>
-      ) : p.text)}
+      <Markdown text={shown} breaks />
     </div></>
   );
 }
@@ -128,7 +130,7 @@ export function Todos({ task, todos, disabled }: { task: string; todos: Todo[]; 
   return (
     <section aria-label="Todos" className="mb-6">
       {todos.length > 0 && (
-        <ul className="-mx-2 flex flex-col">
+        <ul className="-mx-2 flex flex-col py-0.5">
           {todos.map((td, i) => (
             <TodoRow
               key={td.id}
@@ -155,10 +157,10 @@ export function Todos({ task, todos, disabled }: { task: string; todos: Todo[]; 
       )}
       {!disabled && (
         <form
-          className="-mx-2 flex items-center gap-2.5 rounded-lg px-2 py-1"
+          className={cn("-mx-2 flex items-center gap-2.5 px-2 py-0.5", textStyle)}
           onSubmit={(e) => { e.preventDefault(); add(); }}
         >
-          <Plus className="size-4 shrink-0 text-muted-foreground/60" />
+          <Plus className="size-4 shrink-0 text-muted-foreground/50" />
           <input
             ref={addRef}
             value={adding}
@@ -167,7 +169,7 @@ export function Todos({ task, todos, disabled }: { task: string; todos: Todo[]; 
             placeholder="Add a todo…"
             aria-label="Add a todo"
             maxLength={300}
-            className="min-w-0 flex-1 bg-transparent py-0.5 text-[15px] outline-none placeholder:text-muted-foreground/60 sm:text-sm"
+            className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground/50"
           />
         </form>
       )}
@@ -211,26 +213,30 @@ function TodoRow({ td, index, disabled, dragging, onToggle, onRename, onRemove, 
       onDragEnd={drag.end}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); drag.drop(); }}
-      className={cn("group relative flex items-start gap-2.5 rounded-lg px-2 py-1.5 hover:bg-muted/60", dragging && "opacity-40")}
+      className={cn("group relative flex items-start gap-2.5 px-2 py-0.5", textStyle, dragging && "opacity-40")}
     >
-      {!disabled && <GripVertical aria-hidden className="absolute top-2 -left-3 size-3.5 cursor-grab text-muted-foreground/40 opacity-0 group-hover:opacity-100" />}
-      <button
-        type="button"
-        role="checkbox"
-        aria-checked={td.done}
-        aria-label={td.done ? `Mark “${td.text}” not done` : `Mark “${td.text}” done`}
-        title={by}
-        disabled={disabled}
-        onClick={onToggle}
-        onKeyDown={moveKeys}
-        className={cn(
-          "mt-[3px] flex size-4 shrink-0 items-center justify-center rounded-[5px] border-[1.5px] transition-colors disabled:cursor-default",
-          td.done ? "border-primary bg-primary text-primary-foreground" : "border-foreground/40 hover:border-foreground",
-        )}
-      >
-        {td.done && <Check className="size-3" strokeWidth={3} />}
-      </button>
-      <div className="min-w-0 flex-1 text-[15px] leading-snug sm:text-sm">
+      {!disabled && <GripVertical aria-hidden className="absolute top-[0.45em] -left-3 size-3.5 cursor-grab text-muted-foreground/40 opacity-0 group-hover:opacity-100" />}
+      {/* A line box tall, so the box sits on the text's first line like a list marker. */}
+      <span className="flex h-[1lh] shrink-0 items-center">
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={td.done}
+          aria-label={td.done ? `Mark “${td.text}” not done` : `Mark “${td.text}” done`}
+          title={by}
+          disabled={disabled}
+          onClick={onToggle}
+          onKeyDown={moveKeys}
+          className={cn(
+            "flex size-4 items-center justify-center rounded-[5px] border-[1.5px] transition-colors disabled:cursor-default",
+            td.done ? "border-primary bg-primary text-primary-foreground" : "border-foreground/35 hover:border-foreground/70",
+          )}
+        >
+          {td.done && <Check className="size-3" strokeWidth={3} />}
+        </button>
+      </span>
+      <div className="min-w-0 flex-1">
+        {/* Editing happens in place: same type, no box, so it reads like typing into the page. */}
         {editing ? (
           <input
             autoFocus
@@ -243,7 +249,7 @@ function TodoRow({ td, index, disabled, dragging, onToggle, onRename, onRemove, 
               if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
               if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); discard.current = true; e.currentTarget.blur(); }
             }}
-            className="w-full rounded bg-card px-1 -mx-1 outline-none ring-2 ring-input"
+            className="block w-full bg-transparent p-0 text-foreground outline-none"
           />
         ) : (
           <button
@@ -251,7 +257,7 @@ function TodoRow({ td, index, disabled, dragging, onToggle, onRename, onRemove, 
             disabled={disabled}
             onClick={() => setEditing(true)}
             onKeyDown={moveKeys}
-            className={cn("text-left break-words disabled:cursor-default", td.done ? "text-muted-foreground" : "text-foreground/90")}
+            className={cn("cursor-text text-left break-words disabled:cursor-default", td.done ? "text-muted-foreground line-through decoration-foreground/25" : "text-foreground/80")}
           >
             {td.text}
           </button>

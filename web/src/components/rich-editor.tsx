@@ -13,13 +13,18 @@ export type Caret = { x: number; y: number } | "end";
 
 // RichEditor edits a task body in place, formatted as it reads, and hands back markdown.
 // ⌘/Ctrl+Enter saves, Esc cancels, and leaving the editor (a click elsewhere, Tab away) saves if
-// anything changed. Switching windows doesn't count as leaving. It's loaded on demand by BodyEditor.
-export default function RichEditor({ body, draft, changed, placeholder, caret, onSave, onSaved, onLost, onClose }: {
+// anything changed. Switching windows doesn't count as leaving. It's loaded on demand by DocEditor.
+// Inline, it has no frame, toolbar or buttons: it reads like the text it edits (markdown shortcuts
+// and ⌘B/⌘I/⌘⇧K still format), for a task's text that flows straight into its todos.
+export default function RichEditor({ body, draft, changed, placeholder, caret, inline = false, breaks = false, label = "Note", onSave, onSaved, onLost, onClose }: {
   body: string;
   draft?: string; // start from this unsaved text instead of the body
   changed: boolean; // someone else saved the body since editing began
   placeholder: string;
   caret: Caret;
+  inline?: boolean;
+  breaks?: boolean; // a single line break is a line break (see richExtensions)
+  label?: string;
   onSave: (body: string) => Promise<unknown>;
   onSaved: (body: string) => void;
   onLost: (draft: string) => void; // the save on leaving failed, with no editor left to keep the draft
@@ -39,10 +44,10 @@ export default function RichEditor({ body, draft, changed, placeholder, caret, o
   const [options] = useState((): UseEditorOptions => ({
     immediatelyRender: true,
     shouldRerenderOnTransaction: false,
-    extensions: richExtensions(placeholder),
+    extensions: richExtensions(placeholder, { breaks }),
     content: draft ?? body,
     editorProps: {
-      attributes: { class: "md min-h-24 outline-none", role: "textbox", "aria-multiline": "true", "aria-label": "Note" },
+      attributes: { class: cn("md outline-none", !inline && "min-h-24"), role: "textbox", "aria-multiline": "true", "aria-label": label },
       // These keys are the editor's alone: the window-level ones (⌘K menu, Esc closing the panel) stand down.
       handleKeyDown: (_view, e) => {
         const cmd = e.metaKey || e.ctrlKey;
@@ -131,10 +136,7 @@ export default function RichEditor({ body, draft, changed, placeholder, caret, o
     setLink(null);
   };
 
-  return (
-    <div ref={wrap} onBlur={(e) => { if (outside(e.relatedTarget)) leave(); }} className="-mx-2 rounded-lg px-2 pb-2 ring-1 ring-border focus-within:ring-foreground/25">
-      <div role="toolbar" aria-label="Formatting" className="sticky top-0 z-10 -mx-2 mb-1 flex items-center gap-0.5 overflow-x-auto rounded-t-lg border-b border-border bg-background/95 px-1.5 py-1 backdrop-blur [scrollbar-width:none]">
-        {link === null ? <Tools editor={editor} onLink={openLink} /> : (
+  const linkField = link !== null && (
           <div className="flex min-w-0 flex-1 items-center gap-1">
             <Link2 className="ml-1 size-3.5 shrink-0 text-muted-foreground" />
             <input
@@ -152,9 +154,30 @@ export default function RichEditor({ body, draft, changed, placeholder, caret, o
             {editor.isActive("link") && <Tool label="Remove link" icon={Unlink} onClick={() => { editor.chain().focus().extendMarkRange("link").unsetLink().run(); setLink(null); }} />}
             <Button type="button" size="sm" variant="ghost" className="h-7 px-2.5 text-[13px]" onMouseDown={(e) => e.preventDefault()} onClick={applyLink}>Apply</Button>
           </div>
+  );
+  const content = <EditorContent editor={editor} className="text-[15px] leading-relaxed text-foreground/80 sm:text-sm" />;
+  const onBlur = (e: React.FocusEvent) => { if (outside(e.relatedTarget)) leave(); };
+
+  // Inline: just the text, laid out as it reads. The link field floats above it while a link is set.
+  if (inline) {
+    return (
+      <div ref={wrap} onBlur={onBlur} className="relative -mx-2 rounded-lg px-2 py-1">
+        {linkField && (
+          <div role="toolbar" aria-label="Link" className="absolute inset-x-0 bottom-full z-10 mb-1 flex items-center rounded-lg bg-popover px-1.5 py-1 shadow-md ring-1 ring-border">
+            {linkField}
+          </div>
         )}
+        {content}
+        {changed && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">Updated by someone else meanwhile; saving replaces it.</p>}
       </div>
-      <EditorContent editor={editor} className="text-[15px] leading-relaxed text-foreground/80 sm:text-sm" />
+    );
+  }
+  return (
+    <div ref={wrap} onBlur={onBlur} className="-mx-2 rounded-lg px-2 pb-2 ring-1 ring-border focus-within:ring-foreground/25">
+      <div role="toolbar" aria-label="Formatting" className="sticky top-0 z-10 -mx-2 mb-1 flex items-center gap-0.5 overflow-x-auto rounded-t-lg border-b border-border bg-background/95 px-1.5 py-1 backdrop-blur [scrollbar-width:none]">
+        {linkField || <Tools editor={editor} onLink={openLink} />}
+      </div>
+      {content}
       <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
         <span className="min-w-0 flex-1 truncate">
           {changed ? <span className="text-amber-700 dark:text-amber-400">Updated by someone else meanwhile; saving replaces it.</span> : <span className="hidden [@media(pointer:fine)]:inline">{mod}↵ to save · Esc to cancel</span>}

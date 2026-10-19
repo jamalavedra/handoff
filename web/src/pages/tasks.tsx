@@ -1,18 +1,22 @@
-import { useMemo, useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Bot, CircleAlert, Flag, ListChecks, Lock, MessageCircleQuestion, Plus, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
+import { Bot, CircleAlert, Flag, ListChecks, Lock, MessageCircleQuestion, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
 import { ago, api, cn, projectName, type Event, type Project, type Task } from "../lib";
 import { EmojiPicker } from "../components/emoji";
 import { Avatar, Card, DuePill, Empty, ErrorText, PageHeader, TaskCheck, Who } from "../components/app";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { useQuickAdd } from "../components/quickadd";
-import { agentOnIt, groupByDue, isoDate } from "../quickadd";
+import { InlineNewTask } from "../components/quickadd";
+import { agentOnIt, isoDate } from "../quickadd";
+import { arrange, emptyFilter, filterTasks, type ListPrefs, type Prop, type Rows } from "../tasklist";
+import { TaskToolbar, useListPrefs } from "../components/task-toolbar";
 import { useMe } from "../main";
 import { SettingsHeader } from "./settings";
-import { Board, useView, ViewToggle } from "./board";
+import { Board, useView } from "./board";
 import { TaskLink } from "../components/tasklink";
 import { completedText, patchTask, reopen, undoable, undoClose, useChangeFlash, useTriageReveal } from "../components/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,8 +29,15 @@ export function useInvalidate() {
   return () => qc.invalidateQueries();
 }
 
+// How rows look, from the list's view settings: compact or comfortable, and which properties show.
+// Lists outside a toolbar (trash, board) get the defaults.
+const RowLook = createContext<{ rows: Rows; hidden: Prop[] }>({ rows: "comfortable", hidden: [] });
+
 export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   const me = useMe();
+  const look = useContext(RowLook);
+  const shows = (p: Prop) => !look.hidden.includes(p);
+  const compact = look.rows === "compact";
   const invalidate = useInvalidate();
   const qc = useQueryClient();
   const closed = t.status === "done" || t.status === "cancelled";
@@ -50,16 +61,16 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
   return (
     <div>
-    <div data-task-row className={cn("flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:min-h-11 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted data-[kbd-focus]:bg-muted data-[kbd-focus]:ring-1 data-[kbd-focus]:ring-ring", flash && "change-flash", agentWorking && "agent-border [--agent-border-offset:1px]")}>
+    <div data-task-row className={cn("flex items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted data-[kbd-focus]:bg-muted data-[kbd-focus]:ring-1 data-[kbd-focus]:ring-ring", compact ? "min-h-11 md:min-h-9" : "min-h-14 md:min-h-11", flash && "change-flash", agentWorking && "agent-border [--agent-border-offset:1px]")}>
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate(closed)} />
-      <TaskLink id={t.id} className="flex min-w-0 flex-1 flex-col justify-center self-stretch py-2">
+      <TaskLink id={t.id} className={cn("flex min-w-0 flex-1 flex-col justify-center self-stretch", compact ? "py-1" : "py-2")}>
         <span className="flex min-w-0 items-center gap-1.5">
         {t.unseen && !closed && <span role="img" aria-label="Changed by someone else" title="Changed by someone else since you last opened it" className="size-2 shrink-0 rounded-full bg-unseen" />}
         <span title={t.triage === "pending" ? "The triage agent is looking at this task" : undefined} className={cn("truncate text-[15px] font-medium sm:text-sm", closed && "text-muted-foreground/70 line-through", t.triage === "pending" && "agent-shimmer", reveal && "triage-reveal")}>{t.title}</span>
         {t.triage === "failed" && <span title={`Triage failed: ${t.triage_error ?? ""}`} className="shrink-0 text-amber-600"><CircleAlert aria-label="Triage failed" className="size-3.5" /></span>}
         {t.priority < 2 && !closed && <Flag aria-label={t.priority === 0 ? "Urgent" : "High priority"} className={cn("size-3.5 shrink-0", t.priority === 0 ? "fill-red-500 text-red-500" : "text-orange-500")} />}
         </span>
-        {t.agent_note && !closed && t.triage !== "pending" && (
+        {shows("note") && !compact && t.agent_note && !closed && t.triage !== "pending" && (
           <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] text-muted-foreground">
             <Bot aria-hidden className="size-3 shrink-0 text-violet-500" />
             <span className="truncate">{t.agent_note.split("\n")[0]}</span>
@@ -80,14 +91,14 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
           </span>
         )}
         {waiting && <span title={`Waits on ${t.blocked_by.join(", ")}`} className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"><Lock className="size-3" /><span className="hidden sm:inline">Waiting</span></span>}
-        {showAssignee && <Avatar m={t.assignee!} />}
-        {t.repeat && !closed && <RepeatIcon aria-label={`Repeats: ${t.repeat}`} className="size-3.5 shrink-0 text-muted-foreground" />}
-        {progressLabel(t.todo_progress) && (
+        {shows("assignee") && showAssignee && <Avatar m={t.assignee!} />}
+        {shows("repeat") && t.repeat && !closed && <RepeatIcon aria-label={`Repeats: ${t.repeat}`} className="size-3.5 shrink-0 text-muted-foreground" />}
+        {shows("todos") && progressLabel(t.todo_progress) && (
           <span title={`${t.todo_progress!.done} of ${t.todo_progress!.total} todos done`} className={cn("flex shrink-0 items-center gap-1 text-xs tabular-nums", t.todo_progress!.done === t.todo_progress!.total ? "text-green-700 dark:text-green-400" : "text-muted-foreground")}>
             <ListChecks aria-hidden className="size-3.5" />{progressLabel(t.todo_progress)}
           </span>
         )}
-        {t.due && <DuePill due={t.due} done={closed} />}
+        {shows("due") && t.due && <DuePill due={t.due} done={closed} />}
         {action}
       </div>
     </div>
@@ -115,78 +126,63 @@ function TaskListSkeleton() {
   );
 }
 
-export function NewTask({ project }: { project?: string }) {
-  const quick = useQuickAdd();
-  return (
-    <Button variant="secondary" size="sm" className="hidden text-[13px] md:inline-flex" onClick={() => quick.open(project)}>
-      <Plus className="size-4" />New task<kbd className="ml-0.5 rounded border border-border px-1 font-sans text-[10px] text-muted-foreground">N</kbd>
-    </Button>
-  );
-}
-
 export function MyTasksPage() {
   const [view, setView] = useView();
+  const [prefs, setPrefs] = useListPrefs();
   const q = useQuery({ queryKey: ["tasks", "mine"], queryFn: allMyOpenTasks });
   const recent = useQuery({ queryKey: ["tasks", "recent-done"], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", status: ["done"], sort: "recent", limit: 20 }) });
-  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
-  const emojiOf = (id: string) => projects.data?.projects.find((p) => p.id === id)?.emoji;
-  const [project, setProject] = useState("");
-  const tasks = q.data?.tasks;
-  const chips = useMemo(() => {
-    const m = new Map<string, { id: string; name: string; n: number }>();
-    for (const t of tasks ?? []) {
-      const c = m.get(t.project_id) ?? { id: t.project_id, name: t.project, n: 0 };
-      c.n++;
-      m.set(t.project_id, c);
-    }
-    return [...m.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
-  }, [tasks]);
-  const active = chips.some((c) => c.id === project) ? project : "";
-  const shown = tasks?.filter((t) => !active || t.project_id === active);
-  const recentShown = recent.data?.tasks.filter((t) => !active || t.project_id === active);
+  const [query, setQuery] = useState("");
+  const board = view === "board";
+  const completed = recent.data && filterTasks(recent.data.tasks, prefs.filter, undefined, query);
   return (
-    <>
-      <PageHeader title="My tasks"><ViewToggle view={view} onChange={setView} /><NewTask project={active || undefined} /></PageHeader>
-      {chips.length > 1 && (
-        <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:flex-wrap md:px-0" role="tablist" aria-label="Filter by project">
-          <ProjectChip active={!active} onClick={() => setProject("")} name="All" n={tasks?.length ?? 0} />
-          {chips.map((c) => <ProjectChip key={c.id} active={active === c.id} onClick={() => setProject(c.id)} name={projectName({ name: c.name, emoji: emojiOf(c.id) })} n={c.n} />)}
-        </div>
-      )}
-      {view === "board" ? (
-        <Board tasks={shown} done={recentShown} />
-      ) : !shown || shown.length === 0 ? (
-        <TaskList tasks={shown} empty="Nothing assigned to you. Agents can assign tasks to you too." />
+    <RowLook.Provider value={prefs}>
+      <PageHeader title="My tasks"><TaskToolbar prefs={prefs} onChange={setPrefs} query={query} onQuery={setQuery} view={view} onView={setView} link="/" /></PageHeader>
+      <InlineNewTask />
+      {board ? (
+        <Board tasks={q.data && filterTasks(q.data.tasks, prefs.filter, undefined, query)} done={completed} />
       ) : (
-        groupByDue(shown).map((s) => (
-          <section key={s.key} className="mb-6" aria-label={s.title}>
-            <h2 className={cn("mb-2 flex items-baseline gap-2 px-1 text-[13px] font-medium", s.key === "overdue" ? "text-red-600" : "text-muted-foreground")}>
-              {s.title}<span className="text-foreground/35 tabular-nums">{s.tasks.length}</span>
-            </h2>
-            <TaskList tasks={s.tasks} empty="" />
-          </section>
-        ))
+        <ArrangedList tasks={q.data?.tasks} prefs={prefs} query={query} onClear={() => { setPrefs({ filter: emptyFilter }); setQuery(""); }} empty="Nothing assigned to you. Agents can assign tasks to you too." />
       )}
-      {view === "list" && !!recentShown?.length && (
-        <section className="mt-8" aria-label="Recently done">
-          <h2 className="mb-2 px-1 text-[13px] font-medium text-muted-foreground">Recently done</h2>
-          <TaskList tasks={recentShown.slice(0, 5)} empty="" />
+      {!board && prefs.showDone && !!completed?.length && (
+        <section className="mt-8" aria-label="Completed">
+          <h2 className="mb-2 px-1 text-[13px] font-medium text-muted-foreground">Completed</h2>
+          <TaskList tasks={completed} empty="" />
         </section>
       )}
-    </>
+    </RowLook.Provider>
   );
 }
 
-// Chips and groups need the whole list, so page through search_tasks at its max page size.
-async function allMyOpenTasks() {
+// ArrangedList is a task list in the order, filter and grouping picked in the toolbar. Flat unless
+// grouping by due date is on.
+function ArrangedList({ tasks, prefs, query, empty, onClear }: { tasks?: Task[]; prefs: ListPrefs; query: string; empty: string; onClear: () => void }) {
+  if (!tasks || tasks.length === 0) return <TaskList tasks={tasks} empty={empty} />;
+  const sections = arrange(tasks, prefs, undefined, query);
+  if (!sections.length) {
+    return <Card><Empty>{query ? `No tasks match “${query}”.` : "No tasks match these filters."} <button className="underline underline-offset-2 hover:text-foreground" onClick={onClear}>{query ? "Clear search" : "Clear filters"}</button></Empty></Card>;
+  }
+  if (!prefs.group) return <TaskList tasks={sections[0].tasks} empty="" />;
+  return sections.map((s) => (
+    <section key={s.key} className="mb-6" aria-label={s.title}>
+      <h2 className={cn("mb-2 flex items-baseline gap-2 px-1 text-[13px] font-medium", s.key === "overdue" ? "text-red-600" : "text-muted-foreground")}>
+        {s.title}<span className="text-foreground/35 tabular-nums">{s.tasks.length}</span>
+      </h2>
+      <TaskList tasks={s.tasks} empty="" />
+    </section>
+  ));
+}
+
+// Search, sort and filter run over the whole list, so page through search_tasks at its max page size.
+async function allTasks(query: Record<string, unknown>) {
   const page = 500;
   const tasks: Task[] = [];
   for (;;) {
-    const r = await api.tool<{ tasks: Task[] }>("search_tasks", { assignee: "me", limit: page, offset: tasks.length });
+    const r = await api.tool<{ tasks: Task[] }>("search_tasks", { ...query, limit: page, offset: tasks.length });
     tasks.push(...r.tasks);
     if (r.tasks.length < page) return { tasks };
   }
 }
+const allMyOpenTasks = () => allTasks({ assignee: "me" });
 
 function ProjectChip({ active, onClick, name, n }: { active: boolean; onClick: () => void; name: string; n: number }) {
   return (
@@ -238,11 +234,12 @@ export function ProjectsPage() {
 
 export function ProjectPage() {
   const { id } = useParams({ strict: false }) as { id: string };
-  const [showDone, setShowDone] = useState(false);
+  const [prefs, setPrefs] = useListPrefs();
+  const showDone = prefs.showDone;
   const [view, setView] = useView();
   const done = useQuery({ queryKey: ["tasks", "project", id, "done"], enabled: view === "board", queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, status: ["done"], sort: "recent", limit: 20 }) });
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.tool<{ projects: Project[] }>("list_projects") });
-  const q = useQuery({ queryKey: ["tasks", "project", id, showDone], queryFn: () => api.tool<{ tasks: Task[] }>("search_tasks", { project: id, include_done: showDone, limit: 500 }) });
+  const q = useQuery({ queryKey: ["tasks", "project", id, showDone], queryFn: () => allTasks({ project: id, include_done: showDone }) });
   const p = projects.data?.projects.find((x) => x.id === id);
   const invalidate = useInvalidate();
   const setEmoji = useMutation({ mutationFn: (emoji: string) => api.tool("update_project", { project: id, emoji }), onSuccess: invalidate });
@@ -251,21 +248,57 @@ export function ProjectPage() {
   const navigate = useNavigate();
   const setTab = (tab?: string) => navigate({ to: ".", search: (s) => ({ ...s, tab }), replace: true });
   const notes = useProjectNotes(id);
+  const [query, setQuery] = useState("");
+  const [editing, setEditing] = useState(false);
   return (
-    <>
+    <RowLook.Provider value={prefs}>
       <PageHeader title={p ? projectName(p) : "Project"}>
         {p && <EmojiPicker value={p.emoji ?? ""} onChange={(emoji) => setEmoji.mutate(emoji)} label="Project emoji" />}
-        {!notesTab && view === "list" && <label className="flex items-center gap-1.5 text-[13px] text-foreground/70"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />Show done</label>}
-        {!notesTab && <ViewToggle view={view} onChange={setView} />}
-        {notesTab ? <NewNote project={id} /> : <NewTask project={id} />}
+        {notesTab ? <NewNote project={id} /> : <TaskToolbar prefs={prefs} onChange={setPrefs} query={query} onQuery={setQuery} view={view} onView={setView} link={`/projects/${id}`} onEdit={p ? () => setEditing(true) : undefined} />}
       </PageHeader>
       <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:px-0" role="tablist" aria-label="Show">
         <ProjectChip active={!notesTab} onClick={() => setTab(undefined)} name="Tasks" n={p?.open_tasks ?? q.data?.tasks.length ?? 0} />
         <ProjectChip active={notesTab} onClick={() => setTab("notes")} name="Notes" n={notes.notes?.length ?? 0} />
       </div>
       <ErrorText error={setEmoji.error} />
-      {notesTab ? <><ErrorText error={notes.error} /><ProjectNotes notes={notes.notes} more={notes.hasNextPage ? () => notes.fetchNextPage() : undefined} loadingMore={notes.isFetchingNextPage} /></> : view === "board" ? <Board tasks={q.data?.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled")} done={done.data?.tasks} /> : <TaskList tasks={q.data?.tasks} empty="No tasks here yet." />}
-    </>
+      {notesTab ? <><ErrorText error={notes.error} /><ProjectNotes notes={notes.notes} more={notes.hasNextPage ? () => notes.fetchNextPage() : undefined} loadingMore={notes.isFetchingNextPage} /></> : (
+        <>
+          <InlineNewTask project={id} />
+          {view === "board"
+            ? <Board tasks={q.data && filterTasks(q.data.tasks.filter((t) => t.status !== "done" && t.status !== "cancelled"), prefs.filter, undefined, query)} done={done.data && filterTasks(done.data.tasks, prefs.filter, undefined, query)} />
+            : <ArrangedList tasks={q.data?.tasks} prefs={prefs} query={query} onClear={() => { setPrefs({ filter: emptyFilter }); setQuery(""); }} empty="No tasks here yet." />}
+        </>
+      )}
+      {p && <EditProjectDialog key={String(editing)} open={editing} project={p} onClose={() => setEditing(false)} />}
+    </RowLook.Provider>
+  );
+}
+
+// EditProjectDialog renames a project and edits its description (Edit list in View settings).
+function EditProjectDialog({ open, project, onClose }: { open: boolean; project: Project; onClose: () => void }) {
+  const invalidate = useInvalidate();
+  const [name, setName] = useState(project.name);
+  const [description, setDescription] = useState(project.description ?? "");
+  const save = useMutation({
+    mutationFn: () => api.tool("update_project", { project: project.id, name: name.trim(), description: description.trim() }),
+    onSuccess: () => { invalidate(); onClose(); },
+  });
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="rounded-2xl sm:max-w-md">
+        <DialogTitle>Edit list</DialogTitle>
+        <DialogDescription className="sr-only">Rename the project or change its description</DialogDescription>
+        <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); if (name.trim()) save.mutate(); }}>
+          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" maxLength={100} />
+          <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this project is about (agents read it too)" aria-label="Description" />
+          <ErrorText error={save.error} />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={!name.trim() || save.isPending}>Save</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
