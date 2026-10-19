@@ -66,7 +66,9 @@ export function TaskChat({ id, focus, drawer, active = true }: { id: string; foc
   // Mounted only while the panel is open; active while it shows this chat.
   useChatInView(id, active);
   const count = q.data?.comments.length ?? 0;
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [count, id]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [count, id]);
   const send = useMutation({
     // A quick answer stands alone: it drops the reply that was open (`drop`) instead of answering it.
     mutationFn: (v: { body: string; at?: number; reply?: ReplyDraft | null; drop?: ReplyDraft | null }) => api.tool("comment", { id, body: v.body, ...replyArgs(v.reply ?? null) }),
