@@ -511,8 +511,10 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 	ext, xerr := s.externalTools(ctx, j.org, true)
 	// The apps of the person who wrote the task, so "check my inbox" can: theirs only, never an agent's.
 	var apps []extTool
+	var creator *Principal
 	if cb := d.Task.CreatedBy; xerr == nil && cb != nil && cb.Kind == "human" {
-		if creator, perr := s.Principal(ctx, org, cb.ID, "web"); perr == nil {
+		if c, perr := s.Principal(ctx, org, cb.ID, "web"); perr == nil {
+			creator = c
 			apps, _ = s.personalTools(ctx, creator)
 			ext = append(ext, apps...)
 		}
@@ -521,10 +523,7 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 	if xerr != nil {
 		ext = nil
 	}
-	note := ""
-	if len(apps) > 0 {
-		note = appsNote(apps, true)
-	}
+	note := s.appsNote(creator, apps, true)
 	sugg, err = s.askModelResearching(lctx, st, string(cred), org, t, projects.Projects, members.Members, ext, note, pr)
 	if err != nil {
 		s.failTriage(ctx, cl, st.AgentID, err.Error())
