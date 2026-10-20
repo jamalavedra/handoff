@@ -525,6 +525,12 @@ func (s *Service) triageOne(ctx context.Context, j triageJob) {
 	if xerr != nil {
 		ext = nil
 	}
+	// Triage writes on a shared task: workspace facts and that project's facts — never the
+	// creator's person facts or other projects', which its viewers may not be allowed to see.
+	if t.Memory, err = s.memoryContext(ctx, agent, "", &d.Task.ProjectID); err != nil {
+		s.failTriage(ctx, cl, st.AgentID, err.Error())
+		return
+	}
 	note := s.appsNote(creator, apps, true)
 	sugg, err = s.askModelResearching(lctx, st, string(cred), org, t, projects.Projects, members.Members, ext, note, pr)
 	if err != nil {
@@ -546,6 +552,7 @@ type triageTask struct {
 	Title, Body string
 	Explicit    []string
 	Notes       string // the project's notes, fenced, for context
+	Memory      string // what the agent remembers, fenced, for context
 }
 
 // claimTriage takes the task for this worker if it is pending and nobody else holds a live claim.
@@ -674,6 +681,9 @@ func triageUserMessage(org *Org, t triageTask, projects []ProjectOut, members []
 	}
 	if t.Notes != "" {
 		b.WriteString("\n" + t.Notes + "\n")
+	}
+	if t.Memory != "" {
+		b.WriteString("\n" + t.Memory + "\n")
 	}
 	return b.String()
 }

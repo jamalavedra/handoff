@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Handoff</title>
+<style>
+  body {
+    font: 16px system-ui, sans-serif;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+    background: #fafafa;
+    color: #111;
+  }
+  main { width: 22rem; }
+  h1 { font-size: 1.2rem; margin: 0 0 .25rem; }
+  p { color: #555; margin: 0 0 1.25rem; font-size: .9rem; }
+  form { display: flex; gap: .5rem; }
+  input {
+    flex: 1;
+    font: inherit;
+    padding: .55rem .7rem;
+    border: 1px solid #ccc;
+    border-radius: .4rem;
+  }
+  button {
+    font: inherit;
+    padding: .55rem 1rem;
+    border: 0;
+    border-radius: .4rem;
+    background: #111;
+    color: #fff;
+    cursor: pointer;
+  }
+  #err { color: #b91c1c; font-size: .85rem; margin-top: .75rem; min-height: 1em; }
+</style>
+<main>
+  <h1>Handoff</h1>
+  <p>Enter your workspace address to get started.</p>
+  <form>
+    <input id="url" placeholder="acme.example.com" autofocus />
+    <button>Open</button>
+  </form>
+  <div id="err"></div>
+</main>
+<script>
+  document.querySelector('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = await window.handoff.setWorkspace(document.getElementById('url').value.trim());
+    document.getElementById('err').textContent = err || '';
+  });
+</script>

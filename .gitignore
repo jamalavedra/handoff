@@ -1,6 +1,7 @@
 /handoff
 /bin/
 node_modules/
+desktop/release/
 web/dist/*
 !web/dist/.gitkeep
 *.tsbuildinfo

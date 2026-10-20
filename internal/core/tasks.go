@@ -1459,6 +1459,16 @@ func (c *call) addComment(taskID, body string, x commentExtra) error {
 				return err
 			}
 		}
+		// Talking on the agent's own task may be worth remembering: capture the chat once it quiets.
+		if assignee == agentID || resume {
+			dueNow, err := enqueueCapture(c.ctx, c.tx, c.p.Org.ID, taskID, c.p.Member.ID)
+			if err != nil {
+				return err
+			}
+			if dueNow {
+				c.after = append(c.after, c.s.wakeJobs)
+			}
+		}
 	}
 	return c.event(taskID, "commented", map[string]any{"excerpt": excerpt(body)})
 }
