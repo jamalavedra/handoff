@@ -65,6 +65,11 @@ data class TaskItem(
     val labels: List<String> = emptyList(),
     val claimed_by: Member? = null,
     val created_by: Member? = null,
+    val waiting_on: Member? = null,
+    val blocked_by: List<String> = emptyList(),
+    val deleted_at: String? = null,
+    val triage: String? = null,
+    val repeat: String? = null,
     val ready: Boolean = false,
     val unseen: Boolean = false,
     val todos: List<Todo> = emptyList(),
@@ -83,6 +88,31 @@ data class Comment(
 
 @Serializable
 data class Project(val id: String, val name: String, val open_tasks: Int = 0)
+
+@Serializable
+data class Notification(
+    val id: Long,
+    val kind: String,
+    val task_id: String = "",
+    val task_title: String = "",
+    val actor: Member? = null,
+    val excerpt: String? = null,
+    val read: Boolean = false,
+    val at: String = "",
+)
+
+@Serializable
+private data class RedeemOut(val token: String, val member: Member? = null)
+
+/** One task the quick-add parser produced; serializes to create_tasks' NewTask. */
+data class NewTask(
+    val title: String,
+    val due: String? = null,
+    val assignee: String? = null,
+    val project: String? = null,
+    val priority: Int? = null,
+    val repeat: String? = null,
+)
 
 /** Client for the same HTTP API the web SPA uses: session cookie + X-Handoff CSRF header. */
 class Api(private val host: String, var cookie: String?) {
@@ -164,14 +194,54 @@ class Api(private val host: String, var cookie: String?) {
         (out[key] as? kotlinx.serialization.json.JsonArray)
             ?.map { json.decodeFromJsonElement(TaskItem.serializer(), it) } ?: emptyList()
 
-    fun searchTasks(query: String = ""): List<TaskItem> =
-        tasks("tasks", tool("search_tasks", buildJsonObject { put("query", query); put("limit", 500) }))
+    fun searchTasks(query: String = "", projectId: String? = null): List<TaskItem> =
+        tasks("tasks", tool("search_tasks", buildJsonObject {
+            if (query.isNotEmpty()) put("query", query)
+            if (projectId != null) put("project", projectId)
+            put("limit", 500)
+        }))
 
-    fun readyTasks(): List<TaskItem> = tasks("tasks", tool("list_ready", buildJsonObject { put("limit", 100) }))
+    /** The "My tasks" feed: open tasks assigned to me, recent first. */
+    fun myTasks(): List<TaskItem> =
+        tasks("tasks", tool("search_tasks", buildJsonObject {
+            put("assignee", "me"); put("sort", "recent"); put("limit", 500)
+        }))
 
     fun projects(): List<Project> =
         (tool("list_projects")["projects"] as? kotlinx.serialization.json.JsonArray)
             ?.map { json.decodeFromJsonElement(Project.serializer(), it) } ?: emptyList()
+
+    fun createProject(name: String) {
+        tool("create_project", buildJsonObject { put("name", name); put("visibility", "company") })
+    }
+
+    fun members(): List<Member> =
+        (tool("list_members")["members"] as? kotlinx.serialization.json.JsonArray)
+            ?.map { json.decodeFromJsonElement(Member.serializer(), it) } ?: emptyList()
+
+    fun inbox(): Pair<List<Notification>, Int> {
+        val out = tool("inbox", buildJsonObject { put("limit", 200) })
+        val items = (out["notifications"] as? kotlinx.serialization.json.JsonArray)
+            ?.map { json.decodeFromJsonElement(Notification.serializer(), it) } ?: emptyList()
+        val unread = out["unread"]?.toString()?.toIntOrNull() ?: items.count { !it.read }
+        return items to unread
+    }
+
+    fun markRead(ids: List<Long>? = null, task: String? = null, all: Boolean = false) {
+        tool("mark_read", buildJsonObject {
+            if (all) put("all", true)
+            if (task != null) put("task", task)
+            if (ids != null) put("ids", kotlinx.serialization.json.buildJsonArray { ids.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
+        })
+    }
+
+    /** Swaps a "Pair a device" code for a session token (POST /api/app/redeem). */
+    fun redeemCode(code: String): Member {
+        val out = http("/api/app/redeem", "POST", buildJsonObject { put("code", code) })
+        val r = json.decodeFromJsonElement(RedeemOut.serializer(), json.parseToJsonElement(out).jsonObject)
+        cookie = r.token
+        return r.member ?: Member(id = "", name = "")
+    }
 
     fun task(id: String): Pair<TaskItem, List<Comment>> {
         val out = tool("get_task", buildJsonObject { put("id", id) })
@@ -181,16 +251,25 @@ class Api(private val host: String, var cookie: String?) {
         return task to comments
     }
 
-    fun createTask(title: String, project: String, due: String) {
+    fun createTasks(tasks: List<NewTask>) {
         tool("create_tasks", buildJsonObject {
             put("tasks", kotlinx.serialization.json.buildJsonArray {
-                add(buildJsonObject {
-                    put("title", title)
-                    if (project.isNotBlank()) put("project", project)
-                    if (due.isNotBlank()) put("due", due)
-                })
+                tasks.forEach { t ->
+                    add(buildJsonObject {
+                        put("title", t.title)
+                        t.due?.let { put("due", it) }
+                        t.assignee?.let { put("assignee", it) }
+                        t.project?.let { put("project", it) }
+                        t.priority?.let { put("priority", it) }
+                        t.repeat?.let { put("repeat", it) }
+                    })
+                }
             })
         })
+    }
+
+    fun reopenTask(id: String) {
+        tool("update_task", buildJsonObject { put("id", id); put("status", "open") })
     }
 
     fun setTodoDone(todoId: String, done: Boolean) {

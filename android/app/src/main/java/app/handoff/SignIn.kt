@@ -52,6 +52,8 @@ fun SignInScreen(session: Session, onSignedIn: (Api.Me) -> Unit) {
     var orgName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var link by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var codeMode by remember { mutableStateOf(false) }
     var sent by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -206,7 +208,43 @@ fun SignInScreen(session: Session, onSignedIn: (Api.Me) -> Unit) {
                     Text("Sign in")
                 }
             }
+            if (codeMode) {
+                Spacer(Modifier.height(16.dp))
+                Text("On the web app: Settings → Pair a device gives you a code.")
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it.uppercase().filter(Char::isLetterOrDigit).take(8) },
+                    placeholder = { Text("XXXX-XXXX") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    enabled = !busy && code.length == 8,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            error = null
+                            val api = Api(session.host!!, null)
+                            try {
+                                withContext(Dispatchers.IO) { api.redeemCode(code) }
+                                session.cookie = api.cookie
+                                finish(api)
+                            } catch (e: ApiException) {
+                                fail(if (e.code == 429) e.message else "invalid or expired code")
+                            } catch (e: Exception) {
+                                fail(e.message)
+                            }
+                        }
+                    },
+                ) { Text("Sign in with code") }
+            }
             Spacer(Modifier.height(8.dp))
+            TextButton(enabled = !busy, onClick = { codeMode = !codeMode }) {
+                Text(if (codeMode) "Hide code sign-in" else "Have a code?")
+            }
             TextButton(enabled = !busy, onClick = { webOpen = true }) {
                 Text("Or sign in with the web flow")
             }
