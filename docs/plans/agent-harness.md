@@ -416,3 +416,29 @@ Each row is one PR with its migration, tests and README lines.
 5. Full-text search: `simple` works across languages but doesn't stem. Per-workspace language, or
    `simple` now and trigrams later?
 6. Is a token cap enough, or do admins want a money cap (needs a price table per model)?
+
+## Progress
+
+- **0a, 0b: done** on `agent/background-jobs` (PR merges first): `internal/core/model.go` (every model call,
+  usage counted), `background.go` (background model, monthly cap, `backgroundModel()`), `jobs.go`
+  (`agent_jobs` queue: `enqueueJob`, `jobKinds` registry, retries, run inside `RunTriage`), migration 025,
+  Admin → Triage section.
+- **1a: done** on `agent/memory` (migration `027_agent_memory.sql`): `internal/core/memory.go`
+  (`Remember` / `ListMemory` / `PinMemory` / `RemoveMemory` with the Phase 1 visibility rules —
+  project facts follow `c.canSeeProject`, person facts only for that member or the agent acting for
+  them, removal sets `removed_at` and never deletes; admins manage workspace/project facts, people
+  their own), the fenced `memoryContext` block (120 lines / 12 KB, pinned → person → project →
+  workspace, newest first) in `assistantRun.systemPrompt` and `triageUserMessage`, the `remember` +
+  `list_memory` assistant tools, web-only `list_memory` / `pin_memory` / `remove_memory` tools, and
+  Settings → Memory ("What the agent knows"). Memory writes are not events (person facts would leak
+  through `Activity`'s `task_id IS NULL` rows); `agent_memory` itself is the history.
+- **1b: done** on `agent/memory-1b` (migration `028_capture_cursor.sql`: `tasks.captured_at`):
+  `internal/core/capture.go` — `memory_capture` job kind plus the two triggers (person comment on an
+  agent-owned task in `addComment`, finished `chat_replies` row in `replyOne`). Each trigger upserts
+  one pending job per task — due in `captureDelay` (2 min) or at once when `captureBurst` (6) comments
+  landed since `captured_at`; the upsert's due rule keeps a settled due-now while a quiet chat extends
+  with the newest trigger, and a re-pended job that is already due wakes the worker (`finishJob`). The
+  run reads comments since `captured_at`, the scope's live + removed facts and note titles, asks the
+  background model for `{"add", "supersede"}`, applies ≤5 adds through `remember` (`noticed`, person
+  forced to the triggering member, project forced to the task's), supersedes only live facts in the
+  same scope, then sets `captured_at` to the newest comment it read. Skips record `{"skipped": …}`.

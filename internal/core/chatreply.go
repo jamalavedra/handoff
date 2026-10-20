@@ -342,6 +342,10 @@ func (s *Service) replyOne(ctx context.Context, j replyJob) {
 			s.agentReact(ctx, typer, comment, "✅", true)
 		}
 	}
+	// A finished turn quiets the chat: file what it taught, once it settles.
+	if finished {
+		s.enqueueCapture(ctx, j.org, task, author)
+	}
 	finish()
 }
 
