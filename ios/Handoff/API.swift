@@ -29,14 +29,17 @@ struct Task: Codable, Identifiable {
     var created_at: String?
     var blocked_by: [String]?
     var ready: Bool
+    var unseen: Bool?
+    var triage: String?
+    var `repeat`: String?
     var todos: [Todo]?
     var todo_progress: TodoProgress?
 
     var closed: Bool { status == "done" || status == "cancelled" }
-    var agentWorking: Bool { !closed && claimed_by?.kind == "agent" }
+    var agentWorking: Bool { !closed && (claimed_by?.kind == "agent" || triage == "pending") }
 }
 
-struct Project: Codable, Identifiable { var id, name: String; var emoji: String?; var open_tasks: Int }
+struct Project: Codable, Identifiable { var id, name: String; var emoji: String?; var open_tasks: Int; var visibility: String?; var members: [String]? }
 struct Comment: Codable, Identifiable {
     var id: String
     var author: MemberRef?
@@ -51,8 +54,24 @@ struct TodosOut: Codable { var todos: [Todo] }
 struct ProjectsOut: Codable { var projects: [Project] }
 struct CreateTasksOut: Codable { var tasks: [Task]; var created: Int }
 struct Org: Codable { var name, slug: String }
-struct Member: Codable { var id, name: String; var email: String?; var role: String }
+struct Member: Codable { var id, name: String; var email: String?; var role: String? }
 struct Me: Codable { var apex: Bool?; var org: Org?; var member: Member? }
+
+struct Notification: Codable, Identifiable {
+    var id: Int64
+    var kind: String
+    var task_id: String
+    var task_title: String
+    var actor: MemberRef?
+    var excerpt: String?
+    var read: Bool
+    var at: String
+}
+struct InboxOut: Codable { var notifications: [Notification]; var unread: Int }
+
+// POST /api/app/redeem — a code made in web Settings → Pair a device.
+struct RedeemOut: Codable { var token: String; var member: Member }
+struct MembersOut: Codable { var members: [MemberRef] }
 
 // Thin wrapper over the JSON API the web app uses: session cookie + X-Handoff CSRF header.
 struct Client {

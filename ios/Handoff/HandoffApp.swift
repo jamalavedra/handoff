@@ -76,7 +76,7 @@ struct RootView: View {
     @EnvironmentObject var session: Session
     var body: some View {
         if session.signedIn {
-            NavigationStack { TasksView() }
+            MainView()
         } else {
             SignInView()
         }

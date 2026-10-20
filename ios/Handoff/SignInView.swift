@@ -11,6 +11,8 @@ struct SignInView: View {
     @State private var error: String?
     @State private var pasteLink = ""
     @State private var webURL: URL?
+    @State private var showCode = false
+    @State private var code = ""
 
     // Accepts `acme.example.com`, `https://acme.example.com` or `acme.handoff.localhost:8080`.
     private var workspaceBase: URL? {
@@ -100,6 +102,23 @@ struct SignInView: View {
                 .disabled(URL(string: pasteLink.trimmingCharacters(in: .whitespacesAndNewlines)) == nil)
             }
             .padding(8)
+            // "Pair a device" code from web Settings → redeemed for a session, no browser needed.
+            if showCode {
+                HStack {
+                    TextField("XXXX-XXXX", text: $code)
+                        .textFieldStyle(.roundedBorder)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                    Button("Redeem") { _Concurrency.Task { await redeem(base: base) } }
+                        .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).count < 8 || busy)
+                }
+                .padding(.horizontal, 8).padding(.bottom, 8)
+            } else {
+                Button("Have a code?") { showCode = true }
+                    .font(.caption)
+                    .padding(.bottom, 6)
+            }
             if let error { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 8) }
             WebView(url: webURL ?? base.appendingPathComponent("login"), host: base.host ?? "") { token in
                 _Concurrency.Task { await session.didSignIn(token: token) }
@@ -109,6 +128,27 @@ struct SignInView: View {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Back") { session.client = nil }
             }
+        }
+    }
+
+    // POST /api/app/redeem — swaps a "Pair a device" code for a session token.
+    private func redeem(base: URL) async {
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            let out: RedeemOut = try await Client(base: base)
+                .request("POST", "api/app/redeem", ["code": code.trimmingCharacters(in: .whitespacesAndNewlines)])
+            await session.didSignIn(token: out.token)
+        } catch let e as APIError {
+            switch e.status {
+            case 400: error = "That code is invalid, expired, or already used."
+            case 404: error = "This server doesn't know pairing codes yet — use the link instead."
+            case 429: error = "Too many tries — wait a bit and try again."
+            default: error = e.message
+            }
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

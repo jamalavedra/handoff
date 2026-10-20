@@ -20,7 +20,14 @@ struct TaskDetailView: View {
                     }
                     meta("Status", statusText(t))
                     meta("Project", t.project)
-                    if let d = t.due { meta("Due", dueLabel(d)) }
+                    if t.due != nil {
+                        HStack {
+                            Text("Due").foregroundStyle(Color.hMutedFg)
+                            Spacer()
+                            DuePill(task: t)
+                        }
+                        .font(.callout)
+                    }
                     meta("Assignee", t.assignee?.name ?? "Unassigned")
                     if let c = t.claimed_by {
                         meta("Claimed by", "\(c.name)\(c.kind == "agent" ? " (agent)" : "")")
@@ -37,13 +44,13 @@ struct TaskDetailView: View {
                             Button { _Concurrency.Task { await toggle(td) } } label: {
                                 HStack {
                                     Image(systemName: td.done ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(td.done ? .green : .secondary)
+                                        .foregroundStyle(td.done ? Color.hFg : Color.hFg.opacity(0.4))
                                     VStack(alignment: .leading) {
                                         Text(td.text)
                                             .strikethrough(td.done)
-                                            .foregroundStyle(td.done ? .secondary : .primary)
+                                            .foregroundStyle(td.done ? Color.hMutedFg : Color.hFg)
                                         if let r = td.result, !r.isEmpty {
-                                            Text(r).font(.caption).foregroundStyle(.secondary)
+                                            Text(r).font(.caption).foregroundStyle(Color.hMutedFg)
                                         }
                                     }
                                 }
@@ -59,28 +66,30 @@ struct TaskDetailView: View {
                                 Text(c.author?.name ?? "?")
                                     .font(.caption.weight(.semibold))
                                 if c.author?.kind == "agent" {
-                                    Image(systemName: "cpu").font(.caption2).foregroundStyle(.purple)
+                                    Image(systemName: "cpu").font(.caption2).foregroundStyle(Color.hViolet)
                                 }
                                 if let ob = c.on_behalf_of {
-                                    Text("for \(ob.name)").font(.caption2).foregroundStyle(.tertiary)
+                                    Text("for \(ob.name)").font(.caption2).foregroundStyle(Color.hMutedFg.opacity(0.7))
                                 }
                                 Spacer()
-                                Text(ago(c.created_at)).font(.caption2).foregroundStyle(.tertiary)
+                                Text(ago(c.created_at)).font(.caption2).foregroundStyle(Color.hMutedFg.opacity(0.7))
                             }
                             Text(c.body).font(.callout)
                         }
                         .padding(.vertical, 2)
                     }
                     if (detail?.comments ?? []).isEmpty {
-                        Text("No comments yet.").foregroundStyle(.secondary)
+                        Text("No comments yet.").foregroundStyle(Color.hMutedFg)
                     }
                 }
             } else if let error {
-                Text(error).foregroundStyle(.red)
+                Text(error).foregroundStyle(Color.hDestructive)
             } else {
                 ProgressView()
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.hBg)
         .navigationTitle(task?.title ?? "Task")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -118,9 +127,9 @@ struct TaskDetailView: View {
 
     private func meta(_ k: String, _ v: String) -> some View {
         HStack {
-            Text(k).foregroundStyle(.secondary)
+            Text(k).foregroundStyle(Color.hMutedFg)
             Spacer()
-            Text(v).multilineTextAlignment(.trailing)
+            Text(v).multilineTextAlignment(.trailing).foregroundStyle(Color.hFg)
         }
         .font(.callout)
     }
