@@ -177,17 +177,21 @@ func (s *Service) finishJob(ctx context.Context, j *agentJob, result map[string]
 	}
 	raw, _ := json.Marshal(result)
 	ctx = context.WithoutCancel(ctx)
+	var wake bool
 	err := s.DB.InOrg(ctx, j.Org, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE agent_jobs SET claim = NULL, claim_until = NULL, updated_at = now(), last_error = $3, result = $4,
+		return tx.QueryRow(ctx, `UPDATE agent_jobs SET claim = NULL, claim_until = NULL, updated_at = now(), last_error = $3, result = $4,
 				state = CASE WHEN triggers > $5 THEN 'pending'
 					WHEN $6 = 'failed' AND attempts < $7 THEN 'pending' ELSE $6 END,
 				attempts = CASE WHEN triggers > $5 THEN 0 ELSE attempts END,
 				due_at = CASE WHEN triggers > $5 THEN due_at
 					WHEN $6 = 'failed' AND attempts < $7 THEN now() + make_interval(secs => $8) ELSE due_at END
-			WHERE id::text = $1 AND claim::text = $2`,
-			j.ID, j.claim, msg, raw, j.claimedTrigger, state, jobMaxAttempts, jobBackoff(j.Attempt).Seconds())
-		return err
+			WHERE id::text = $1 AND claim::text = $2
+			RETURNING state = 'pending' AND due_at <= now()`,
+			j.ID, j.claim, msg, raw, j.claimedTrigger, state, jobMaxAttempts, jobBackoff(j.Attempt).Seconds()).Scan(&wake)
 	})
+	if wake {
+		s.wakeJobs()
+	}
 	if err != nil {
 		slog.Error("job: record", "kind", j.Kind, "job", j.ID, "err", err)
 	}
