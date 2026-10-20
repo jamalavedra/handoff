@@ -78,10 +78,11 @@ const captureNote = `You consolidate what the workspace's agent should remember 
 - Keep each fact a short sentence from the chat, not a summary of the task.`
 
 type captureLine struct {
-	agent bool
-	name  string
-	body  string
-	at    time.Time
+	author string
+	agent  bool
+	name   string
+	body   string
+	at     time.Time
 }
 
 type captureAdd struct {
@@ -124,49 +125,9 @@ func (s *Service) captureMemory(ctx context.Context, j *agentJob) (map[string]an
 		if err != nil {
 			return err
 		}
-		// The comments it hasn't read yet, newest forty.
-		rows, err := tx.Query(ctx, `SELECT c.author_id::text = $2, m.name, c.body, c.created_at FROM comments c
-			JOIN members m ON m.org_id = c.org_id AND m.id = c.author_id
-			WHERE c.task_id = $1 AND c.created_at > coalesce($3, '-infinity'::timestamptz)
-			ORDER BY c.created_at DESC LIMIT 40`, j.Task, st.AgentID, capturedAt)
-		if err != nil {
-			return err
-		}
-		chat, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (captureLine, error) {
-			var l captureLine
-			return l, r.Scan(&l.agent, &l.name, &l.body, &l.at)
-		})
-		if err != nil || len(chat) == 0 {
-			return err
-		}
 		if j.Member != "" {
 			member, err = scanMember(tx.QueryRow(ctx, `SELECT `+memberCols+` FROM members WHERE id = $1`, j.Member))
-			if err != nil {
-				return err
-			}
 		}
-		// What it already remembers in this scope (to dedupe and to supersede), then what people
-		// removed (never to offer again). Rows are capped: the lists are context, not the corpus.
-		facts, err = queryMemoryTx(ctx, tx, `m.removed_at IS NULL AND m.superseded_at IS NULL
-			AND (m.until_date IS NULL OR m.until_date >= CURRENT_DATE)
-			AND (m.scope = 'workspace' OR (m.scope = 'project' AND m.project_id = $1::uuid)
-				OR (m.scope = 'person' AND m.member_id = nullif($2, '')::uuid))`, project, j.Member)
-		if err != nil {
-			return err
-		}
-		removed, err = queryMemoryTx(ctx, tx, `m.removed_at IS NOT NULL
-			AND (m.scope = 'workspace' OR (m.scope = 'project' AND m.project_id = $1::uuid)
-				OR (m.scope = 'person' AND m.member_id = nullif($2, '')::uuid))
-			ORDER BY m.removed_at DESC LIMIT 20`, project, j.Member)
-		if err != nil {
-			return err
-		}
-		rows, err = tx.Query(ctx, `SELECT title FROM notes WHERE project_id = $1::uuid AND deleted_at IS NULL
-			ORDER BY updated_at DESC LIMIT 20`, project)
-		if err != nil {
-			return err
-		}
-		noteTitles, err = pgx.CollectRows(rows, pgx.RowTo[string])
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -175,11 +136,65 @@ func (s *Service) captureMemory(ctx context.Context, j *agentJob) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	if len(chat) == 0 {
-		return map[string]any{"skipped": "nothing new"}, nil
-	}
 	if member != nil {
 		agent.Owner = member
+	}
+	// The gather runs as the member again: someone who lost the project since commenting sees
+	// nothing of its chat — there is nothing to capture either way.
+	var noAccess bool
+	err = s.run(ctx, agent, func(c *call) error {
+		if member != nil && !c.canSeeProject(project) {
+			noAccess = true
+			return nil
+		}
+		// The comments it hasn't read yet, oldest forty: the rest still count as unread, so the
+		// next trigger picks up where this run stopped.
+		rows, err := c.tx.Query(ctx, `SELECT c.author_id::text, c.author_id::text = $2, m.name, c.body, c.created_at FROM comments c
+			JOIN members m ON m.org_id = c.org_id AND m.id = c.author_id
+			WHERE c.task_id = $1 AND c.created_at > coalesce($3, '-infinity'::timestamptz)
+			ORDER BY c.created_at ASC LIMIT 40`, j.Task, st.AgentID, capturedAt)
+		if err != nil {
+			return err
+		}
+		chat, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (captureLine, error) {
+			var l captureLine
+			return l, r.Scan(&l.author, &l.agent, &l.name, &l.body, &l.at)
+		})
+		if err != nil || len(chat) == 0 {
+			return err
+		}
+		// What it already remembers in this scope (to dedupe and to supersede), then what people
+		// removed (never to offer again). Rows are capped: the lists are context, not the corpus.
+		facts, err = queryMemoryTx(ctx, c.tx, `m.removed_at IS NULL AND m.superseded_at IS NULL
+			AND (m.until_date IS NULL OR m.until_date >= CURRENT_DATE)
+			AND (m.scope = 'workspace' OR (m.scope = 'project' AND m.project_id = $1::uuid)
+				OR (m.scope = 'person' AND m.member_id = nullif($2, '')::uuid))`, project, j.Member)
+		if err != nil {
+			return err
+		}
+		removed, err = queryMemoryTx(ctx, c.tx, `m.removed_at IS NOT NULL
+			AND (m.scope = 'workspace' OR (m.scope = 'project' AND m.project_id = $1::uuid)
+				OR (m.scope = 'person' AND m.member_id = nullif($2, '')::uuid))
+			ORDER BY m.removed_at DESC LIMIT 20`, project, j.Member)
+		if err != nil {
+			return err
+		}
+		rows, err = c.tx.Query(ctx, `SELECT title FROM notes WHERE project_id = $1::uuid AND deleted_at IS NULL
+			ORDER BY updated_at DESC LIMIT 20`, project)
+		if err != nil {
+			return err
+		}
+		noteTitles, err = pgx.CollectRows(rows, pgx.RowTo[string])
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if noAccess {
+		return map[string]any{"skipped": "no access"}, nil
+	}
+	if len(chat) == 0 {
+		return map[string]any{"skipped": "nothing new"}, nil
 	}
 	memberName := "the person"
 	if member != nil {
@@ -188,8 +203,7 @@ func (s *Service) captureMemory(ctx context.Context, j *agentJob) (map[string]an
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Task %q in the %s project, chat since last looked (oldest first):\n<<<\n", title, projectName)
-	for i := len(chat) - 1; i >= 0; i-- {
-		l := chat[i]
+	for _, l := range chat {
 		if l.agent {
 			fmt.Fprintf(&b, "you: %s\n", clipBytes(l.body, 2000))
 		} else {
@@ -226,13 +240,24 @@ func (s *Service) captureMemory(ctx context.Context, j *agentJob) (map[string]an
 		return nil, err
 	}
 
+	// Person facts only bind when the window has a single person talking — with several authors,
+	// whose fact is whose can't be told apart, so person adds are dropped (project adds still land).
+	persons := map[string]bool{}
+	for _, l := range chat {
+		if !l.agent {
+			persons[l.author] = true
+		}
+	}
+	oneAuthor := member != nil && len(persons) == 1 && persons[member.ID]
 	// Server-side: a fact lands only in the person/project this chat is about, cleaned like any
 	// memory write; a supersede only touches a fact in that same scope. Anything else is dropped.
 	var added, superseded int
 	err = s.run(ctx, agent, func(c *call) error {
 		live := map[string]*memoryRow{}
+		liveText := map[string]bool{}
 		for _, f := range facts {
 			live[f.ID] = f
+			liveText[f.Scope+"\x00"+f.ProjectID+"\x00"+f.MemberID+"\x00"+normFact(f.Text)] = true
 		}
 		for i, a := range out.Add {
 			if i >= 5 {
@@ -241,7 +266,7 @@ func (s *Service) captureMemory(ctx context.Context, j *agentJob) (map[string]an
 			in := RememberIn{Text: a.Text, Until: a.Until, Task: j.Task, Noticed: true}
 			switch strings.ToLower(strings.TrimSpace(a.Scope)) {
 			case "person":
-				if member == nil {
+				if !oneAuthor {
 					continue
 				}
 				in.Scope, in.Member = "person", member.ID
@@ -250,13 +275,20 @@ func (s *Service) captureMemory(ctx context.Context, j *agentJob) (map[string]an
 			default:
 				continue
 			}
+			// Restating a live fact never renews it with a shorter leash — the saved expiry stands.
+			if liveText[in.Scope+"\x00"+in.Project+"\x00"+in.Member+"\x00"+normFact(in.Text)] {
+				in.Until = ""
+			}
 			if _, ok, err := c.remember(in); err != nil {
 				continue // refused facts (secret-shaped, malformed) are dropped, not retried
 			} else if ok {
 				added++
 			}
 		}
-		for _, sup := range out.Supersede {
+		for i, sup := range out.Supersede {
+			if i >= 10 { // a model gone sideways retires at most a page of facts per run
+				break
+			}
 			f, ok := live[sup.ID]
 			if !ok || (f.Scope == "person" && f.MemberID != j.Member) || (f.Scope == "project" && f.ProjectID != project) || f.Scope == "workspace" {
 				continue
@@ -283,6 +315,11 @@ func (s *Service) captureMemory(ctx context.Context, j *agentJob) (map[string]an
 	})
 	if err != nil {
 		return nil, err
+	}
+	// A full window means more comments wait past the cursor: queue the next read now instead of
+	// hoping another comment comes along to trigger it.
+	if len(chat) == 40 {
+		s.enqueueCapture(ctx, j.Org, j.Task, j.Member)
 	}
 	return map[string]any{"added": added, "superseded": superseded}, nil
 }

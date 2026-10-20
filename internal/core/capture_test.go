@@ -166,11 +166,10 @@ func TestCaptureRespectsRemovedAndSupersedes(t *testing.T) {
 	}
 	deadline := time.Now().Add(45 * time.Second)
 	for {
-		if _, _, ran := jobRowsFor(t, e, admin, task.ID); ran {
+		if s, le, ran := jobRowsFor(t, e, admin, task.ID); ran {
 			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("capture didn't run")
+		} else if time.Now().After(deadline) {
+			t.Fatalf("capture didn't run: state=%s err=%q", s, le)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -228,15 +227,16 @@ func TestCaptureReadsOnce(t *testing.T) {
 	deadline := time.Now().Add(45 * time.Second)
 	for {
 		var skipped bool
+		var res string
 		_ = e.s.DB.InOrg(e.ctx, admin.Org.ID, func(tx pgx.Tx) error {
-			return tx.QueryRow(e.ctx, `SELECT result ? 'skipped' OR (result->>'added')::int = 0 FROM agent_jobs
-				WHERE kind = 'memory_capture' AND task_id = $1 ORDER BY created_at DESC LIMIT 1`, task.ID).Scan(&skipped)
+			return tx.QueryRow(e.ctx, `SELECT result ? 'skipped' OR (result->>'added')::int = 0, result::text FROM agent_jobs
+				WHERE kind = 'memory_capture' AND task_id = $1 ORDER BY created_at DESC LIMIT 1`, task.ID).Scan(&skipped, &res)
 		})
 		if skipped {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("re-queued capture didn't skip the unchanged chat")
+			t.Fatalf("re-queued capture didn't skip the unchanged chat (last result %s)", res)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
