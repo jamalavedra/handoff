@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -42,20 +43,19 @@ func (s *Server) appRedeem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 429, "too many attempts; wait a minute")
 		return
 	}
-	memberID, err := s.Auth.RedeemAppCode(r.Context(), org.ID, in.Code)
-	if err != nil {
+	memberID, tok, err := s.Auth.RedeemAppCode(r.Context(), org.ID, in.Code)
+	if errors.Is(err, auth.ErrInvalid) {
 		writeErr(w, 400, "invalid or expired code")
+		return
+	}
+	if err != nil {
+		slog.Error("app redeem", "err", err)
+		writeErr(w, 500, "internal error")
 		return
 	}
 	p, err := s.Svc.Principal(r.Context(), org, memberID, "web")
 	if err != nil || p.Member.IsAgent() {
 		writeErr(w, 400, "invalid or expired code")
-		return
-	}
-	tok, err := s.Auth.CreateSession(r.Context(), org.ID, memberID)
-	if err != nil {
-		slog.Error("app session", "err", err)
-		writeErr(w, 500, "internal error")
 		return
 	}
 	// The app sends the token as `Cookie: handoff_session=<token>`; the cookie covers a browser flow too.

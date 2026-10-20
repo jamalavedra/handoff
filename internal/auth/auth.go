@@ -185,21 +185,27 @@ func (s *Store) CreateAppCode(ctx context.Context, orgID, memberID string) (code
 	return raw, expires, err
 }
 
-// RedeemAppCode spends the code once. Bad, expired and spent codes all read the same.
-func (s *Store) RedeemAppCode(ctx context.Context, orgID, code string) (string, error) {
+// RedeemAppCode spends the code once and mints its session in the same transaction,
+// so a failure leaves the code usable. Bad, expired and spent codes all read the same.
+func (s *Store) RedeemAppCode(ctx context.Context, orgID, code string) (memberID, tok string, err error) {
 	norm, ok := normalizeAppCode(code)
 	if !ok {
-		return "", ErrInvalid
+		return "", "", ErrInvalid
 	}
-	var member string
-	err := s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `UPDATE app_codes SET used_at = now()
-			WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING member_id::text`, Hash(norm)).Scan(&member)
+	tok = NewToken("")
+	err = s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `UPDATE app_codes SET used_at = now()
+			WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING member_id::text`, Hash(norm)).Scan(&memberID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO sessions (token_hash, org_id, member_id, expires_at) VALUES ($1, $2, $3, $4)`,
+			Hash(tok), orgID, memberID, time.Now().Add(SessionTTL))
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrInvalid
+		return "", "", ErrInvalid
 	}
-	return member, err
+	return memberID, tok, err
 }
 
 // ---- API keys ----
