@@ -117,7 +117,10 @@ struct TaskDetailView: View {
                         .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
                 }
                 .padding(.horizontal)
-                .padding(.vertical, 8)
+                // Extra bottom so the composer clears the floating tab bar that
+                // MainView overlays on every pushed view (~60pt bar + margins).
+                .padding(.top, 8)
+                .padding(.bottom, 84)
                 .background(.bar)
             }
         }

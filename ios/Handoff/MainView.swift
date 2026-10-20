@@ -283,7 +283,9 @@ struct MoreView: View {
                 .padding(16)
             }
             if let base = session.client?.base.host {
-                Text(base).font(.system(size: 12)).foregroundStyle(Color.hMutedFg).padding(.horizontal, 16)
+                // host:port (e.g. localhost:8081) — port matters on dev servers.
+                let port = session.client?.base.port.map { ":\($0)" } ?? ""
+                Text(base + port).font(.system(size: 12)).foregroundStyle(Color.hMutedFg).padding(.horizontal, 16)
             }
             Divider().padding(.vertical, 8)
             Button(role: .destructive) {
