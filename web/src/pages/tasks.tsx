@@ -18,7 +18,7 @@ import { useMe } from "../main";
 import { SettingsHeader } from "./settings";
 import { Board, useView } from "./board";
 import { TaskLink } from "../components/tasklink";
-import { completedText, patchTask, reopen, undoable, undoClose, useChangeFlash, useTriageReveal } from "../components/feedback";
+import { completedText, patchTask, reopen, undoableClose, useChangeFlash, useTriageReveal } from "../components/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { progressLabel } from "../todos";
 import { eventDetail, revertable, verb, type Names } from "../events";
@@ -49,8 +49,8 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
     onError: (_e, _v, rollback) => rollback?.(),
     onSuccess: (r, wasClosed) => {
       if (wasClosed) return;
-      const next = (r as { next?: Task }).next;
-      undoable(qc, completedText(`Completed “${t.title}”`, next), () => undoClose(t.id, next));
+      const { next, event_id } = r as { next?: Task; event_id: number };
+      undoableClose(qc, completedText(`Completed “${t.title}”`, next), t.id, "done", event_id);
     },
     onSettled: invalidate,
   });

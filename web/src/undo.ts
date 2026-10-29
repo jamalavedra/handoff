@@ -37,5 +37,10 @@ export function inversePatch(t: Task, patch: TaskPatch): TaskPatch {
     title: t.title, status: t.status, priority: t.priority, assignee: t.assignee?.id ?? "", due: t.due ?? "",
     labels: t.labels, repeat: t.repeat ?? "", project: t.project_id,
   };
-  return Object.fromEntries(Object.keys(patch).filter((k) => k in was).map((k) => [k, was[k]]));
+  const back = Object.fromEntries(Object.keys(patch).filter((k) => k in was).map((k) => [k, was[k]]));
+  return "body" in patch ? { ...back, body: t.body ?? "", body_mode: "replace", confirm: true } : back;
 }
+
+// changedText names what a patch changes, for the undo history.
+export const changedText = (patch: TaskPatch) =>
+  `Changed ${Object.keys(patch).filter((k) => k !== "body_mode" && k !== "confirm").map((k) => (k === "body" ? "text" : k)).join(", ")}`;

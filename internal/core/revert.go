@@ -229,10 +229,10 @@ func (c *call) setStatus(id, st string) error {
 func (c *call) dropNext(id string) (string, error) {
 	var next, title string
 	var untouched bool
-	err := c.tx.QueryRow(c.ctx, `SELECT n.id, n.title, n.status = 'open' AND n.deleted_at IS NULL
-		AND NOT EXISTS (SELECT 1 FROM events e WHERE e.org_id = n.org_id AND e.task_id = n.id AND e.kind NOT IN ('created', 'triaged', 'triage_failed'))
+	err := c.tx.QueryRow(c.ctx, `SELECT n.id, n.title, n.status = 'open'
+		AND NOT EXISTS (SELECT 1 FROM events e WHERE e.org_id = n.org_id AND e.task_id = n.id AND e.kind NOT IN ('created', 'triaged', 'triage_failed', 'trashed', 'restored'))
 		AND NOT EXISTS (SELECT 1 FROM comments cm WHERE cm.org_id = n.org_id AND cm.task_id = n.id)
-		FROM tasks t JOIN tasks n ON n.org_id = t.org_id AND n.id = t.next_id WHERE t.id = $1`, id).Scan(&next, &title, &untouched)
+		FROM tasks t JOIN tasks n ON n.org_id = t.org_id AND n.id = t.next_id WHERE t.id = $1 AND n.deleted_at IS NULL`, id).Scan(&next, &title, &untouched)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -250,8 +250,11 @@ func (c *call) dropNext(id string) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Moved the next occurrence, %q, to the trash.", title), c.trash(next, "its repeating task was reopened")
+	return fmt.Sprintf("Moved the next occurrence, %q, to the trash.", title), c.trash(next, nextDropped)
 }
+
+// nextDropped is the trash reason dropNext gives, so closing the task again restores that occurrence.
+const nextDropped = "its repeating task was reopened"
 
 func (c *call) revertTodo(d map[string]any) ([]string, error) {
 	id, _ := d["todo_id"].(string)

@@ -143,6 +143,11 @@ export function NotePage() {
     onSuccess: () => { qc.invalidateQueries(); undoable(qc, "Moved to trash", () => api.tool("restore_note", { id })); },
   });
   const restore = useMutation({ mutationFn: () => api.tool("restore_note", { id }), onSuccess: () => qc.invalidateQueries() });
+  const revert = useMutation({
+    mutationFn: (e: Event) => api.tool("revert_change", { event_id: e.id }),
+    onSuccess: () => { qc.invalidateQueries(); toast("Change reverted"); },
+    onError: (e) => toast.error(e.message),
+  });
   const goBack = () => (canGoBack ? router.history.back() : navigate({ to: "/" }));
   const back = (
     <button onClick={goBack} className="-ml-2 flex h-9 items-center gap-0.5 rounded-full pr-2 pl-1 text-sm text-muted-foreground hover:bg-accent" aria-label="Back">
@@ -203,7 +208,7 @@ export function NotePage() {
           <DialogDescription>Written by {n.created_by?.name ?? "someone"}{n.on_behalf_of ? ` for ${n.on_behalf_of.name}` : ""} · {ago(n.created_at)}</DialogDescription>
           <div>
             {q.data.events.map((e) => (
-              <EventLine key={e.id} e={e} showTask={false} showNote={false} restoreKind="note_updated" onRestore={locked ? undefined : (body) => update.mutate({ body }, { onSuccess: () => { toast("Previous version restored"); setActivityOpen(false); } })} />
+              <EventLine key={e.id} e={e} showTask={false} showNote={false} onRevert={locked || revert.isPending ? undefined : revert.mutate} restoreKind="note_updated" onRestore={locked ? undefined : (body) => update.mutate({ body }, { onSuccess: () => { toast("Previous version restored"); setActivityOpen(false); } })} />
             ))}
           </div>
         </DialogContent>

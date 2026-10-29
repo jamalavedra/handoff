@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { api, type Task } from "../lib";
 import { createHistory } from "../undo";
 import { typing } from "./shortcuts";
-import { dueLabel } from "../quickadd";
+import { dueLabel, isoDate } from "../quickadd";
 import { useInbox } from "../pages/notifications";
 import { chatInView } from "../agent-activity";
 
@@ -99,9 +99,19 @@ export function completedText(base: string, next?: Task) {
   return next?.due ? `${base} · next ${dueLabel(next.due).text}` : base;
 }
 
-export async function undoClose(id: string, next?: Task) {
-  await reopen(id);
-  if (next) await api.tool("trash_task", { id: next.id });
+// undoClose reverts a close (close_task's event_id): the server reopens the task and trashes the next
+// occurrence if nobody has touched it, and says when it left it.
+async function undoClose(eventId: number) {
+  const r = await api.tool<{ message?: string }>("revert_change", { event_id: eventId });
+  if (r.message) toast(r.message);
+}
+
+// undoableClose offers Undo for a close; redo closes again, and a later undo reverts that close.
+export function undoableClose(qc: QueryClient, message: string, id: string, status: string, eventId: number) {
+  let ev = eventId;
+  undoable(qc, message, () => undoClose(ev), async () => {
+    ev = (await api.tool<{ event_id: number }>("close_task", { id, status, today: isoDate(new Date()) })).event_id;
+  });
 }
 
 const kindText = { mention: "mentioned you", assigned: "assigned you a task", approval: "needs your approval", agent_done: "finished" } as const;

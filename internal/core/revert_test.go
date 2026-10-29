@@ -216,6 +216,15 @@ func TestRevertCloseOfRepeatingTask(t *testing.T) {
 	if d, err := e.s.GetTask(e.ctx, acme, core.TaskIDIn{ID: out.Next.ID}); err != nil || d.Task.DeletedAt == "" {
 		t.Fatalf("next occurrence not trashed: %v", err)
 	}
+	// Closing again (redo) brings that one back rather than making another.
+	again, err := e.s.CloseTask(e.ctx, acme, core.CloseTaskIn{ID: tk.ID})
+	if err != nil || again.Next == nil || again.Next.ID != out.Next.ID || again.Next.DeletedAt != "" {
+		t.Fatalf("close again: %+v %v", again.Next, err)
+	}
+	// And undoing that again trashes it again: being trashed and restored isn't a change to it.
+	if res, err := e.s.RevertChange(e.ctx, acme, core.RevertChangeIn{EventID: again.EventID}); err != nil || !strings.Contains(res.Message, "Moved") {
+		t.Fatalf("revert second close: %+v %v", res, err)
+	}
 
 	// One someone already changed stays.
 	other := e.create(t, acme, core.NewTask{Title: "Pay rent", Repeat: "monthly", Due: "2099-01-01"})[0]

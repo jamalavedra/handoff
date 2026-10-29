@@ -1323,6 +1323,30 @@ func (c *call) closeTask(in CloseTaskIn, out *CloseTaskOut) error {
 			return err
 		}
 	}
+	if continues && made {
+		// A revert of the last close trashed the next one (see dropNext): closing again brings it back.
+		var nid string
+		err := c.tx.QueryRow(c.ctx, `SELECT n.id FROM tasks t JOIN tasks n ON n.org_id = t.org_id AND n.id = t.next_id
+			WHERE t.id = $1 AND n.deleted_at IS NOT NULL AND (SELECT e.data->>'reason' FROM events e
+				WHERE e.org_id = n.org_id AND e.task_id = n.id ORDER BY e.id DESC LIMIT 1) = $2`, r.ID, nextDropped).Scan(&nid)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if nid != "" {
+			n, err := c.getTask(nid, true, true)
+			if err != nil {
+				return err
+			}
+			if err := c.restore(n); err != nil {
+				return err
+			}
+			if n, err = c.getTask(nid, false, false); err != nil {
+				return err
+			}
+			o := c.out(n, true)
+			out.Next = &o
+		}
+	}
 	if continues && !made {
 		next, err := c.nextOccurrence(r, closerToday(in.Today, time.Now()))
 		if err != nil {

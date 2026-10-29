@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHistory, inversePatch } from "./undo.ts";
+import { changedText, createHistory, inversePatch } from "./undo.ts";
 import type { Task } from "./lib.ts";
 
 test("undo and redo walk the history; a new change clears redo", () => {
@@ -49,5 +49,7 @@ test("the history keeps the newest changes", () => {
 test("the inverse of a task edit is its old values", () => {
   const t = { id: "t", title: "Old", status: "done", priority: 2, project_id: "p", labels: [], assignee: { id: "m", name: "M", kind: "human" } } as unknown as Task;
   assert.deepEqual(inversePatch(t, { title: "New", status: "open", due: "2026-11-01", assignee: "" }), { title: "Old", status: "done", due: "", assignee: "m" });
-  assert.deepEqual(inversePatch(t, { body: "x", body_mode: "replace" }), {});
+  assert.deepEqual(inversePatch({ ...t, body: "Old text" }, { body: "x", body_mode: "replace", confirm: true }), { body: "Old text", body_mode: "replace", confirm: true });
+  assert.equal(changedText({ body: "Old text", body_mode: "replace", confirm: true }), "Changed text");
+  assert.equal(changedText({ title: "a", due: "" }), "Changed title, due");
 });

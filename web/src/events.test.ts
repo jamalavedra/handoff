@@ -17,6 +17,12 @@ test("task updates show before and after", () => {
   assert.ok(!revertable(ev("updated", { title: "New" })));
   assert.ok(revertable(ev("todo_updated", { text: "x", done: true, from_done: false })));
   assert.ok(!revertable(ev("todo_updated", { text: "x", moved: true })));
+  assert.ok(revertable(ev("todo_updated", { text: "x", moved: true, position: 2, from_position: 0 })));
+  assert.ok(revertable(ev("updated", { body: "replaced", previous_body: "old", body_hash: "ab" })));
+  assert.equal(eventDetail(ev("updated", { body: "replaced", previous_body: "old", body_hash: "ab" })), "text");
+  assert.ok(revertable(ev("note_updated", { note_id: "n", title: "T", body: "replaced", body_hash: "ab" })));
+  assert.ok(revertable(ev("todo_removed", { todo_id: "t", text: "x", done: false, result: "", position: 1 })));
+  assert.ok(!revertable(ev("todo_removed", { todo_id: "t", text: "x" })));
 });
 
 test("todos read as steps", () => {

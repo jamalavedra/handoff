@@ -16,7 +16,7 @@ const verbs: Record<string, string> = {
 };
 
 // Keys in an update's data that say how, not what.
-const quiet = new Set(["from_project_id", "previous_body", "note_id", "project_id", "assignee_id", "todo_id", "from", "from_title"]);
+const quiet = new Set(["from_project_id", "previous_body", "note_id", "project_id", "assignee_id", "todo_id", "from", "from_title", "body_hash"]);
 
 // The task fields an update records old values for (from_<key>), with the key that holds the name
 // shown for the new value when it differs.
@@ -54,9 +54,11 @@ export function changes(e: Event, names?: Names): Change[] {
 export function revertable(e: Event) {
   const d = e.data;
   switch (e.kind) {
-    case "updated": return changes(e).length > 0;
+    case "updated": return changes(e).length > 0 || "body_hash" in d;
+    case "note_updated": return "from_title" in d || "body_hash" in d;
+    case "todo_removed": return "position" in d;
     case "closed": case "trashed": case "restored": return true;
-    case "todo_updated": return "from" in d || "from_done" in d || "from_result" in d;
+    case "todo_updated": return "from" in d || "from_done" in d || "from_result" in d || "from_position" in d;
   }
   return false;
 }

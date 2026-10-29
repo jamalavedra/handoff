@@ -10,8 +10,8 @@ import { agentOnIt, dueLabel, isoDate, repeatLabel } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { EventLine, useInvalidate } from "./tasks";
-import { completedText, markLocal, remember, saveTask, undoable, undoClose } from "../components/feedback";
-import { inversePatch } from "../undo";
+import { completedText, markLocal, remember, saveTask, undoable, undoableClose } from "../components/feedback";
+import { changedText, inversePatch } from "../undo";
 import { toast } from "sonner";
 import { ChatPreview, names, taskQuery } from "../components/task-chat";
 import { useMe } from "../main";
@@ -168,18 +168,18 @@ function TaskView({ id }: { id: string }) {
   const [activityOpen, setActivityOpen] = useState(false);
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
   // A patch can name its task: a body draft saved as the view switches tasks still belongs to the old one.
-  // Field edits go on the ⌘Z history with their old values; the text keeps its editor's own undo.
+  // Edits go on the ⌘Z history with their old values. While the editor has focus, ⌘Z is its own undo.
   const update = useMutation({
     mutationFn: ({ id: on = id, ...patch }: { id?: string } & Record<string, unknown>) => { markLocal(on); return api.tool("update_task", { id: on, ...patch }); },
     onMutate: ({ id: on = id, ...patch }) => (q.data && on === id ? inversePatch(q.data.task, patch) : {}),
     onSuccess: (_r, { id: on = id, ...patch }, back) => {
       invalidate();
-      if (back && Object.keys(back).length) remember(`Changed ${Object.keys(back).join(", ")}`, () => saveTask(on, back), () => saveTask(on, patch));
+      if (back && Object.keys(back).length) remember(changedText(back), () => saveTask(on, back), () => saveTask(on, patch));
     },
   });
   const close = useMutation({
-    mutationFn: (status: string) => { markLocal(id); return api.tool<{ next?: Task }>("close_task", { id, status, today: isoDate(new Date()) }); },
-    onSuccess: (r, status) => { invalidate(); undoable(qc, completedText(status === "done" ? "Task completed" : "Task archived", r.next), () => undoClose(id, r.next), () => api.tool("close_task", { id, status })); },
+    mutationFn: (status: string) => { markLocal(id); return api.tool<{ next?: Task; event_id: number }>("close_task", { id, status, today: isoDate(new Date()) }); },
+    onSuccess: (r, status) => { invalidate(); undoableClose(qc, completedText(status === "done" ? "Task completed" : "Task archived", r.next), id, status, r.event_id); },
   });
   const trash = useMutation({
     mutationFn: () => { markLocal(id); return api.tool("trash_task", { id }); },
