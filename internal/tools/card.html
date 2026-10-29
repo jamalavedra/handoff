@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Handoff task</title>
+<style>
+  :root { --bg: #fff; --fg: #18181b; --muted: #71717a; --line: #e4e4e7; --accent: #2563eb; --err: #dc2626; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #18181b; --fg: #fafafa; --muted: #a1a1aa; --line: #3f3f46; --accent: #60a5fa; --err: #f87171; color-scheme: dark; } }
+  :root[data-theme="dark"] { --bg: #18181b; --fg: #fafafa; --muted: #a1a1aa; --line: #3f3f46; --accent: #60a5fa; --err: #f87171; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px 14px; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+  .task + .task { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+  .head { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+  h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .done h2 { text-decoration: line-through; color: var(--muted); }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; color: var(--muted); font-size: 13px; align-items: center; }
+  select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; }
+  ul { list-style: none; margin: 8px 0 0; padding: 0; }
+  li label { display: flex; gap: 8px; align-items: flex-start; padding: 2px 0; }
+  li input { margin-top: 3px; accent-color: var(--accent); }
+  li.ticked span { text-decoration: line-through; color: var(--muted); }
+  li small { display: block; color: var(--muted); }
+  a { color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .err { color: var(--err); font-size: 13px; margin-top: 6px; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="root" class="empty">Loading…</div>
+<script>
+// MCP Apps view: JSON-RPC over postMessage with the host (Claude, ChatGPT). Every edit is a normal
+// tools/call, so the server applies the calling agent's permissions as for any other call.
+const STATUSES = { open: "Open", in_progress: "In progress", done: "Done", cancelled: "Archived" };
+let nextID = 1, tasks = [], can = { update: false, close: false }, error = "";
+const pending = {};
+
+function send(msg) { window.parent.postMessage({ jsonrpc: "2.0", ...msg }, "*"); }
+function request(method, params) {
+  const id = nextID++;
+  send({ id, method, params });
+  return new Promise((resolve, reject) => { pending[id] = { resolve, reject }; });
+}
+
+window.addEventListener("message", (e) => {
+  if (e.source !== window.parent) return;
+  const m = e.data;
+  if (!m || m.jsonrpc !== "2.0") return;
+  if (m.id != null && pending[m.id] && !m.method) {
+    const p = pending[m.id]; delete pending[m.id];
+    m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result);
+    return;
+  }
+  if (m.method === "ui/notifications/tool-result") show(m.params);
+  else if (m.method === "ui/notifications/host-context-changed") theme(m.params);
+  else if (m.id != null) send({ id: m.id, result: {} }); // teardown, ping
+});
+
+function theme(ctx) { if (ctx && ctx.theme) document.documentElement.dataset.theme = ctx.theme; }
+
+// Results are a task ({task}), a list ({tasks}) or a todo list ({task: id, todos}).
+function show(res) {
+  if (res._meta && res._meta["handoff/can"]) can = res._meta["handoff/can"];
+  const sc = res.structuredContent || {};
+  if (res.isError) { error = text(res); render(); return; }
+  if (Array.isArray(sc.tasks)) tasks = sc.tasks;
+  else if (sc.task && typeof sc.task === "object") {
+    // An edit from this card replaces its own task in place and keeps the todos it already shows.
+    const i = tasks.findIndex((t) => t.id === sc.task.id);
+    if (i < 0) tasks = [sc.task];
+    else tasks[i] = { ...sc.task, todos: sc.task.todos || tasks[i].todos };
+  }
+  else if (typeof sc.task === "string") {
+    const t = tasks.find((t) => t.id === sc.task);
+    if (t) t.todos = sc.todos;
+    else return call("get_task", { id: sc.task });
+  }
+  error = "";
+  render();
+}
+
+function text(res) { return (res.content || []).map((c) => c.text || "").join(" ") || "Something went wrong."; }
+
+async function call(name, args) {
+  try { show(await request("tools/call", { name, arguments: args })); }
+  catch (e) { error = e.message; render(); }
+}
+
+function setStatus(t, status) {
+  if (status === "done") call("close_task", { id: t.id });
+  else call("update_task", { id: t.id, status });
+}
+
+async function open(url) {
+  try { await request("ui/open-link", { url }); } catch { window.open(url, "_blank", "noopener"); }
+}
+
+function el(tag, props, ...kids) {
+  const n = Object.assign(document.createElement(tag), props);
+  n.append(...kids.filter((k) => k != null && k !== false));
+  return n;
+}
+
+function render() {
+  const root = document.getElementById("root");
+  root.className = tasks.length ? "" : "empty";
+  root.replaceChildren(...(tasks.length ? tasks.map(card) : ["No tasks."]), ...(error ? [el("div", { className: "err", textContent: error })] : []));
+}
+
+function card(t) {
+  const closed = t.status === "done" || t.status === "cancelled";
+  const status = el("select", { ariaLabel: "Status", disabled: !can.update },
+    ...Object.entries(STATUSES).filter(([k]) => k !== "cancelled" || t.status === k)
+      .map(([k, v]) => el("option", { value: k, textContent: v, selected: k === t.status, disabled: k === "done" && !can.close })));
+  status.onchange = () => setStatus(t, status.value);
+  const progress = !t.todos && t.todo_progress ? t.todo_progress.done + "/" + t.todo_progress.total + " todos" : null;
+  return el("div", { className: "task" + (closed ? " done" : "") },
+    el("div", { className: "head" },
+      el("h2", { textContent: t.title }),
+      t.url ? el("a", { href: t.url, textContent: "Open in Handoff", onclick: (e) => { e.preventDefault(); open(t.url); } }) : null),
+    // Spans, not bare strings: adjacent text nodes merge into one flex item and lose the gap.
+    el("div", { className: "meta" }, status, ...[t.project, t.due && "Due " + t.due, t.assignee ? "@" + t.assignee.name : "Unassigned", progress]
+      .filter(Boolean).map((s) => el("span", { textContent: s }))),
+    t.todos && t.todos.length ? el("ul", {}, ...t.todos.map((td) => {
+      const box = el("input", { type: "checkbox", checked: td.done, disabled: !can.update });
+      box.onchange = () => call("update_todo", { id: td.id, done: box.checked });
+      return el("li", { className: td.done ? "ticked" : "" },
+        el("label", {}, box, el("span", { textContent: td.text }, td.result ? el("small", { textContent: td.result }) : null)));
+    })) : null);
+}
+
+// Tell the host how tall the card is, so it isn't clipped.
+new ResizeObserver(() => send({ method: "ui/notifications/size-changed", params: { width: document.body.scrollWidth, height: document.body.scrollHeight } })).observe(document.body);
+
+request("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "handoff-task-card", version: "1" }, appCapabilities: {} })
+  .then((r) => { theme(r && r.hostContext); send({ method: "ui/notifications/initialized", params: {} }); })
+  .catch(() => {});
+</script>
+</body>
+</html>
