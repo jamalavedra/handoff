@@ -50,8 +50,8 @@ export function useBulkActions() {
       label: (n) => `Completed ${many(n)}`,
       skip: (t) => t.status === "done" || t.status === "cancelled",
       patch: { status: "done" },
-      apply: (t) => api.tool<{ next?: Task }>("close_task", { id: t.id, status: "done", today: isoDate(new Date()) }),
-      undo: (t, r) => undoClose(t.id, r.next),
+      apply: (t) => api.tool<{ event_id: number }>("close_task", { id: t.id, status: "done", today: isoDate(new Date()) }),
+      undo: (_, r) => undoClose(r.event_id),
     }),
     due: (ids: string[], due: string) => bulk(qc, ids, {
       label: (n) => (due ? `Set the due date of ${many(n)}` : `Removed the due date of ${many(n)}`),

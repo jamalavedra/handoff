@@ -79,7 +79,7 @@ export function useShortcuts(onHelp: () => void) {
 }
 
 const groups: { title: string; keys: [string, string][] }[] = [
-  { title: "Anywhere", keys: [["⌘ K  or  /", "Command menu"], ["⌘ J", "Assistant"], ["N", "New task"], ["?", "This list"]] },
+  { title: "Anywhere", keys: [["⌘ K  or  /", "Command menu"], ["⌘ J", "Assistant"], ["N", "New task"], ["⌘ Z  /  ⇧ ⌘ Z", "Undo / redo"], ["?", "This list"]] },
   { title: "Lists", keys: [["J / ↓", "Next task"], ["K / ↑", "Previous task"], ["Enter", "Open task"], ["X", "Complete or reopen"], ["⌘ Click", "Select or unselect"], ["Shift Click", "Select a range"], ["⌘ A", "Select all"], ["Esc", "Clear selection"]] },
   { title: "Go to", keys: [["G T", "My tasks"], ["G N", "Notifications"], ["G P", "Projects"], ["G A", "Agents"], ["G S", "Settings"]] },
   // Browsers keep ⌘W, ⌘T and Ctrl+Tab for their own tabs, so ours sit on ⌥ (Alt elsewhere).

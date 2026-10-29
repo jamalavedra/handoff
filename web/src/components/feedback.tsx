@@ -3,7 +3,9 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { api, type Task } from "../lib";
-import { dueLabel } from "../quickadd";
+import { createHistory } from "../undo";
+import { typing } from "./shortcuts";
+import { dueLabel, isoDate } from "../quickadd";
 import { useInbox } from "../pages/notifications";
 import { chatInView } from "../agent-activity";
 
@@ -32,16 +34,62 @@ export function patchTask(qc: QueryClient, id: string, patch: Partial<Task>) {
   return () => lists.forEach(([key, data]) => qc.setQueryData(key, data));
 }
 
-// undoable shows a toast whose Undo button runs `undo` and refreshes everything.
-export function undoable(qc: QueryClient, message: string, undo: () => Promise<unknown>) {
+type Step = { label: string; undo: () => Promise<unknown>; redo?: () => Promise<unknown> };
+const history = createHistory<Step>(50, (s) => !!s.redo);
+
+// remember puts a change on this tab's ⌘Z history. Without `redo`, ⇧⌘Z can't bring it back.
+export function remember(label: string, undo: () => Promise<unknown>, redo?: () => Promise<unknown>) {
+  const step = { label, undo, redo };
+  history.push(step);
+  return step;
+}
+
+const run = (qc: QueryClient, fn: () => Promise<unknown>, done?: string) =>
+  fn().then(() => { qc.invalidateQueries(); if (done) toast(done); }, (e: unknown) => toast.error(e instanceof Error ? e.message : String(e)));
+
+// undoable shows a toast whose Undo button runs `undo` and refreshes everything; ⌘Z does the same.
+export function undoable(qc: QueryClient, message: string, undo: () => Promise<unknown>, redo?: () => Promise<unknown>) {
+  const step = remember(message, undo, redo);
   toast(message, {
     action: {
       label: "Undo",
       onClick: () => {
-        undo().then(() => qc.invalidateQueries(), (e: unknown) => toast.error(e instanceof Error ? e.message : String(e)));
+        if (history.undo(step)) run(qc, undo);
       },
     },
   });
+}
+
+// saveTask applies an update_task patch, through close_task when it closes the task.
+export async function saveTask(id: string, patch: Record<string, unknown>) {
+  const { status, ...rest } = patch;
+  if (status === "done" || status === "cancelled") {
+    if (Object.keys(rest).length) await api.tool("update_task", { id, ...rest });
+    return api.tool("close_task", { id, status });
+  }
+  return api.tool("update_task", { id, ...patch });
+}
+
+// useUndoKeys wires ⌘Z / ⇧⌘Z (Ctrl elsewhere) to this tab's history. Fields, the rich editor and
+// dialogs keep the keys for themselves.
+export function useUndoKeys() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "z" || !(e.metaKey || e.ctrlKey) || e.altKey || e.defaultPrevented || typing(e.target)) return;
+      if (document.querySelector("[role=dialog], [role=menu]")) return;
+      e.preventDefault();
+      if (!e.shiftKey) {
+        const s = history.undo();
+        return void (s ? run(qc, s.undo, `Undid: ${s.label}`) : toast("Nothing to undo"));
+      }
+      const s = history.redo();
+      if (s?.redo) run(qc, s.redo, `Redid: ${s.label}`);
+      else toast("Nothing to redo");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [qc]);
 }
 
 export const reopen = (id: string) => api.tool("update_task", { id, status: "open" });
@@ -51,9 +99,19 @@ export function completedText(base: string, next?: Task) {
   return next?.due ? `${base} · next ${dueLabel(next.due).text}` : base;
 }
 
-export async function undoClose(id: string, next?: Task) {
-  await reopen(id);
-  if (next) await api.tool("trash_task", { id: next.id });
+// undoClose reverts a close (close_task's event_id): the server reopens the task and trashes the next
+// occurrence if nobody has touched it, and says when it left it.
+export async function undoClose(eventId: number) {
+  const r = await api.tool<{ message?: string }>("revert_change", { event_id: eventId });
+  if (r.message) toast(r.message);
+}
+
+// undoableClose offers Undo for a close; redo closes again, and a later undo reverts that close.
+export function undoableClose(qc: QueryClient, message: string, id: string, status: string, eventId: number) {
+  let ev = eventId;
+  undoable(qc, message, () => undoClose(ev), async () => {
+    ev = (await api.tool<{ event_id: number }>("close_task", { id, status, today: isoDate(new Date()) })).event_id;
+  });
 }
 
 const kindText = { mention: "mentioned you", assigned: "assigned you a task", approval: "needs your approval", agent_done: "finished" } as const;

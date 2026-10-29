@@ -18,10 +18,10 @@ import { useMe } from "../main";
 import { SettingsHeader } from "./settings";
 import { Board, useView } from "./board";
 import { TaskLink } from "../components/tasklink";
-import { completedText, patchTask, reopen, undoable, undoClose, useChangeFlash, useTriageReveal } from "../components/feedback";
+import { completedText, patchTask, reopen, undoableClose, useChangeFlash, useTriageReveal } from "../components/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { progressLabel } from "../todos";
-import { eventDetail, verb } from "../events";
+import { eventDetail, revertable, verb, type Names } from "../events";
 import { NewNote, ProjectNotes, useProjectNotes } from "./notes";
 import { useSelection } from "../hooks/use-selection";
 
@@ -50,8 +50,8 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
     onError: (_e, _v, rollback) => rollback?.(),
     onSuccess: (r, wasClosed) => {
       if (wasClosed) return;
-      const next = (r as { next?: Task }).next;
-      undoable(qc, completedText(`Completed “${t.title}”`, next), () => undoClose(t.id, next));
+      const { next, event_id } = r as { next?: Task; event_id: number };
+      undoableClose(qc, completedText(`Completed “${t.title}”`, next), t.id, "done", event_id);
     },
     onSettled: invalidate,
   });
@@ -320,9 +320,10 @@ export function TrashPage() {
 
 // EventLine is one change in a history. restoreKind names the events whose previous_body it offers to
 // restore (a task's updates, or a note's).
-export function EventLine({ e, showTask = true, showNote = true, restoreKind = "updated", onRestore }: { e: Event; showTask?: boolean; showNote?: boolean; restoreKind?: string; onRestore?: (body: string) => void }) {
+// onRevert offers to undo the change with revert_change; names spells out old assignees and projects.
+export function EventLine({ e, showTask = true, showNote = true, restoreKind = "updated", onRestore, onRevert, names }: { e: Event; showTask?: boolean; showNote?: boolean; restoreKind?: string; onRestore?: (body: string) => void; onRevert?: (e: Event) => void; names?: Names }) {
   const previous = e.kind === restoreKind && typeof e.data.previous_body === "string" ? (e.data.previous_body as string) : undefined;
-  const detail = eventDetail(e);
+  const detail = eventDetail(e, names);
   const note = showNote && typeof e.data.note_id === "string" ? { id: e.data.note_id, title: String(e.data.title ?? "a note") } : undefined;
   return (
     <div className="flex gap-3 py-1.5 text-sm">
@@ -334,6 +335,7 @@ export function EventLine({ e, showTask = true, showNote = true, restoreKind = "
         {detail && <span className="text-muted-foreground"> — {detail}</span>}
         <span className="ml-2 hidden text-xs text-muted-foreground/70 sm:inline">via {e.via}</span>
         {previous && onRestore && <button onClick={() => onRestore(previous)} className="ml-2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">Restore previous version</button>}
+        {onRevert && revertable(e) && <button onClick={() => onRevert(e)} className="ml-2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">Revert</button>}
       </div>
     </div>
   );

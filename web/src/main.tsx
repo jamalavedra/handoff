@@ -24,7 +24,7 @@ import { PageHeader } from "./components/app";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Toaster } from "@/components/ui/sonner";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { useNotificationToasts } from "./components/feedback";
+import { useNotificationToasts, useUndoKeys } from "./components/feedback";
 import { CommandPaletteProvider, useCommandPalette } from "./components/command-palette";
 import { ShortcutsDialog, useShortcuts } from "./components/shortcuts";
 import { AssistantFab, AssistantPanel, AssistantProvider, clearAssistant, useAssistantInset, useFab } from "./components/assistant";
@@ -149,6 +149,7 @@ function Badge({ n }: { n: number }) {
 function Layout({ me }: { me: Me }) {
   useLive(true);
   useNotificationToasts();
+  useUndoKeys();
   const { projects, pending, unread } = useLayoutData();
   const logout = useLogout();
   const [help, setHelp] = useState(false);

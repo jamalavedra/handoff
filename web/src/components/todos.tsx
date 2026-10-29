@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, GripVertical, Plus, X } from "lucide-react";
 import { ago, api, cn, localDrafts, type Task } from "../lib";
 import { moveTodo, oneLine, patchTodo, type Todo } from "../todos";
-import { markLocal } from "./feedback";
+import { markLocal, remember } from "./feedback";
 import { ErrorText } from "./app";
 import { Markdown } from "./markdown";
 import type { Caret } from "./rich-editor";
@@ -113,11 +113,20 @@ export function Todos({ task, todos, disabled }: { task: string; todos: Todo[]; 
     onSettled: () => qc.invalidateQueries(),
   });
   const update = (td: Todo, patch: { done?: boolean; text?: string; position?: number }) =>
-    run.mutate({
-      tool: "update_todo",
-      input: { id: td.id, ...patch },
-      apply: (ts) => (patch.position !== undefined ? moveTodo(ts, td.id, patch.position) : patchTodo(ts, td.id, patch)),
-    });
+    run.mutate(
+      {
+        tool: "update_todo",
+        input: { id: td.id, ...patch },
+        apply: (ts) => (patch.position !== undefined ? moveTodo(ts, td.id, patch.position) : patchTodo(ts, td.id, patch)),
+      },
+      {
+        // ⌘Z puts back the fields this changed.
+        onSuccess: () => {
+          const back = Object.fromEntries(Object.keys(patch).map((k) => [k, td[k as keyof typeof patch]]));
+          remember(`Changed “${td.text}”`, () => api.tool("update_todo", { id: td.id, ...back }), () => api.tool("update_todo", { id: td.id, ...patch }));
+        },
+      },
+    );
   const remove = (td: Todo) => run.mutate({ tool: "remove_todo", input: { id: td.id }, apply: (ts) => ts.filter((x) => x.id !== td.id) });
   const add = () => {
     const text = oneLine(adding);
