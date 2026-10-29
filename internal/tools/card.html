@@ -104,7 +104,7 @@ function el(tag, props, ...kids) {
 function render() {
   const root = document.getElementById("root");
   root.className = tasks.length ? "" : "empty";
-  root.replaceChildren(...(tasks.length ? tasks.map(card) : ["No tasks."]), error ? el("div", { className: "err", textContent: error }) : null);
+  root.replaceChildren(...(tasks.length ? tasks.map(card) : ["No tasks."]), ...(error ? [el("div", { className: "err", textContent: error })] : []));
 }
 
 function card(t) {
@@ -118,8 +118,9 @@ function card(t) {
     el("div", { className: "head" },
       el("h2", { textContent: t.title }),
       t.url ? el("a", { href: t.url, textContent: "Open in Handoff", onclick: (e) => { e.preventDefault(); open(t.url); } }) : null),
-    el("div", { className: "meta" }, status, t.project || null,
-      t.due ? "Due " + t.due : null, t.assignee ? "@" + t.assignee.name : "Unassigned", progress),
+    // Spans, not bare strings: adjacent text nodes merge into one flex item and lose the gap.
+    el("div", { className: "meta" }, status, ...[t.project, t.due && "Due " + t.due, t.assignee ? "@" + t.assignee.name : "Unassigned", progress]
+      .filter(Boolean).map((s) => el("span", { textContent: s }))),
     t.todos && t.todos.length ? el("ul", {}, ...t.todos.map((td) => {
       const box = el("input", { type: "checkbox", checked: td.done, disabled: !can.update });
       box.onchange = () => call("update_todo", { id: td.id, done: box.checked });
