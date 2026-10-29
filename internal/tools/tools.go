@@ -4,6 +4,7 @@ package tools
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -21,6 +22,8 @@ type Tool struct {
 	Agent       bool
 	ReadOnly    bool
 	Destructive bool
+	// UI shows the result as an interactive task card in hosts that support MCP Apps.
+	UI          bool
 	InputSchema *jsonschema.Schema
 	call        func(ctx context.Context, p *core.Principal, raw json.RawMessage) (any, error)
 	add         func(s *mcp.Server, p *core.Principal)
@@ -63,6 +66,9 @@ func def[In, Out any](t Tool, fn func(context.Context, *core.Principal, In) (Out
 		panic(t.Name + ": " + err.Error())
 	}
 	mt.InputSchema = t.InputSchema
+	if t.UI {
+		mt.Meta = mcp.Meta{"ui": map[string]any{"resourceUri": CardURI}}
+	}
 	if mt.OutputSchema, err = jsonschema.For[Out](nil); err != nil {
 		panic(t.Name + ": " + err.Error())
 	}
@@ -73,7 +79,12 @@ func def[In, Out any](t Tool, fn func(context.Context, *core.Principal, In) (Out
 				var zero Out
 				return nil, zero, Public(err)
 			}
-			return nil, out, nil
+			if !t.UI {
+				return nil, out, nil
+			}
+			// The card offers only the edits this caller may make; the SDK still adds the structured and JSON text copies.
+			return &mcp.CallToolResult{Meta: mcp.Meta{"ui": map[string]any{"resourceUri": CardURI},
+				"handoff/can": map[string]bool{"update": p.Can(core.ActUpdate), "close": p.Can(core.ActClose)}}}, out, nil
 		})
 	}
 	return &t
@@ -82,20 +93,20 @@ func def[In, Out any](t Tool, fn func(context.Context, *core.Principal, In) (Out
 func All(s *core.Service) []*Tool {
 	return []*Tool{
 		def(Tool{Name: "get_context", Agent: true, ReadOnly: true, Description: "Call this first. Returns who you are, the workspace, its projects, tasks assigned to you (and to the person you act for), tasks you have claimed, the top ready tasks, and the rules for using Handoff."}, s.GetContext),
-		def(Tool{Name: "list_ready", Agent: true, ReadOnly: true, Description: "Tasks that can be started now: open, not claimed by anyone, and with every blocker finished. Sorted by priority then due date."}, s.ListReady),
-		def(Tool{Name: "search_tasks", Agent: true, ReadOnly: true, Description: "Find tasks by text, project, status, assignee or label. By default excludes done and archived tasks. Set trashed=true to list the trash."}, s.SearchTasks),
-		def(Tool{Name: "get_task", Agent: true, ReadOnly: true, Description: "One task with its text, todos (with their ids and results), dependencies, comments and history of who changed what."}, s.GetTask),
+		def(Tool{Name: "list_ready", Agent: true, UI: true, ReadOnly: true, Description: "Tasks that can be started now: open, not claimed by anyone, and with every blocker finished. Sorted by priority then due date."}, s.ListReady),
+		def(Tool{Name: "search_tasks", Agent: true, UI: true, ReadOnly: true, Description: "Find tasks by text, project, status, assignee or label. By default excludes done and archived tasks. Set trashed=true to list the trash."}, s.SearchTasks),
+		def(Tool{Name: "get_task", Agent: true, UI: true, ReadOnly: true, Description: "One task with its text, todos (with their ids and results), dependencies, comments and history of who changed what."}, s.GetTask),
 		def(Tool{Name: "list_projects", Agent: true, ReadOnly: true, Description: "Projects you can see, with their open task counts."}, s.ListProjects),
 		def(Tool{Name: "list_members", Agent: true, ReadOnly: true, Description: "People and agents in this workspace, for assigning tasks."}, s.ListMembers),
-		def(Tool{Name: "create_tasks", Agent: true, Description: "Create 1-50 tasks in one call, each with a short plain-text body and optional todos (its steps). Give each an external_id so retrying never creates duplicates. blocked_by can reference other tasks in the same call by their external_id. Ask the user before creating more than a few."}, s.CreateTasks),
-		def(Tool{Name: "update_task", Agent: true, Description: "Change a task's title, status (open/in_progress), priority, assignee, due date, labels or project. body (the task's plain text, a line or two) is appended by default; replacing it needs body_mode=replace and confirm=true. Steps go in todos (add_todos)."}, s.UpdateTask),
+		def(Tool{Name: "create_tasks", Agent: true, UI: true, Description: "Create 1-50 tasks in one call, each with a short plain-text body and optional todos (its steps). Give each an external_id so retrying never creates duplicates. blocked_by can reference other tasks in the same call by their external_id. Ask the user before creating more than a few."}, s.CreateTasks),
+		def(Tool{Name: "update_task", Agent: true, UI: true, Description: "Change a task's title, status (open/in_progress), priority, assignee, due date, labels or project. body (the task's plain text, a line or two) is appended by default; replacing it needs body_mode=replace and confirm=true. Steps go in todos (add_todos)."}, s.UpdateTask),
 		def(Tool{Name: "claim_task", Agent: true, Description: "Take a ready task so nobody else works on it, for lease_minutes (default 60). Fails if someone else holds it or a blocker is unfinished. Claim again to extend."}, s.ClaimTask),
 		def(Tool{Name: "release_task", Agent: true, Description: "Give a claimed task back without finishing it, optionally with a note on where you left off."}, s.ReleaseTask),
-		def(Tool{Name: "close_task", Agent: true, Description: "Mark a task done (or archived, when it won't be done) with a short reason. Returns tasks that became ready because of it."}, s.CloseTask),
+		def(Tool{Name: "close_task", Agent: true, UI: true, Description: "Mark a task done (or archived, when it won't be done) with a short reason. Returns tasks that became ready because of it."}, s.CloseTask),
 		def(Tool{Name: "react", Agent: true, Description: "Toggle an emoji reaction on a comment, e.g. ✅ to acknowledge a request or 👀 to show you're looking into it. Comment ids come from get_task."}, s.React),
 		def(Tool{Name: "comment", Agent: true, Description: "Post in a task's chat: a short status, a question, or an answer about the work. Keep what you found concise (a short intro, bullets or a small table, links), and put a step's outcome in its todo's result. To answer one message, pass its id as reply_to, and the part you mean as quote."}, s.Comment),
-		def(Tool{Name: "add_todos", Agent: true, Description: "Add steps to a task's todo list, in order: short actions (at most 8 words), with a deadline after a colon when it matters (\"Order: by Oct 24\")."}, s.AddTodos),
-		def(Tool{Name: "update_todo", Agent: true, Description: "Tick or untick a todo, rename it, move it, or set its result: one line on what you found or decided for that step (\"6 ideas (Dolly, Ghost Face…)\"). Details go in your comment."}, s.UpdateTodo),
+		def(Tool{Name: "add_todos", Agent: true, UI: true, Description: "Add steps to a task's todo list, in order: short actions (at most 8 words), with a deadline after a colon when it matters (\"Order: by Oct 24\")."}, s.AddTodos),
+		def(Tool{Name: "update_todo", Agent: true, UI: true, Description: "Tick or untick a todo, rename it, move it, or set its result: one line on what you found or decided for that step (\"6 ideas (Dolly, Ghost Face…)\"). Details go in your comment."}, s.UpdateTodo),
 		def(Tool{Name: "remove_todo", Agent: true, Description: "Remove a todo from its task."}, s.RemoveTodo),
 		def(Tool{Name: "create_note", Agent: true, Description: "Write a note in a project: a markdown document the team keeps as context for the project. Only when a person asks you to."}, s.CreateNote),
 		def(Tool{Name: "update_note", Agent: true, Description: "Change a note's title or body. The body replaces the whole note by default (send the complete updated document; the previous version stays in its history); mode=append adds to the end. Only when a person asks you to."}, s.UpdateNote),
@@ -149,6 +160,15 @@ func All(s *core.Service) []*Tool {
 	}
 }
 
+// CardURI is the MCP Apps resource that renders task results as cards (Claude, ChatGPT).
+const CardURI = "ui://handoff/task-card.html"
+
+// CardMIME is the MCP Apps HTML profile.
+const CardMIME = "text/html;profile=mcp-app"
+
+//go:embed card.html
+var card string
+
 // Server builds an MCP server for one authenticated caller.
 func Server(all []*Tool, version string, p *core.Principal) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "handoff", Title: "Handoff", Version: version}, &mcp.ServerOptions{
@@ -159,6 +179,12 @@ func Server(all []*Tool, version string, p *core.Principal) *mcp.Server {
 			t.add(s, p)
 		}
 	}
+	// The card talks to Handoff only through the host's tool bridge, so it needs no network access.
+	ui := mcp.Meta{"ui": map[string]any{"prefersBorder": true}}
+	s.AddResource(&mcp.Resource{URI: CardURI, Name: "task-card", Title: "Handoff task card", MIMEType: CardMIME, Meta: ui},
+		func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: CardURI, MIMEType: CardMIME, Text: card, Meta: ui}}}, nil
+		})
 	return s
 }
 
