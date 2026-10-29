@@ -105,6 +105,7 @@ internal/tools     the tool registry shared by MCP and /api/tools
 internal/server    HTTP: routing by host, OAuth, MCP, web API, live updates
 internal/beads     beads JSONL bridge
 web/               React + TanStack Router + Tailwind + shadcn/ui app
+ios/               native iOS app (SwiftUI, signs in with the person session cookie)
 desktop/           Electron desktop app — see desktop/README.md
 deploy/            Caddyfile
 ```
