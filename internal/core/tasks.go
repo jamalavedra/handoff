@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -1111,9 +1112,6 @@ func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
 		}
 		put("project_id", pr.ID)
 		changed["project"] = pr.Name
-		if pr.ID != r.ProjectID {
-			changed["from_project_id"] = r.ProjectID
-		}
 	}
 	if len(set) == 0 {
 		return nil, errf(ErrInvalid, "nothing to update")
@@ -1136,10 +1134,34 @@ func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
 			}
 		}
 	}
+	after, err := c.getTask(r.ID, false, false)
+	if err != nil {
+		return nil, err
+	}
+	// Each field that really changed records its old value as from_<field>, so it can be reverted.
+	was, now := r.revertable(), after.revertable()
+	for k, v := range now {
+		if !reflect.DeepEqual(v, was[k]) {
+			changed[k], changed["from_"+k] = v, was[k]
+		}
+	}
 	if err := c.event(r.ID, "updated", changed); err != nil {
 		return nil, err
 	}
-	return c.getTask(r.ID, false, false)
+	return after, nil
+}
+
+// revertable is a task's fields that revert_change can put back, in the form update_task takes.
+func (r *taskRow) revertable() map[string]any {
+	due := ""
+	if r.Due != nil {
+		due = r.Due.UTC().Format(time.RFC3339)
+		if r.Due.UTC().Truncate(24 * time.Hour).Equal(*r.Due) {
+			due = r.Due.UTC().Format("2006-01-02")
+		}
+	}
+	return map[string]any{"title": r.Title, "status": r.Status, "priority": r.Priority, "assignee_id": r.AssigneeID,
+		"due": due, "labels": cleanLabels(r.Labels), "repeat": r.Repeat, "project_id": r.ProjectID}
 }
 
 type ClaimTaskIn struct {
@@ -1248,69 +1270,72 @@ type CloseTaskOut struct {
 
 func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (CloseTaskOut, error) {
 	out := CloseTaskOut{Unblocked: []TaskOut{}}
-	err := s.run(ctx, p, func(c *call) error {
-		if err := p.require(ActClose); err != nil {
-			return err
-		}
-		st := statusIn(in.Status)
-		if st == "" {
-			st = "done"
-		}
-		if st != "done" && st != "cancelled" {
-			return errf(ErrInvalid, "status must be done or archived")
-		}
-		r, err := c.getTask(in.ID, false, true)
-		if err != nil {
-			return err
-		}
-		if p.Member.IsAgent() && claimActive(r) && r.ClaimedBy != p.Member.ID {
-			return errf(ErrConflict, "task %s is claimed by %s", r.ID, c.ref(r.ClaimedBy).Name)
-		}
-		// Only a real transition to done continues a series, so a retried close can't spawn twice.
-		continues := st == "done" && r.Status != "done" && r.Repeat != ""
-		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET status = $2, close_reason = $3, closed_at = now(),
-			claimed_by = NULL, claim_expires_at = NULL, updated_at = now() WHERE id = $1`, r.ID, st, in.Reason); err != nil {
-			return err
-		}
-		if err := c.event(r.ID, "closed", map[string]any{"status": st, "reason": in.Reason}); err != nil {
-			return err
-		}
-		r, err = c.getTask(r.ID, false, false)
-		if err != nil {
-			return err
-		}
-		out.Task = c.out(r, true)
-		// Done with a repeating task: the next one is due one interval later. Cancelling ends the series.
-		// Reopened and closed again: the next one made the first time still stands.
-		var made bool
-		if continues {
-			// Even a trashed next one counts: it can be restored.
-			if err := c.tx.QueryRow(c.ctx, `SELECT next_id IS NOT NULL FROM tasks WHERE id = $1`, r.ID).Scan(&made); err != nil {
-				return err
-			}
-		}
-		if continues && !made {
-			next, err := c.nextOccurrence(r, closerToday(in.Today, time.Now()))
-			if err != nil {
-				return err
-			}
-			if next != nil {
-				if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET next_id = $2 WHERE id = $1`, r.ID, next.ID); err != nil {
-					return err
-				}
-			}
-			out.Next = next
-		}
-		if len(r.Blocks) > 0 {
-			rs, err := c.queryTasks(readyCond+" AND t.id = ANY($1) AND t.project_id = ANY($2::uuid[])", r.Blocks, c.visible)
-			if err != nil {
-				return err
-			}
-			out.Unblocked = c.outs(rs)
-		}
-		return nil
-	})
+	err := s.run(ctx, p, func(c *call) error { return c.closeTask(in, &out) })
 	return out, err
+}
+
+func (c *call) closeTask(in CloseTaskIn, out *CloseTaskOut) error {
+	p := c.p
+	if err := p.require(ActClose); err != nil {
+		return err
+	}
+	st := statusIn(in.Status)
+	if st == "" {
+		st = "done"
+	}
+	if st != "done" && st != "cancelled" {
+		return errf(ErrInvalid, "status must be done or archived")
+	}
+	r, err := c.getTask(in.ID, false, true)
+	if err != nil {
+		return err
+	}
+	if p.Member.IsAgent() && claimActive(r) && r.ClaimedBy != p.Member.ID {
+		return errf(ErrConflict, "task %s is claimed by %s", r.ID, c.ref(r.ClaimedBy).Name)
+	}
+	// Only a real transition to done continues a series, so a retried close can't spawn twice.
+	continues := st == "done" && r.Status != "done" && r.Repeat != ""
+	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET status = $2, close_reason = $3, closed_at = now(),
+		claimed_by = NULL, claim_expires_at = NULL, updated_at = now() WHERE id = $1`, r.ID, st, in.Reason); err != nil {
+		return err
+	}
+	if err := c.event(r.ID, "closed", map[string]any{"status": st, "reason": in.Reason, "from_status": r.Status}); err != nil {
+		return err
+	}
+	r, err = c.getTask(r.ID, false, false)
+	if err != nil {
+		return err
+	}
+	out.Task = c.out(r, true)
+	// Done with a repeating task: the next one is due one interval later. Cancelling ends the series.
+	// Reopened and closed again: the next one made the first time still stands.
+	var made bool
+	if continues {
+		// Even a trashed next one counts: it can be restored.
+		if err := c.tx.QueryRow(c.ctx, `SELECT next_id IS NOT NULL FROM tasks WHERE id = $1`, r.ID).Scan(&made); err != nil {
+			return err
+		}
+	}
+	if continues && !made {
+		next, err := c.nextOccurrence(r, closerToday(in.Today, time.Now()))
+		if err != nil {
+			return err
+		}
+		if next != nil {
+			if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET next_id = $2 WHERE id = $1`, r.ID, next.ID); err != nil {
+				return err
+			}
+		}
+		out.Next = next
+	}
+	if len(r.Blocks) > 0 {
+		rs, err := c.queryTasks(readyCond+" AND t.id = ANY($1) AND t.project_id = ANY($2::uuid[])", r.Blocks, c.visible)
+		if err != nil {
+			return err
+		}
+		out.Unblocked = c.outs(rs)
+	}
+	return nil
 }
 
 type CommentIn struct {
@@ -1638,13 +1663,7 @@ func (s *Service) Restore(ctx context.Context, p *Principal, in TaskIDIn) (TaskR
 		if err != nil {
 			return err
 		}
-		if r.DeletedAt == nil {
-			return errf(ErrInvalid, "task %s is not in the trash", r.ID)
-		}
-		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET deleted_at = NULL, deleted_by = NULL, updated_at = now() WHERE id = $1`, r.ID); err != nil {
-			return err
-		}
-		if err := c.event(r.ID, "restored", nil); err != nil {
+		if err := c.restore(r); err != nil {
 			return err
 		}
 		r, err = c.getTask(r.ID, false, false)
@@ -1652,6 +1671,16 @@ func (s *Service) Restore(ctx context.Context, p *Principal, in TaskIDIn) (TaskR
 		return err
 	})
 	return out, err
+}
+
+func (c *call) restore(r *taskRow) error {
+	if r.DeletedAt == nil {
+		return errf(ErrInvalid, "task %s is not in the trash", r.ID)
+	}
+	if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET deleted_at = NULL, deleted_by = NULL, updated_at = now() WHERE id = $1`, r.ID); err != nil {
+		return err
+	}
+	return c.event(r.ID, "restored", nil)
 }
 
 // loadReactions fills in each comment's reactions, grouped by emoji in the order first used.
