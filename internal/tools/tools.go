@@ -93,8 +93,8 @@ func def[In, Out any](t Tool, fn func(context.Context, *core.Principal, In) (Out
 func All(s *core.Service) []*Tool {
 	return []*Tool{
 		def(Tool{Name: "get_context", Agent: true, ReadOnly: true, Description: "Call this first. Returns who you are, the workspace, its projects, tasks assigned to you (and to the person you act for), tasks you have claimed, the top ready tasks, and the rules for using Handoff."}, s.GetContext),
-		def(Tool{Name: "list_ready", Agent: true, UI: true, ReadOnly: true, Description: "Tasks that can be started now: open, not claimed by anyone, and with every blocker finished. Sorted by priority then due date."}, s.ListReady),
-		def(Tool{Name: "search_tasks", Agent: true, UI: true, ReadOnly: true, Description: "Find tasks by text, project, status, assignee or label. By default excludes done and archived tasks. Set trashed=true to list the trash."}, s.SearchTasks),
+		def(Tool{Name: "list_ready", Agent: true, ReadOnly: true, Description: "Tasks that can be started now: open, not claimed by anyone, and with every blocker finished. Sorted by priority then due date."}, s.ListReady),
+		def(Tool{Name: "search_tasks", Agent: true, ReadOnly: true, Description: "Find tasks by text, project, status, assignee or label. By default excludes done and archived tasks. Set trashed=true to list the trash."}, s.SearchTasks),
 		def(Tool{Name: "get_task", Agent: true, UI: true, ReadOnly: true, Description: "One task with its text, todos (with their ids and results), dependencies, comments and history of who changed what."}, s.GetTask),
 		def(Tool{Name: "list_projects", Agent: true, ReadOnly: true, Description: "Projects you can see, with their open task counts."}, s.ListProjects),
 		def(Tool{Name: "list_members", Agent: true, ReadOnly: true, Description: "People and agents in this workspace, for assigning tasks."}, s.ListMembers),

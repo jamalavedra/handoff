@@ -193,7 +193,7 @@ func TestOAuthAndMCP(t *testing.T) {
 	}
 	uriOf := func(m mcp.Meta) any { ui, _ := m["ui"].(map[string]any); return ui["resourceUri"] }
 	for _, tool := range tl.Tools {
-		if want := tool.Name == "get_task" || tool.Name == "update_todo"; (want || tool.Name == "get_context") && want != (uriOf(tool.Meta) == card) {
+		if want := tool.Name == "get_task" || tool.Name == "update_todo"; (want || tool.Name == "get_context" || tool.Name == "list_ready") && want != (uriOf(tool.Meta) == card) {
 			t.Fatalf("%s meta: %v", tool.Name, tool.Meta)
 		}
 	}
@@ -289,7 +289,7 @@ func TestAPIKeyAndBeads(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cs.Close()
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "list_ready", Arguments: map[string]any{}})
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_task", Arguments: map[string]any{"id": ready["tasks"].([]any)[0].(map[string]any)["id"]}})
 	if err != nil || res.IsError || fmt.Sprint(res.Meta["handoff/can"]) != "map[close:false update:false]" {
 		t.Fatalf("read-only card: %v %+v", err, res)
 	}
