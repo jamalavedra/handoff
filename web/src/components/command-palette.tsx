@@ -1,8 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bell, Bot, CheckSquare, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sparkles, Sun, Trash2, Users, Zap } from "lucide-react";
-import { api, projectName, type Project, type Task } from "../lib";
+import { Activity, Bell, Bot, Calendar, CalendarX, CheckSquare, CircleCheck, Flag, FolderKanban, Keyboard, Monitor, Moon, Plus, Settings, Sparkles, Sun, Trash2, UserRound, Users, Zap } from "lucide-react";
+import { api, projectName, type Member, type Project, type Task } from "../lib";
+import { addDays, isoDate } from "../quickadd";
+import { useMe } from "../main";
+import { useSelection } from "../hooks/use-selection";
+import { useBulkActions } from "../hooks/use-bulk";
 import { setTheme } from "../theme";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
 import { useQuickAdd } from "./quickadd";
@@ -16,6 +20,8 @@ const PaletteContext = createContext<Ctx>({ open: () => {} });
 export const useCommandPalette = () => useContext(PaletteContext);
 
 type Item = { id: string; label: string; icon: typeof Plus; keys?: string; run: () => void };
+type Step = "due" | "assign" | "project" | "priority";
+const priorityText = ["Urgent", "High", "Normal", "Low", "Someday"];
 
 const isMod = (e: React.KeyboardEvent | React.PointerEvent) => e.metaKey || e.ctrlKey;
 
@@ -93,7 +99,60 @@ function Palette({ query, setQuery, close, onShortcuts }: { query: string; setQu
     { id: "/trash", label: "Trash", icon: Trash2, run: to("/trash") },
     { id: "/settings", label: "Settings", icon: Settings, keys: "G S", run: to("/settings") },
   ];
+  // With tasks selected, their actions come first; the ones ending in … open a second step.
+  const select = useSelection();
+  const bulk = useBulkActions();
+  const [step, setStep] = useState<Step>();
+  const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members"), enabled: step === "assign" });
+  const me = useMe().data?.member;
+  const n = select.ids.length;
+  const them = n === 1 ? "task" : `${n} tasks`;
+  const act = (fn: (ids: string[]) => unknown) => go(() => void fn(select.ids));
+  const next = (s: Step) => () => { setStep(s); setQuery(""); };
+  const today = new Date();
+  const steps: Record<Step, { heading: string; items: Item[] }> = {
+    due: { heading: "Set due date", items: [
+      { id: "today", label: "Today", icon: Calendar, run: act((ids) => bulk.due(ids, isoDate(today))) },
+      { id: "tomorrow", label: "Tomorrow", icon: Calendar, run: act((ids) => bulk.due(ids, isoDate(addDays(today, 1)))) },
+      { id: "next-week", label: "Next week", icon: Calendar, run: act((ids) => bulk.due(ids, isoDate(addDays(today, ((8 - today.getDay()) % 7) || 7)))) },
+      { id: "none", label: "Remove due date", icon: CalendarX, run: act((ids) => bulk.due(ids, "")) },
+    ] },
+    assign: { heading: "Assign to", items: [
+      ...(me ? [{ id: "me", label: `Me (${me.name})`, icon: UserRound, run: act((ids) => bulk.assign(ids, me.id, me.name)) }] : []),
+      ...(members.data?.members ?? []).filter((m) => m.id !== me?.id && m.status !== "removed" && m.status !== "revoked")
+        .map((m) => ({ id: m.id, label: m.name, icon: m.kind === "agent" ? Bot : UserRound, run: act((ids) => bulk.assign(ids, m.id, m.name)) })),
+      { id: "nobody", label: "Unassigned", icon: UserRound, run: act((ids) => bulk.assign(ids, "", "")) },
+    ] },
+    project: { heading: "Move to project", items: (projects.data?.projects ?? []).map((p) => ({ id: p.id, label: projectName(p), icon: FolderKanban, run: act((ids) => bulk.move(ids, p.id, projectName(p))) })) },
+    priority: { heading: "Set priority", items: priorityText.map((label, i) => ({ id: String(i), label, icon: Flag, run: act((ids) => bulk.priority(ids, i)) })) },
+  };
+  const selection: Item[] = n ? [
+    { id: "complete", label: `Complete ${them}`, icon: CircleCheck, run: act(bulk.complete) },
+    { id: "due", label: "Set due date…", icon: Calendar, run: next("due") },
+    { id: "assign", label: "Assign to…", icon: UserRound, run: next("assign") },
+    { id: "project", label: "Move to project…", icon: FolderKanban, run: next("project") },
+    { id: "priority", label: "Set priority…", icon: Flag, run: next("priority") },
+    { id: "trash", label: `Move ${them} to trash`, icon: Trash2, run: act((ids) => { select.clear(); return bulk.trash(ids); }) },
+  ] : [];
   const match = (s: string) => !q || s.toLowerCase().includes(q);
+  if (step) {
+    const shown = steps[step].items.filter((i) => match(i.label));
+    return (
+      <>
+        <CommandInput
+          placeholder={`${steps[step].heading} for ${them}…`}
+          value={query}
+          onValueChange={setQuery}
+          onKeyDown={(e) => { if (e.key === "Backspace" && !query) setStep(undefined); }}
+        />
+        <CommandList className="max-h-[min(60dvh,26rem)]">
+          <CommandEmpty>{step === "assign" && members.isLoading ? "Loading…" : "No matches."}</CommandEmpty>
+          {shown.length > 0 && <Group heading={steps[step].heading} items={shown} />}
+        </CommandList>
+      </>
+    );
+  }
+  const shownSelection = selection.filter((a) => match(a.label));
   const shownActions = actions.filter((a) => match(a.label));
   const shownPages = pages.filter((p) => match(p.label));
   const shownProjects = (projects.data?.projects ?? []).filter((p) => match(p.name)).slice(0, q ? 6 : 4);
@@ -108,6 +167,7 @@ function Palette({ query, setQuery, close, onShortcuts }: { query: string; setQu
       <CommandInput placeholder="Search tasks, pages and actions…" value={query} onValueChange={setQuery} />
       <CommandList className="max-h-[min(60dvh,26rem)]">
         <CommandEmpty>{tasks.isFetching ? "Searching…" : "No matches."}</CommandEmpty>
+        {shownSelection.length > 0 && <Group heading={`Selected (${n})`} items={shownSelection} />}
         {found.length > 0 && (
           <CommandGroup heading="Tasks">
             {found.map((t) => (

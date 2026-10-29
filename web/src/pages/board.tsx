@@ -4,6 +4,7 @@ import { api, cn, type Task } from "../lib";
 import { Card, Empty, ErrorText } from "../components/app";
 import { boardColumn, isoDate, type BoardColumn } from "../quickadd";
 import { TaskRow, useInvalidate } from "./tasks";
+import { useTaskDrop } from "../hooks/use-selection";
 
 export type View = "list" | "board";
 const key = "handoff-view";
@@ -44,40 +45,33 @@ async function moveTask(t: Task, to: BoardColumn) {
   if (status !== "open") await api.tool("update_task", { id: t.id, status: "open" });
 }
 
-const taskMime = "application/x-handoff-task";
-
 // DropColumn is a board column that takes dragged task cards (Board and Team).
-export function DropColumn({ label, onDrop, children }: { label: string; onDrop: (id: string) => void; children: ReactNode }) {
-  const [over, setOver] = useState(false);
+export function DropColumn({ label, onDrop, children }: { label: string; onDrop: (ids: string[]) => void; children: ReactNode }) {
+  const drop = useTaskDrop(onDrop);
   return (
     <section
       aria-label={label}
-      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setOver(true); }}
-      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false); }}
-      onDrop={(e) => { e.preventDefault(); setOver(false); onDrop(e.dataTransfer.getData(taskMime)); }}
-      className={cn("flex w-[82vw] max-w-xs shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-accent p-2 transition-colors md:w-72", over && "bg-accent ring-2 ring-ring")}
+      {...drop.props}
+      className={cn("flex w-[82vw] max-w-xs shrink-0 snap-start flex-col gap-2 self-start rounded-2xl bg-accent p-2 transition-colors md:w-72", drop.over && "bg-accent ring-2 ring-ring")}
     >
       {children}
     </section>
   );
 }
 
+// DragCard is a row on a board. The row itself drags, carrying the selection when it is in one.
 export function DragCard({ t, moving }: { t: Task; moving: boolean }) {
   return (
-    <div
-      draggable
-      onDragStart={(e) => { e.dataTransfer.setData(taskMime, t.id); e.dataTransfer.effectAllowed = "move"; }}
-      className={cn("cursor-grab active:cursor-grabbing", moving && "opacity-50")}
-    >
+    <div className={cn("cursor-grab active:cursor-grabbing", moving && "opacity-50")}>
       <TaskRow t={t} />
     </div>
   );
 }
 
-// Board shows open tasks plus recently done ones in To do / Working / Done; drag a card to move it.
+// Board shows open tasks plus recently done ones in To do / Working / Done; drag a card (or a selection) to move it.
 export function Board({ tasks, done }: { tasks?: Task[]; done?: Task[] }) {
   const invalidate = useInvalidate();
-  const move = useMutation({ mutationFn: (v: { t: Task; to: BoardColumn }) => moveTask(v.t, v.to), onSettled: invalidate });
+  const move = useMutation({ mutationFn: (v: { ts: Task[]; to: BoardColumn }) => Promise.all(v.ts.map((t) => moveTask(t, v.to))), onSettled: invalidate });
   if (!tasks) return <Card><Empty>Loading…</Empty></Card>;
   const all = [...tasks, ...(done ?? []).filter((d) => !tasks.some((t) => t.id === d.id))];
   const byId = new Map(all.map((t) => [t.id, t]));
@@ -88,11 +82,11 @@ export function Board({ tasks, done }: { tasks?: Task[]; done?: Task[] }) {
         {columns.map((c) => {
           const items = all.filter((t) => boardColumn(t) === c.key);
           return (
-            <DropColumn key={c.key} label={c.title} onDrop={(id) => { const t = byId.get(id); if (t && boardColumn(t) !== c.key) move.mutate({ t, to: c.key }); }}>
+            <DropColumn key={c.key} label={c.title} onDrop={(ids) => { const ts = ids.flatMap((id) => byId.get(id) ?? []).filter((t) => boardColumn(t) !== c.key); if (ts.length) move.mutate({ ts, to: c.key }); }}>
               <h2 className="flex items-baseline gap-2 px-2 pt-1 text-[13px] font-medium text-muted-foreground">
                 {c.title}<span className="font-normal text-muted-foreground/70">{items.length}</span>
               </h2>
-              {items.map((t) => <DragCard key={t.id} t={t} moving={move.isPending && move.variables?.t.id === t.id} />)}
+              {items.map((t) => <DragCard key={t.id} t={t} moving={move.isPending && !!move.variables?.ts.includes(t)} />)}
               {items.length === 0 && <div className="px-2 py-6 text-center text-sm text-muted-foreground/70">{c.empty}</div>}
             </DropColumn>
           );

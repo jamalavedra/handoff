@@ -29,6 +29,8 @@ import { CommandPaletteProvider, useCommandPalette } from "./components/command-
 import { ShortcutsDialog, useShortcuts } from "./components/shortcuts";
 import { AssistantFab, AssistantPanel, AssistantProvider, clearAssistant, useAssistantInset, useFab } from "./components/assistant";
 import { TabsProvider, TabStrip, useOpenInTab } from "./components/tabs";
+import { SelectionProvider, useTaskDrop } from "./hooks/use-selection";
+import { useBulkActions } from "./hooks/use-bulk";
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 30000, retry: false, staleTime: 2000 } } });
 
@@ -110,10 +112,13 @@ function ProjectsNav({ projects }: { projects: Project[] }) {
   );
 }
 
+// ProjectNavLink opens a project; dropping tasks on it moves them there.
 function ProjectNavLink({ p }: { p: Project }) {
   const tab = useOpenInTab(`/projects/${p.id}`);
+  const bulk = useBulkActions();
+  const drop = useTaskDrop((ids) => bulk.move(ids, p.id, projectName(p)));
   return (
-    <Link to="/projects/$id" params={{ id: p.id }} {...tab} className="flex min-h-7 items-center justify-between gap-2 rounded-[10px] px-2 py-1 text-[13px] text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
+    <Link to="/projects/$id" params={{ id: p.id }} {...tab} {...drop.props} className={cn("flex min-h-7 items-center justify-between gap-2 rounded-[10px] px-2 py-1 text-[13px] text-foreground/70 transition-colors hover:bg-sidebar-accent/60 data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground data-[status=active]:shadow-[0_1px_2px_rgba(0,0,0,0.06)]", drop.over && "ring-2 ring-ring")}>
       <span className="truncate">{projectName(p)}</span>
       <span className="text-xs text-foreground/40 tabular-nums">{p.open_tasks}</span>
     </Link>
@@ -155,6 +160,7 @@ function Layout({ me }: { me: Me }) {
     <TabsProvider>
     <QuickAddProvider>
       <AssistantProvider>
+      <SelectionProvider>
       <CommandPaletteProvider onShortcuts={showHelp}>
       <ShortcutsDialog open={help} onOpenChange={setHelp} />
       <div className="min-h-dvh md:flex">
@@ -208,6 +214,7 @@ function Layout({ me }: { me: Me }) {
         <AppToaster />
       </div>
       </CommandPaletteProvider>
+      </SelectionProvider>
       </AssistantProvider>
     </QuickAddProvider>
     </TabsProvider>
