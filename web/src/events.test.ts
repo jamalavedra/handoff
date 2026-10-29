@@ -1,12 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { eventDetail, verb } from "./events.ts";
+import { eventDetail, revertable, verb } from "./events.ts";
 import type { Event } from "./lib.ts";
 
 const ev = (kind: string, data: Record<string, unknown>): Event => ({ id: 1, kind, data, actor: { id: "a", name: "A", kind: "agent" }, via: "mcp", at: "" });
 
 test("task updates name what changed, not how", () => {
   assert.equal(eventDetail(ev("updated", { title: "New", body: "replaced", previous_body: "old", from_project_id: "p" })), "title, text");
+});
+
+test("task updates show before and after", () => {
+  const e = ev("updated", { title: "New", from_title: "Old", status: "in_progress", from_status: "open", assignee: "Bob", assignee_id: "b", from_assignee_id: "a", body: "appended" });
+  assert.equal(eventDetail(e, { a: "Ann" }), "title Old → New, status open → in progress, assignee Ann → Bob, text");
+  assert.equal(eventDetail(ev("updated", { due: "", from_due: "2026-11-02" })), "due 2026-11-02 → none");
+  assert.ok(revertable(e));
+  assert.ok(!revertable(ev("updated", { title: "New" })));
+  assert.ok(revertable(ev("todo_updated", { text: "x", done: true, from_done: false })));
+  assert.ok(!revertable(ev("todo_updated", { text: "x", moved: true })));
 });
 
 test("todos read as steps", () => {

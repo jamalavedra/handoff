@@ -5,12 +5,13 @@ import { Archive, ArchiveRestore, Bot, Check, MessageCircleQuestion, History, Li
 import { TaskLink } from "../components/tasklink";
 import { TaskText, Todos } from "../components/todos";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { ago, api, cn, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
+import { ago, api, cn, type Event, type Member, type MemberRef, type Project, type Task, statusLabel } from "../lib";
 import { agentOnIt, dueLabel, isoDate, repeatLabel } from "../quickadd";
 import { Avatar, ErrorText, TaskCheck } from "../components/app";
 import { Button } from "@/components/ui/button";
 import { EventLine, useInvalidate } from "./tasks";
-import { completedText, markLocal, undoable, undoClose } from "../components/feedback";
+import { completedText, markLocal, remember, saveTask, undoable, undoClose } from "../components/feedback";
+import { inversePatch } from "../undo";
 import { toast } from "sonner";
 import { ChatPreview, names, taskQuery } from "../components/task-chat";
 import { useMe } from "../main";
@@ -167,16 +168,29 @@ function TaskView({ id }: { id: string }) {
   const [activityOpen, setActivityOpen] = useState(false);
   // markLocal: our own edits shouldn't flash the row as "changed elsewhere".
   // A patch can name its task: a body draft saved as the view switches tasks still belongs to the old one.
-  const update = useMutation({ mutationFn: ({ id: on = id, ...patch }: { id?: string } & Record<string, unknown>) => { markLocal(on); return api.tool("update_task", { id: on, ...patch }); }, onSuccess: invalidate });
+  // Field edits go on the ⌘Z history with their old values; the text keeps its editor's own undo.
+  const update = useMutation({
+    mutationFn: ({ id: on = id, ...patch }: { id?: string } & Record<string, unknown>) => { markLocal(on); return api.tool("update_task", { id: on, ...patch }); },
+    onMutate: ({ id: on = id, ...patch }) => (q.data && on === id ? inversePatch(q.data.task, patch) : {}),
+    onSuccess: (_r, { id: on = id, ...patch }, back) => {
+      invalidate();
+      if (back && Object.keys(back).length) remember(`Changed ${Object.keys(back).join(", ")}`, () => saveTask(on, back), () => saveTask(on, patch));
+    },
+  });
   const close = useMutation({
     mutationFn: (status: string) => { markLocal(id); return api.tool<{ next?: Task }>("close_task", { id, status, today: isoDate(new Date()) }); },
-    onSuccess: (r, status) => { invalidate(); undoable(qc, completedText(status === "done" ? "Task completed" : "Task archived", r.next), () => undoClose(id, r.next)); },
+    onSuccess: (r, status) => { invalidate(); undoable(qc, completedText(status === "done" ? "Task completed" : "Task archived", r.next), () => undoClose(id, r.next), () => api.tool("close_task", { id, status })); },
   });
   const trash = useMutation({
     mutationFn: () => { markLocal(id); return api.tool("trash_task", { id }); },
-    onSuccess: () => { invalidate(); undoable(qc, "Moved to trash", () => api.tool("restore_task", { id })); },
+    onSuccess: () => { invalidate(); undoable(qc, "Moved to trash", () => api.tool("restore_task", { id }), () => api.tool("trash_task", { id })); },
   });
   const restore = useMutation({ mutationFn: () => { markLocal(id); return api.tool("restore_task", { id }); }, onSuccess: invalidate });
+  const revert = useMutation({
+    mutationFn: (e: Event) => { markLocal(id); return api.tool("revert_change", { event_id: e.id }); },
+    onSuccess: () => { invalidate(); toast("Change reverted"); },
+    onError: (e) => toast.error(e.message),
+  });
   const watch = (extra?: { leave?: boolean }) => api.tool("watch_task", { id, ...extra }).catch(() => {});
   useEffect(() => {
     watch();
@@ -208,6 +222,7 @@ function TaskView({ id }: { id: string }) {
   const people = members.data?.members.filter((m) => m.status !== "removed") ?? [];
   const due = t.due ? dueLabel(t.due) : undefined;
   const activity = events.filter((e) => e.kind !== "commented");
+  const idNames = Object.fromEntries([...(members.data?.members ?? []), ...(projects.data?.projects ?? [])].map((x) => [x.id, x.name]));
   const here = q.data.here ?? [];
   const typers = here.filter((h) => h.typing);
   const configured: Record<Extra, boolean> = {
@@ -375,7 +390,7 @@ function TaskView({ id }: { id: string }) {
         <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-2xl sm:max-w-lg">
           <DialogTitle>Activity</DialogTitle>
           <DialogDescription>Created by {t.created_by?.name ?? "someone"}{t.on_behalf_of ? ` for ${t.on_behalf_of.name}` : ""} · {ago(t.created_at)}</DialogDescription>
-          <div>{activity.map((e) => <EventLine key={e.id} e={e} showTask={false} restoreKind="updated" onRestore={locked ? undefined : (body) => update.mutate({ body, body_mode: "replace", confirm: true }, { onSuccess: () => { toast("Previous version restored"); setActivityOpen(false); } })} />)}</div>
+          <div>{activity.map((e) => <EventLine key={e.id} e={e} showTask={false} names={idNames} onRevert={revert.isPending ? undefined : revert.mutate} restoreKind="updated" onRestore={locked ? undefined : (body) => update.mutate({ body, body_mode: "replace", confirm: true }, { onSuccess: () => { toast("Previous version restored"); setActivityOpen(false); } })} />)}</div>
         </DialogContent>
       </Dialog>
 
