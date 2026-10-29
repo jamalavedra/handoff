@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A hand-off arrow into a circle: tasks passed between people and agents. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,34m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,50 L64,50 L64,58 L48,58 L48,72 L76,72 L70,66 L76,60 L90,74 L76,88 L70,82 L76,76 L44,76 L44,62 L36,62 Z" />
+</vector>
