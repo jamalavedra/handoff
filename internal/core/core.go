@@ -128,8 +128,8 @@ func (p *Principal) onBehalfOf() *string {
 	return nil
 }
 
-// can reports whether the principal may perform action at all (project scope is separate).
-func (p *Principal) can(action string) bool {
+// Can reports whether the principal may perform action at all (project scope is separate).
+func (p *Principal) Can(action string) bool {
 	if !p.Member.IsAgent() {
 		return true
 	}
@@ -137,7 +137,7 @@ func (p *Principal) can(action string) bool {
 }
 
 func (p *Principal) require(action string) error {
-	if !p.can(action) {
+	if !p.Can(action) {
 		return errf(ErrForbidden, "this agent is not allowed to %s tasks; ask %s to grant the %q permission", action, p.ownerName(), action)
 	}
 	return nil
@@ -208,7 +208,7 @@ func (s *Service) run(ctx context.Context, p *Principal, fn func(c *call) error)
 		if err := c.load(); err != nil {
 			return err
 		}
-		if p.Member.IsAgent() && !p.can(ActRead) {
+		if p.Member.IsAgent() && !p.Can(ActRead) {
 			return errf(ErrForbidden, "this agent has no read access")
 		}
 		return fn(c)

@@ -289,7 +289,29 @@ func (s *Service) DeliverWebhooks(ctx context.Context) {
 // webhookTick does one round for a workspace: note tasks that came due for agents, queue new
 // notifications for agents with a webhook, then send what's due one delivery at a time.
 func (s *Service) webhookTick(ctx context.Context, org, slug string) {
+	var takeOns []replyJob
 	err := s.DB.InOrg(ctx, org, func(tx pgx.Tx) error {
+		// An automation assigned to the workspace's agent that came due (UTC) is handed to it once, as Run now
+		// does; an occurrence that already had a take-on (run now, or handed over) isn't run again.
+		// shortcut: UTC dates, no workspace timezone or time of day yet (#89).
+		rows, err := tx.Query(ctx, `INSERT INTO chat_replies (org_id, task_id, author_id, kind)
+			SELECT t.org_id, t.id, t.created_by, 'take_on'
+			FROM tasks t JOIN triage_settings ts ON ts.org_id = t.org_id AND ts.agent_id = t.assignee_id
+			JOIN members m ON m.org_id = t.org_id AND m.id = t.assignee_id AND m.status = 'active'
+			WHERE t.deleted_at IS NULL AND t.repeat <> '' AND t.status NOT IN ('done', 'cancelled') AND t.due_at IS NOT NULL
+				AND t.due_at < (now() AT TIME ZONE 'UTC')::date + 1
+				AND NOT EXISTS (SELECT 1 FROM chat_replies r WHERE r.org_id = t.org_id AND r.task_id = t.id AND r.kind = 'take_on')
+			ON CONFLICT DO NOTHING RETURNING id::text`)
+		if err != nil {
+			return err
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			takeOns = append(takeOns, replyJob{org: org, id: id})
+		}
 		// Due today (UTC) and assigned to an agent with a webhook: one "due" notification per agent and due date.
 		if _, err := tx.Exec(ctx, `INSERT INTO notifications (org_id, member_id, kind, task_id, actor_id, excerpt)
 			SELECT t.org_id, t.assignee_id, 'due', t.id, t.created_by, to_char(t.due_at, 'YYYY-MM-DD')
@@ -302,7 +324,7 @@ func (s *Service) webhookTick(ctx context.Context, org, slug string) {
 			return err
 		}
 		// agent_done is for people only and has no webhook type; it's never sent.
-		_, err := tx.Exec(ctx, `INSERT INTO webhook_deliveries (org_id, notification_id, agent_id)
+		_, err = tx.Exec(ctx, `INSERT INTO webhook_deliveries (org_id, notification_id, agent_id)
 			SELECT n.org_id, n.id, n.member_id FROM notifications n
 			JOIN agent_webhooks w ON w.org_id = n.org_id AND w.agent_id = n.member_id
 			-- shortcut: rescans 5 minutes back, so a notification committed later than that after it was stamped is missed; queue on write if transactions ever run that long.
@@ -318,6 +340,9 @@ func (s *Service) webhookTick(ctx context.Context, org, slug string) {
 	if err != nil {
 		slog.Error("webhooks", "org", slug, "err", err)
 		return
+	}
+	for _, j := range takeOns {
+		s.enqueueReply(j)
 	}
 	for range 20 {
 		d, ok := s.claimDelivery(ctx, org, slug)

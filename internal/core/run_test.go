@@ -165,3 +165,67 @@ func TestRunAutomationAgentDoesIt(t *testing.T) {
 		t.Fatalf("still claimed: %+v", d.Task.ClaimedBy)
 	}
 }
+
+func TestScheduledAutomation(t *testing.T) {
+	base, _ := url.Parse("http://handoff.test")
+	d := testutil.DB(t)
+	// No workers: take-ons stay queued, so the test can count them.
+	s := core.New(d, &config.Config{BaseURL: base, Secret: []byte("s")})
+	e := &env{s: s, ctx: context.Background()}
+	admin := e.org(t, "scheduled")
+	e.agent(t, admin, "Acme Bot", nil)
+	if _, err := s.SetTriage(e.ctx, admin, core.SetTriageIn{Agent: "Acme Bot", BaseURL: "http://127.0.0.1:1/v1", Model: "m", Credential: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	mk := func(title, assignee, repeat, due string) string {
+		return e.create(t, admin, core.NewTask{Title: title, Assignee: assignee, Repeat: repeat, Due: due})[0].ID
+	}
+	due := mk("Daily digest", "Acme Bot", "daily", today)
+	later := mk("Weekly report", "Acme Bot", "weekly", tomorrow)
+	once := mk("One-off", "Acme Bot", "", today)
+	mine := mk("Water the plants", "me", "daily", today)
+	trashed := mk("Old digest", "Acme Bot", "daily", today)
+	if _, err := s.Trash(e.ctx, admin, core.TrashIn{ID: trashed}); err != nil {
+		t.Fatal(err)
+	}
+	ran := mk("Already run", "Acme Bot", "daily", today)
+	if _, err := s.RunAutomation(e.ctx, admin, core.TaskIDIn{ID: ran}); err != nil {
+		t.Fatal(err)
+	}
+	takeOns := func() map[string]int {
+		got := map[string]int{}
+		if err := d.InOrg(e.ctx, admin.Org.ID, func(tx pgx.Tx) error {
+			rows, err := tx.Query(e.ctx, `SELECT task_id FROM chat_replies WHERE kind = 'take_on'`)
+			if err != nil {
+				return err
+			}
+			ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+			for _, id := range ids {
+				got[id]++
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	s.DeliverWebhooks(e.ctx)
+	got := takeOns()
+	if got[due] != 1 || got[ran] != 1 || got[later] != 0 || got[once] != 0 || got[mine] != 0 || got[trashed] != 0 {
+		t.Fatalf("after one sweep: %v", got)
+	}
+	// Finished runs aren't started again by later sweeps.
+	if err := d.InOrg(e.ctx, admin.Org.ID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(e.ctx, `UPDATE chat_replies SET state = 'done'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.DeliverWebhooks(e.ctx)
+	if got := takeOns(); got[due] != 1 || got[ran] != 1 || len(got) != 2 {
+		t.Fatalf("after a second sweep: %v", got)
+	}
+}

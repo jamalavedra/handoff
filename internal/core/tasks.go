@@ -766,11 +766,11 @@ func (c *call) nextOccurrence(r *taskRow, today time.Time) (*TaskOut, error) {
 		if m.IsAgent() {
 			mp.Owner = c.members[m.OwnerID]
 		}
-		if !m.IsAgent() || (mp.Owner != nil && mp.Owner.Status == "active" && mp.can(ActCreate)) {
+		if !m.IsAgent() || (mp.Owner != nil && mp.Owner.Status == "active" && mp.Can(ActCreate)) {
 			maker = mp
 		}
 	}
-	if maker == c.p && c.p.Member.IsAgent() && !c.p.can(ActCreate) {
+	if maker == c.p && c.p.Member.IsAgent() && !c.p.Can(ActCreate) {
 		return nil, c.event(r.ID, "repeat_ended", map[string]any{"reason": "nobody who may create tasks is left to continue the series"})
 	}
 	var stored int

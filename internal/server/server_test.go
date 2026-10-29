@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -179,6 +180,32 @@ func TestOAuthAndMCP(t *testing.T) {
 	if !strings.Contains(string(sc), `"name":"Claude (Joan)"`) {
 		t.Fatalf("attribution: %s", sc)
 	}
+
+	// Task tools render as MCP Apps cards: the tool and its result point at the card resource.
+	const card = "ui://handoff/task-card.html"
+	rl, err := cs.ListResources(context.Background(), nil)
+	if err != nil || len(rl.Resources) != 1 || rl.Resources[0].URI != card {
+		t.Fatalf("resources: %v %+v", err, rl)
+	}
+	rr, err := cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: card})
+	if err != nil || rr.Contents[0].MIMEType != "text/html;profile=mcp-app" || !strings.Contains(rr.Contents[0].Text, "ui/initialize") {
+		t.Fatalf("read card: %v %+v", err, rr)
+	}
+	uriOf := func(m mcp.Meta) any { ui, _ := m["ui"].(map[string]any); return ui["resourceUri"] }
+	for _, tool := range tl.Tools {
+		if want := tool.Name == "get_task" || tool.Name == "update_todo"; (want || tool.Name == "get_context" || tool.Name == "list_ready") && want != (uriOf(tool.Meta) == card) {
+			t.Fatalf("%s meta: %v", tool.Name, tool.Meta)
+		}
+	}
+	id := res.StructuredContent.(map[string]any)["tasks"].([]any)[0].(map[string]any)["id"]
+	res, err = cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_task", Arguments: map[string]any{"id": id}})
+	if err != nil || res.IsError || uriOf(res.Meta) != card || !strings.Contains(fmt.Sprint(res.Meta["handoff/can"]), "update:true") {
+		t.Fatalf("get_task meta: %v %+v", err, res)
+	}
+	if sc, _ := json.Marshal(res.StructuredContent); !strings.Contains(string(sc), `"title":"From Claude"`) {
+		t.Fatalf("get_task content: %s", sc)
+	}
+
 	res, _ = cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "claim_task", Arguments: map[string]any{"id": "nope"}})
 	if !res.IsError {
 		t.Fatal("expected tool error")
@@ -250,6 +277,21 @@ func TestAPIKeyAndBeads(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(b), `"depends_on_id":"bd-1"`) || !strings.Contains(string(b), `"status":"closed"`) {
 		t.Fatalf("export: %s", b)
+	}
+	// A read-only agent's cards offer no edits.
+	if code, out := f.do("POST", acme+"/api/tools/update_agent", map[string]any{"id": agent["id"],
+		"permissions": map[string]any{"projects": []string{"*"}, "actions": []string{"read"}, "approval": []string{}}}, nil); code != 200 {
+		t.Fatalf("read-only: %d %v", code, out)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint: acme + "/mcp", HTTPClient: &http.Client{Transport: authTransport{tok: key["key"].(string), next: f.client.Transport}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_task", Arguments: map[string]any{"id": ready["tasks"].([]any)[0].(map[string]any)["id"]}})
+	if err != nil || res.IsError || fmt.Sprint(res.Meta["handoff/can"]) != "map[close:false update:false]" {
+		t.Fatalf("read-only card: %v %+v", err, res)
 	}
 	// Agents can't call web-only tools with their key.
 	if code, _ := f.do("POST", acme+"/api/tools/invite", map[string]any{"email": "x@y.z"}, h); code != 403 {
