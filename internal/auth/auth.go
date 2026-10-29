@@ -36,6 +36,7 @@ const (
 	CodeTTL         = 2 * time.Minute
 	AccessTTL       = time.Hour
 	RefreshTTL      = 90 * 24 * time.Hour
+	AppCodeTTL      = 10 * time.Minute
 
 	APIKeyPrefix = "hnd_"
 )
@@ -125,6 +126,86 @@ func (s *Store) ConsumeLoginToken(ctx context.Context, orgID, tok string) (*Logi
 		return nil, ErrInvalid
 	}
 	return lt, err
+}
+
+// ---- app pairing codes ----
+// A signed-in person shows their phone a short code; the app redeems it for a
+// session. 8 Crockford base32 chars (~40 bits), hashed like every secret.
+
+const appCodeAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+func newAppCode() string {
+	b := make([]byte, 5)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	var c [8]byte
+	v := uint64(b[0])<<32 | uint64(b[1])<<24 | uint64(b[2])<<16 | uint64(b[3])<<8 | uint64(b[4])
+	for i := 7; i >= 0; i-- {
+		c[i] = appCodeAlphabet[v&31]
+		v >>= 5
+	}
+	return string(c[:4]) + "-" + string(c[4:])
+}
+
+// normalizeAppCode accepts the code with or without its dash, any case.
+func normalizeAppCode(s string) (string, bool) {
+	s = strings.ToUpper(strings.ReplaceAll(s, "-", ""))
+	if len(s) != 8 {
+		return "", false
+	}
+	for i := range 8 {
+		if !strings.ContainsRune(appCodeAlphabet, rune(s[i])) {
+			return "", false
+		}
+	}
+	return s, true
+}
+
+// CreateAppCode issues a single-use code for a member; a new code retires their unused ones.
+func (s *Store) CreateAppCode(ctx context.Context, orgID, memberID string) (code string, expires time.Time, err error) {
+	raw := newAppCode()
+	expires = time.Now().Add(AppCodeTTL)
+	err = s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM app_codes WHERE expires_at < now()`); err != nil {
+			return err
+		}
+		// The lock makes retire-then-insert atomic per member across requests and processes.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('appcode:' || $1, 0))`, memberID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE app_codes SET used_at = now() WHERE member_id = $1 AND used_at IS NULL`, memberID); err != nil {
+			return err
+		}
+		norm, _ := normalizeAppCode(raw)
+		_, err = tx.Exec(ctx, `INSERT INTO app_codes (org_id, member_id, code_hash, expires_at) VALUES ($1, $2, $3, $4)`,
+			orgID, memberID, Hash(norm), expires)
+		return err
+	})
+	return raw, expires, err
+}
+
+// RedeemAppCode spends the code once and mints its session in the same transaction,
+// so a failure leaves the code usable. Bad, expired and spent codes all read the same.
+func (s *Store) RedeemAppCode(ctx context.Context, orgID, code string) (memberID, tok string, err error) {
+	norm, ok := normalizeAppCode(code)
+	if !ok {
+		return "", "", ErrInvalid
+	}
+	tok = NewToken("")
+	err = s.DB.InOrg(ctx, orgID, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `UPDATE app_codes SET used_at = now()
+			WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING member_id::text`, Hash(norm)).Scan(&memberID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO sessions (token_hash, org_id, member_id, expires_at) VALUES ($1, $2, $3, $4)`,
+			Hash(tok), orgID, memberID, time.Now().Add(SessionTTL))
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", ErrInvalid
+	}
+	return memberID, tok, err
 }
 
 // ---- API keys ----

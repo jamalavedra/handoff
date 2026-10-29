@@ -81,6 +81,8 @@ func (s *Server) Handler() http.Handler {
 	org.HandleFunc("POST /oauth/revoke", s.revoke)
 	org.Handle("/mcp", s.mcp())
 	org.HandleFunc("POST /api/login", s.login)
+	org.HandleFunc("POST /api/app/code", s.appCode)
+	org.HandleFunc("POST /api/app/redeem", s.appRedeem)
 	org.HandleFunc("GET /auth/verify", s.verifyPage)
 	org.HandleFunc("POST /auth/verify", s.verify)
 	org.HandleFunc("GET /auth/google", s.googleStart)
