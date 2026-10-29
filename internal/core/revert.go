@@ -242,7 +242,7 @@ func (c *call) dropNext(id string) (string, error) {
 	switch {
 	case !untouched:
 		return fmt.Sprintf("The next occurrence, %q, was changed since, so it stays.", title), nil
-	case !c.p.can(ActDelete) || c.p.needsApproval(ActDelete):
+	case !c.p.Can(ActDelete) || c.p.needsApproval(ActDelete):
 		return fmt.Sprintf("The next occurrence, %q, stays: trashing it needs a person.", title), nil
 	}
 	if _, err := c.getTask(next, false, true); IsCode(err, ErrNotFound) {
