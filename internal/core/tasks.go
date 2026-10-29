@@ -570,7 +570,9 @@ func (s *Service) GetTask(ctx context.Context, p *Principal, in TaskIDIn) (TaskD
 		if err := c.loadReactions(out.Comments); err != nil {
 			return err
 		}
-		out.Events, err = c.events("e.task_id = $1", []any{r.ID}, 200, true)
+		// The newest events, oldest first.
+		out.Events, err = c.eventsBy("e.task_id = $1", []any{r.ID}, "e.id DESC", 200)
+		slices.Reverse(out.Events)
 		return err
 	})
 	return out, err
@@ -1036,12 +1038,12 @@ func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
 			}
 			put("body", *in.Body)
 			changed["body"] = "replaced"
-			// The version it replaces stays in the task's history.
-			if strings.TrimSpace(r.Body) != "" {
-				changed["previous_body"] = clipBytes(r.Body, 20000)
-			}
 		default:
 			return nil, errf(ErrInvalid, "body_mode must be append or replace")
+		}
+		// The version it replaces stays in the task's history.
+		if strings.TrimSpace(r.Body) != "" {
+			changed["previous_body"] = clipBytes(r.Body, 20000)
 		}
 	}
 	if in.Status = statusIn(in.Status); in.Status != "" {
@@ -1144,6 +1146,10 @@ func (c *call) updateTask(in UpdateTaskIn) (*taskRow, error) {
 		if !reflect.DeepEqual(v, was[k]) {
 			changed[k], changed["from_"+k] = v, was[k]
 		}
+	}
+	// The text can be reverted when its previous version was kept whole; body_hash tells whether it changed since.
+	if in.Body != nil && len(r.Body) <= 20000 {
+		changed["body_hash"] = bodyHash(after.Body)
 	}
 	if err := c.event(r.ID, "updated", changed); err != nil {
 		return nil, err
@@ -1266,6 +1272,7 @@ type CloseTaskOut struct {
 	Task      TaskOut   `json:"task"`
 	Unblocked []TaskOut `json:"unblocked" jsonschema:"tasks that became ready because this one closed"`
 	Next      *TaskOut  `json:"next,omitempty" jsonschema:"the next occurrence, when a repeating task is done"`
+	EventID   int64     `json:"event_id" jsonschema:"the close in the task's history; revert_change with it reopens the task"`
 }
 
 func (s *Service) CloseTask(ctx context.Context, p *Principal, in CloseTaskIn) (CloseTaskOut, error) {
@@ -1299,7 +1306,7 @@ func (c *call) closeTask(in CloseTaskIn, out *CloseTaskOut) error {
 		claimed_by = NULL, claim_expires_at = NULL, updated_at = now() WHERE id = $1`, r.ID, st, in.Reason); err != nil {
 		return err
 	}
-	if err := c.event(r.ID, "closed", map[string]any{"status": st, "reason": in.Reason, "from_status": r.Status}); err != nil {
+	if out.EventID, err = c.eventID(r.ID, "closed", map[string]any{"status": st, "reason": in.Reason, "from_status": r.Status}); err != nil {
 		return err
 	}
 	r, err = c.getTask(r.ID, false, false)

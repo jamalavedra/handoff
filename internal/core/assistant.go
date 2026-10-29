@@ -1051,7 +1051,10 @@ func (a *assistantRun) revertChange(ctx context.Context, raw json.RawMessage) (a
 	if err != nil {
 		return nil, &AssistantStep{Summary: "Couldn't undo the change"}, err
 	}
-	return map[string]any{"task": brief(res.Task), "reverted": res.Reverted}, &AssistantStep{Summary: "Undid a change to “" + clip(res.Task.Title, 60) + "”", Tasks: refs(res.Task)}, nil
+	if res.Task == nil {
+		return map[string]any{"note": res.Note.Title, "reverted": res.Reverted}, &AssistantStep{Summary: "Undid a change to the note “" + clip(res.Note.Title, 60) + "”"}, nil
+	}
+	return map[string]any{"task": brief(*res.Task), "reverted": res.Reverted, "message": res.Message}, &AssistantStep{Summary: "Undid a change to “" + clip(res.Task.Title, 60) + "”", Tasks: refs(*res.Task)}, nil
 }
 
 func (a *assistantRun) closeTask(ctx context.Context, raw json.RawMessage) (any, *AssistantStep, error) {

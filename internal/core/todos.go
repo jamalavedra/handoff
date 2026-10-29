@@ -208,10 +208,15 @@ func (c *call) updateTodo(in UpdateTodoIn) (string, error) {
 		}
 	}
 	if in.Position != nil {
-		if err := c.moveTodo(r.ID, td.ID, *in.Position); err != nil {
+		from, err := c.todoIndex(td.ID)
+		if err != nil {
 			return "", err
 		}
-		changed["moved"] = true
+		to, err := c.moveTodo(r.ID, td.ID, *in.Position)
+		if err != nil {
+			return "", err
+		}
+		changed["moved"], changed["position"], changed["from_position"] = true, to, from
 	}
 	if len(changed) > 2 {
 		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, r.ID); err != nil {
@@ -224,21 +229,29 @@ func (c *call) updateTodo(in UpdateTodoIn) (string, error) {
 	return r.ID, nil
 }
 
-// moveTodo puts a todo at position pos (clamped) and renumbers the list 0..n-1.
-func (c *call) moveTodo(taskID, id string, pos int) error {
+// moveTodo puts a todo at position pos (clamped), renumbers the list 0..n-1 and returns where it went.
+func (c *call) moveTodo(taskID, id string, pos int) (int, error) {
 	rows, err := c.tx.Query(c.ctx, `SELECT id::text FROM task_todos WHERE task_id = $1 AND id::text <> $2 ORDER BY position, created_at`, taskID, id)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return err
+		return 0, err
 	}
 	pos = min(max(pos, 0), len(ids))
 	ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
 	_, err = c.tx.Exec(c.ctx, `UPDATE task_todos t SET position = o.n - 1 FROM unnest($1::text[]) WITH ORDINALITY AS o(id, n)
 		WHERE t.id::text = o.id`, ids)
-	return err
+	return pos, err
+}
+
+// todoIndex is a todo's place in its list, 0 first, in the order moveTodo counts.
+func (c *call) todoIndex(id string) (int, error) {
+	var n int
+	err := c.tx.QueryRow(c.ctx, `SELECT count(*) FROM task_todos o, task_todos t WHERE t.id::text = $1 AND o.task_id = t.task_id
+		AND o.id <> t.id AND (o.position, o.created_at) <= (t.position, t.created_at)`, id).Scan(&n)
+	return n, err
 }
 
 func (s *Service) RemoveTodo(ctx context.Context, p *Principal, in TodoIDIn) (TodosOut, error) {
@@ -251,13 +264,18 @@ func (s *Service) RemoveTodo(ctx context.Context, p *Principal, in TodoIDIn) (To
 		if err != nil {
 			return err
 		}
+		at, err := c.todoIndex(td.ID)
+		if err != nil {
+			return err
+		}
 		if _, err := c.tx.Exec(c.ctx, `DELETE FROM task_todos WHERE id::text = $1`, td.ID); err != nil {
 			return err
 		}
 		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, r.ID); err != nil {
 			return err
 		}
-		if err := c.event(r.ID, "todo_removed", map[string]any{"todo_id": td.ID, "text": td.Text}); err != nil {
+		// Enough to put it back with revert_change.
+		if err := c.event(r.ID, "todo_removed", map[string]any{"todo_id": td.ID, "text": td.Text, "done": td.Done, "result": td.Result, "position": at}); err != nil {
 			return err
 		}
 		out.Task = r.ID

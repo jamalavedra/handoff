@@ -297,6 +297,12 @@ func (c *call) canSeeProject(id string) bool { return slices.Contains(c.visible,
 
 // event appends to the audit log.
 func (c *call) event(taskID, kind string, data map[string]any) error {
+	_, err := c.eventID(taskID, kind, data)
+	return err
+}
+
+// eventID appends to the audit log and returns the new event's id.
+func (c *call) eventID(taskID, kind string, data map[string]any) (int64, error) {
 	if data == nil {
 		data = map[string]any{}
 	}
@@ -305,9 +311,10 @@ func (c *call) event(taskID, kind string, data map[string]any) error {
 	if taskID != "" {
 		tid = &taskID
 	}
-	_, err := c.tx.Exec(c.ctx, `INSERT INTO events (org_id, task_id, actor_id, on_behalf_of, via, kind, data)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`, c.p.Org.ID, tid, c.p.Member.ID, c.p.onBehalfOf(), c.p.Via, kind, b)
-	return err
+	var id int64
+	err := c.tx.QueryRow(c.ctx, `INSERT INTO events (org_id, task_id, actor_id, on_behalf_of, via, kind, data)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, c.p.Org.ID, tid, c.p.Member.ID, c.p.onBehalfOf(), c.p.Via, kind, b).Scan(&id)
+	return id, err
 }
 
 // MemberRef is how other members appear in outputs.
