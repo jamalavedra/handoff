@@ -255,6 +255,7 @@ func (c *call) updateNote(in UpdateNoteIn) (*noteRow, error) {
 			if strings.TrimSpace(r.Body) != "" {
 				changed["previous_body"] = r.Body
 			}
+			changed["body_hash"] = bodyHash(body)
 		}
 	}
 	if len(changed) == 0 {

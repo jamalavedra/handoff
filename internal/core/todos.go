@@ -158,78 +158,100 @@ func (c *call) todoTask(id string) (*taskRow, *TodoOut, error) {
 func (s *Service) UpdateTodo(ctx context.Context, p *Principal, in UpdateTodoIn) (TodosOut, error) {
 	var out TodosOut
 	err := s.run(ctx, p, func(c *call) error {
-		if err := p.require(ActUpdate); err != nil {
-			return err
-		}
-		r, td, err := c.todoTask(in.ID)
+		id, err := c.updateTodo(in)
 		if err != nil {
 			return err
 		}
-		changed := map[string]any{"todo_id": td.ID, "text": td.Text}
-		if in.Text != nil {
-			t := cleanTodo(*in.Text, todoTextChars)
-			if t == "" {
-				return errf(ErrInvalid, "a todo needs some text; use remove_todo to drop it")
-			}
-			if t != td.Text {
-				if _, err := c.tx.Exec(c.ctx, `UPDATE task_todos SET text = $2, updated_at = now() WHERE id::text = $1`, td.ID, t); err != nil {
-					return err
-				}
-				changed["text"], changed["from"] = t, td.Text
-			}
-		}
-		if in.Done != nil && *in.Done != td.Done {
-			if _, err := c.tx.Exec(c.ctx, `UPDATE task_todos SET done = $2, done_by = CASE WHEN $2 THEN $3::uuid END,
-				done_at = CASE WHEN $2 THEN now() END, updated_at = now() WHERE id::text = $1`, td.ID, *in.Done, p.Member.ID); err != nil {
-				return err
-			}
-			changed["done"] = *in.Done
-		}
-		if in.Result != nil {
-			res := cleanTodo(*in.Result, resultChars)
-			if res != td.Result {
-				if _, err := c.tx.Exec(c.ctx, `UPDATE task_todos SET result = $2, updated_at = now() WHERE id::text = $1`, td.ID, res); err != nil {
-					return err
-				}
-				changed["result"] = res
-			}
-		}
-		if in.Position != nil {
-			if err := c.moveTodo(r.ID, td.ID, *in.Position); err != nil {
-				return err
-			}
-			changed["moved"] = true
-		}
-		if len(changed) > 2 {
-			if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, r.ID); err != nil {
-				return err
-			}
-			if err := c.event(r.ID, "todo_updated", changed); err != nil {
-				return err
-			}
-		}
-		out.Task = r.ID
-		out.Todos, err = c.todos(r.ID)
+		out.Task = id
+		out.Todos, err = c.todos(id)
 		return err
 	})
 	return out, err
 }
 
-// moveTodo puts a todo at position pos (clamped) and renumbers the list 0..n-1.
-func (c *call) moveTodo(taskID, id string, pos int) error {
+// updateTodo changes a todo inside the caller's transaction and returns its task's id.
+func (c *call) updateTodo(in UpdateTodoIn) (string, error) {
+	if err := c.p.require(ActUpdate); err != nil {
+		return "", err
+	}
+	r, td, err := c.todoTask(in.ID)
+	if err != nil {
+		return "", err
+	}
+	changed := map[string]any{"todo_id": td.ID, "text": td.Text}
+	if in.Text != nil {
+		t := cleanTodo(*in.Text, todoTextChars)
+		if t == "" {
+			return "", errf(ErrInvalid, "a todo needs some text; use remove_todo to drop it")
+		}
+		if t != td.Text {
+			if _, err := c.tx.Exec(c.ctx, `UPDATE task_todos SET text = $2, updated_at = now() WHERE id::text = $1`, td.ID, t); err != nil {
+				return "", err
+			}
+			changed["text"], changed["from"] = t, td.Text
+		}
+	}
+	if in.Done != nil && *in.Done != td.Done {
+		if _, err := c.tx.Exec(c.ctx, `UPDATE task_todos SET done = $2, done_by = CASE WHEN $2 THEN $3::uuid END,
+			done_at = CASE WHEN $2 THEN now() END, updated_at = now() WHERE id::text = $1`, td.ID, *in.Done, c.p.Member.ID); err != nil {
+			return "", err
+		}
+		changed["done"], changed["from_done"] = *in.Done, td.Done
+	}
+	if in.Result != nil {
+		res := cleanTodo(*in.Result, resultChars)
+		if res != td.Result {
+			if _, err := c.tx.Exec(c.ctx, `UPDATE task_todos SET result = $2, updated_at = now() WHERE id::text = $1`, td.ID, res); err != nil {
+				return "", err
+			}
+			changed["result"], changed["from_result"] = res, td.Result
+		}
+	}
+	if in.Position != nil {
+		from, err := c.todoIndex(td.ID)
+		if err != nil {
+			return "", err
+		}
+		to, err := c.moveTodo(r.ID, td.ID, *in.Position)
+		if err != nil {
+			return "", err
+		}
+		changed["moved"], changed["position"], changed["from_position"] = true, to, from
+	}
+	if len(changed) > 2 {
+		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, r.ID); err != nil {
+			return "", err
+		}
+		if err := c.event(r.ID, "todo_updated", changed); err != nil {
+			return "", err
+		}
+	}
+	return r.ID, nil
+}
+
+// moveTodo puts a todo at position pos (clamped), renumbers the list 0..n-1 and returns where it went.
+func (c *call) moveTodo(taskID, id string, pos int) (int, error) {
 	rows, err := c.tx.Query(c.ctx, `SELECT id::text FROM task_todos WHERE task_id = $1 AND id::text <> $2 ORDER BY position, created_at`, taskID, id)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return err
+		return 0, err
 	}
 	pos = min(max(pos, 0), len(ids))
 	ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
 	_, err = c.tx.Exec(c.ctx, `UPDATE task_todos t SET position = o.n - 1 FROM unnest($1::text[]) WITH ORDINALITY AS o(id, n)
 		WHERE t.id::text = o.id`, ids)
-	return err
+	return pos, err
+}
+
+// todoIndex is a todo's place in its list, 0 first, in the order moveTodo counts.
+func (c *call) todoIndex(id string) (int, error) {
+	var n int
+	err := c.tx.QueryRow(c.ctx, `SELECT count(*) FROM task_todos o, task_todos t WHERE t.id::text = $1 AND o.task_id = t.task_id
+		AND o.id <> t.id AND (o.position, o.created_at) <= (t.position, t.created_at)`, id).Scan(&n)
+	return n, err
 }
 
 func (s *Service) RemoveTodo(ctx context.Context, p *Principal, in TodoIDIn) (TodosOut, error) {
@@ -242,13 +264,18 @@ func (s *Service) RemoveTodo(ctx context.Context, p *Principal, in TodoIDIn) (To
 		if err != nil {
 			return err
 		}
+		at, err := c.todoIndex(td.ID)
+		if err != nil {
+			return err
+		}
 		if _, err := c.tx.Exec(c.ctx, `DELETE FROM task_todos WHERE id::text = $1`, td.ID); err != nil {
 			return err
 		}
 		if _, err := c.tx.Exec(c.ctx, `UPDATE tasks SET updated_at = now() WHERE id = $1`, r.ID); err != nil {
 			return err
 		}
-		if err := c.event(r.ID, "todo_removed", map[string]any{"todo_id": td.ID, "text": td.Text}); err != nil {
+		// Enough to put it back with revert_change.
+		if err := c.event(r.ID, "todo_removed", map[string]any{"todo_id": td.ID, "text": td.Text, "done": td.Done, "result": td.Result, "position": at}); err != nil {
 			return err
 		}
 		out.Task = r.ID
