@@ -24,16 +24,18 @@ export function TeamPage() {
   const members = useQuery({ queryKey: ["members"], queryFn: () => api.tool<{ members: Member[] }>("list_members") });
   const invalidate = useInvalidate();
   const qc = useQueryClient();
-  const move = useMutation({ mutationFn: async (v: { t: Task; to: string }) => {
+  const move = useMutation({ mutationFn: (v: { ts: Task[]; to: string }) => Promise.all(v.ts.map(async (t) => {
       // A handoff ends the previous worker's claim so the new assignee can start.
-      if (v.t.claimed_by && v.t.claimed_by.id !== v.to) await api.tool("release_task", { id: v.t.id });
-      return api.tool("update_task", { id: v.t.id, assignee: v.to });
-    },
+      if (t.claimed_by && t.claimed_by.id !== v.to) await api.tool("release_task", { id: t.id });
+      return api.tool("update_task", { id: t.id, assignee: v.to });
+    })),
     onSuccess: (_r, v) => {
       const to = members.data?.members.find((m) => m.id === v.to)?.name ?? "Unassigned";
+      const what = v.ts.length === 1 ? `“${v.ts[0].title}”` : `${v.ts.length} tasks`;
+      const released = v.ts.filter((t) => t.claimed_by && t.claimed_by.id !== v.to);
       // A released claim can't be given back (claims are taken by the worker), so only plain moves offer Undo.
-      if (v.t.claimed_by && v.t.claimed_by.id !== v.to) toast(`Handed “${v.t.title}” to ${to}`, { description: `${v.t.claimed_by.name} stopped working on it.` });
-      else undoable(qc, `Handed “${v.t.title}” to ${to}`, () => api.tool("update_task", { id: v.t.id, assignee: v.t.assignee?.id ?? "" }));
+      if (released.length) toast(`Handed ${what} to ${to}`, { description: released.map((t) => `${t.claimed_by!.name} stopped working on “${t.title}”.`).join(" ") });
+      else undoable(qc, `Handed ${what} to ${to}`, () => Promise.all(v.ts.map((t) => api.tool("update_task", { id: t.id, assignee: t.assignee?.id ?? "" }))));
     },
     onSettled: invalidate });
   const open = tasks.data?.filter((t) => t.status !== "done" && t.status !== "cancelled");
@@ -70,13 +72,13 @@ export function TeamPage() {
           const working = c.tasks.filter((t) => t.claimed_by).length;
           const label = c.member?.name ?? "Unassigned";
           return (
-            <DropColumn key={c.id || "unassigned"} label={label} onDrop={(id) => { const t = byId.get(id); if (t && (t.assignee?.id ?? unassigned) !== c.id) move.mutate({ t, to: c.id }); }}>
+            <DropColumn key={c.id || "unassigned"} label={label} onDrop={(ids) => { const ts = ids.flatMap((id) => byId.get(id) ?? []).filter((t) => (t.assignee?.id ?? unassigned) !== c.id); if (ts.length) move.mutate({ ts, to: c.id }); }}>
               <h2 className="flex items-center gap-2 px-2 pt-1 text-sm font-semibold">
                 {c.member && <Avatar m={c.member} />}
                 <span className="truncate">{label}</span>
                 <span className="ml-auto shrink-0 text-xs font-normal text-muted-foreground">{c.tasks.length} open{working ? ` · ${working} working` : ""}</span>
               </h2>
-              {c.tasks.map((t) => <DragCard key={t.id} t={t} moving={move.isPending && move.variables?.t.id === t.id} />)}
+              {c.tasks.map((t) => <DragCard key={t.id} t={t} moving={move.isPending && !!move.variables?.ts.includes(t)} />)}
               {c.tasks.length === 0 && <div className="px-2 py-6 text-center text-sm text-muted-foreground/70">Nothing assigned</div>}
             </DropColumn>
           );

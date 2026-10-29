@@ -1,7 +1,7 @@
 import { createContext, useContext, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Bot, CircleAlert, Flag, ListChecks, Lock, MessageCircleQuestion, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
+import { Bot, Check, CircleAlert, Flag, ListChecks, Lock, MessageCircleQuestion, Repeat as RepeatIcon, RotateCcw } from "lucide-react";
 import { ago, api, cn, projectName, type Event, type Project, type Task } from "../lib";
 import { EmojiPicker } from "../components/emoji";
 import { Avatar, Card, DuePill, Empty, ErrorText, PageHeader, TaskCheck, Who } from "../components/app";
@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { progressLabel } from "../todos";
 import { eventDetail, revertable, verb, type Names } from "../events";
 import { NewNote, ProjectNotes, useProjectNotes } from "./notes";
+import { useSelection } from "../hooks/use-selection";
 
 export function useInvalidate() {
   const qc = useQueryClient();
@@ -59,9 +60,11 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
   const agentWorking = agentOnIt(t);
   const waiting = !closed && !t.ready && t.blocked_by.length > 0 && !t.claimed_by;
   const showAssignee = t.assignee && t.assignee.id !== me.data?.member?.id && t.assignee.id !== t.claimed_by?.id;
+  const select = useSelection();
+  const selected = select.ids.includes(t.id);
   return (
     <div>
-    <div data-task-row className={cn("flex items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted data-[kbd-focus]:bg-muted data-[kbd-focus]:ring-1 data-[kbd-focus]:ring-ring", compact ? "min-h-11 md:min-h-9" : "min-h-14 md:min-h-11", flash && "change-flash", agentWorking && "agent-border [--agent-border-offset:1px]")}>
+    <div data-task-row {...select.row(t.id, !t.deleted_at)} className={cn("flex items-center gap-3 rounded-2xl border border-border bg-card px-3 transition-colors hover:bg-muted/60 md:rounded-xl md:border-transparent md:bg-transparent md:hover:bg-muted data-[kbd-focus]:bg-muted data-[kbd-focus]:ring-1 data-[kbd-focus]:ring-ring data-[selected]:bg-blue-50 data-[selected]:ring-1 data-[selected]:ring-blue-300 md:data-[selected]:bg-blue-50", compact ? "min-h-11 md:min-h-9" : "min-h-14 md:min-h-11", flash && "change-flash", agentWorking && "agent-border [--agent-border-offset:1px]")}>
       <TaskCheck t={t} disabled={!!t.deleted_at || toggle.isPending} onToggle={() => toggle.mutate(closed)} />
       <TaskLink id={t.id} className={cn("flex min-w-0 flex-1 flex-col justify-center self-stretch", compact ? "py-1" : "py-2")}>
         <span className="flex min-w-0 items-center gap-1.5">
@@ -100,6 +103,7 @@ export function TaskRow({ t, action }: { t: Task; action?: React.ReactNode }) {
         )}
         {shows("due") && t.due && <DuePill due={t.due} done={closed} />}
         {action}
+        {selected && <Check aria-label="Selected" className="size-4 shrink-0 text-blue-600" />}
       </div>
     </div>
     {toggle.error && <div className="px-3"><ErrorText error={toggle.error} /></div>}

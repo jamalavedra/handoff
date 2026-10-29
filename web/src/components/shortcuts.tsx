@@ -15,7 +15,7 @@ let gAt = 0;
 export const inJump = () => Date.now() - gAt < 1000;
 
 // Rows opt in with data-task-row; the focused one carries data-kbd-focus.
-function rows() {
+export function rows() {
   return [...document.querySelectorAll<HTMLElement>("[data-task-row]")].filter((el) => el.offsetParent !== null);
 }
 
@@ -80,12 +80,12 @@ export function useShortcuts(onHelp: () => void) {
 
 const groups: { title: string; keys: [string, string][] }[] = [
   { title: "Anywhere", keys: [["⌘ K  or  /", "Command menu"], ["⌘ J", "Assistant"], ["N", "New task"], ["⌘ Z  /  ⇧ ⌘ Z", "Undo / redo"], ["?", "This list"]] },
-  { title: "Lists", keys: [["J / ↓", "Next task"], ["K / ↑", "Previous task"], ["Enter", "Open task"], ["X", "Complete or reopen"]] },
+  { title: "Lists", keys: [["J / ↓", "Next task"], ["K / ↑", "Previous task"], ["Enter", "Open task"], ["X", "Complete or reopen"], ["⌘ Click", "Select or unselect"], ["Shift Click", "Select a range"], ["⌘ A", "Select all"], ["Esc", "Clear selection"]] },
   { title: "Go to", keys: [["G T", "My tasks"], ["G N", "Notifications"], ["G P", "Projects"], ["G A", "Agents"], ["G S", "Settings"]] },
   // Browsers keep ⌘W, ⌘T and Ctrl+Tab for their own tabs, so ours sit on ⌥ (Alt elsewhere).
   {
     title: "Tabs (desktop)",
-    keys: [["⌘ Click  or  middle-click", "Open in a background tab"], ["⌘ Enter", "Same, from the command menu"], ["⌥ T", "New tab"], ["⌥ W", "Close tab"], ["⌥ 1–9", "Go to tab"]],
+    keys: [["Middle-click", "Open in a background tab"], ["⌘ Enter", "Same, from the command menu"], ["⌥ T", "New tab"], ["⌥ W", "Close tab"], ["⌥ 1–9", "Go to tab"]],
   },
 ];
 

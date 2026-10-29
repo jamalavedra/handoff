@@ -101,7 +101,7 @@ export function completedText(base: string, next?: Task) {
 
 // undoClose reverts a close (close_task's event_id): the server reopens the task and trashes the next
 // occurrence if nobody has touched it, and says when it left it.
-async function undoClose(eventId: number) {
+export async function undoClose(eventId: number) {
   const r = await api.tool<{ message?: string }>("revert_change", { event_id: eventId });
   if (r.message) toast(r.message);
 }
